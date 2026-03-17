@@ -57,8 +57,8 @@ jobs:
         echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
         echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
-    - name: Install package and test dependencies
-      run: pip install ".[dev]"
+    - name: Install package and test dependencies (with XRootD)
+      run: pip install ".[dev,xrootd]"
 
     - name: Run integration tests (eospublic.cern.ch)
       run: pytest tests/ -v -m integration
