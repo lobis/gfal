@@ -164,7 +164,7 @@ class GfalCommands(base.CommandBase):
             try:
                 result = fso.checksum(path, alg.lower())
                 # fsspec-xrootd returns (algorithm, value)
-                if isinstance(result, (tuple, list)):
+                if isinstance(result, tuple | list):
                     result = result[1]
                 sys.stdout.write(f"{self.params.file} {result}\n")
                 return

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "gfal-cli"
 version = "0.1.0"
 description = "GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = [
     "fsspec>=2026.2.0",
@@ -47,7 +47,7 @@ markers = [
 
 [tool.ruff]
 src = ["src", "tests"]
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [

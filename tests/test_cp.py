@@ -224,7 +224,6 @@ def test_copy_abort_on_failure(tmp_path):
     # dst1 already exists (no --force → failure)
     dst1 = tmp_path / "dst1.txt"
     dst1.write_bytes(b"old")
-    dst2 = tmp_path / "dst2.txt"
 
     rc, out, err = run_gfal("cp", "--abort-on-failure", src.as_uri(), dst1.as_uri())
 

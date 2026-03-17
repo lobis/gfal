@@ -165,7 +165,7 @@ class TestStat:
         assert stat_module.S_ISDIR(si.st_mode)
 
     def test_nonexistent_raises(self, tmp_path):
-        with pytest.raises(Exception):
+        with pytest.raises(FileNotFoundError):
             stat((tmp_path / "no_such").as_uri())
 
 
