@@ -1,0 +1,321 @@
+"""
+gfal-cp / gfal-copy implementation.
+"""
+
+import contextlib
+import hashlib
+import stat
+import sys
+import time
+import zlib
+from pathlib import Path
+
+from gfal_cli import base, fs
+from gfal_cli.progress import Progress
+
+
+class CommandCopy(base.CommandBase):
+    @base.arg(
+        "-f", "--force", action="store_true", help="overwrite destination if it exists"
+    )
+    @base.arg(
+        "-p",
+        "--parent",
+        action="store_true",
+        help="create destination parent directories as needed",
+    )
+    @base.arg(
+        "-K",
+        "--checksum",
+        type=str,
+        default=None,
+        help="verify transfer with this checksum algorithm (e.g. ADLER32, MD5) "
+        "or algorithm:expected_value",
+    )
+    @base.arg(
+        "--checksum-mode",
+        type=str,
+        default="both",
+        choices=["source", "target", "both"],
+        help="which side(s) to verify the checksum on",
+    )
+    @base.arg(
+        "-r", "--recursive", action="store_true", help="copy directories recursively"
+    )
+    @base.arg(
+        "--from-file",
+        type=str,
+        default=None,
+        help="read source URIs from a file; destination is first positional arg",
+    )
+    @base.arg(
+        "--dry-run",
+        action="store_true",
+        help="print what would be done without copying",
+    )
+    @base.arg(
+        "--abort-on-failure",
+        action="store_true",
+        help="stop immediately on first error",
+    )
+    @base.arg("src", type=base.surl, nargs="?", help="source URI")
+    @base.arg(
+        "dst",
+        type=base.surl,
+        nargs="+",
+        help="destination URI(s). Multiple destinations are chained: "
+        "src→dst1, dst1→dst2, …",
+    )
+    def execute_copy(self):
+        """Copy files or directories."""
+        if self.params.from_file and self.params.src:
+            sys.stderr.write("Cannot combine --from-file with a positional source\n")
+            return 1
+
+        opts = fs.build_storage_options(self.params)
+
+        # Build list of (source, destination) pairs
+        jobs = []
+        if self.params.from_file:
+            dst = self.params.dst[0]
+            with Path(self.params.from_file).open() as fh:
+                for line in fh:
+                    src = line.strip()
+                    if src:
+                        jobs.append((src, dst))
+        elif self.params.src:
+            s = self.params.src
+            for dst in self.params.dst:
+                jobs.append((s, dst))
+                # Chain: if dst is a dir the actual destination will be dst/basename(s),
+                # otherwise s becomes dst for the next hop.
+                try:
+                    dst_st = fs.stat(dst, opts)
+                    if stat.S_ISDIR(dst_st.st_mode):
+                        s = dst.rstrip("/") + "/" + Path(s.rstrip("/")).name
+                    else:
+                        s = dst
+                except Exception:
+                    s = dst
+        else:
+            sys.stderr.write("Missing source\n")
+            return 1
+
+        rc = 0
+        for src, dst in jobs:
+            if dst == "-":
+                dst = "file:///dev/stdout"
+            try:
+                self._do_copy(src, dst, opts)
+            except Exception as e:
+                sys.stderr.write(f"ERROR: {e}\n")
+                rc = 1
+                if self.params.abort_on_failure:
+                    return rc
+
+        return rc
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _do_copy(self, src_url, dst_url, opts):
+        """High-level copy: handle directories, overwrite checks, etc."""
+        src_fs, src_path = fs.url_to_fs(src_url, opts)
+        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+
+        src_info = src_fs.info(src_path)
+        src_st = fs.StatInfo(src_info)
+        src_isdir = stat.S_ISDIR(src_st.st_mode)
+
+        dst_isdir = False
+        dst_exists = False
+        try:
+            dst_info = dst_fs.info(dst_path)
+            dst_st = fs.StatInfo(dst_info)
+            dst_isdir = stat.S_ISDIR(dst_st.st_mode)
+            dst_exists = True
+        except (FileNotFoundError, Exception):
+            pass
+
+        if dst_exists and not dst_isdir and not self.params.force:
+            raise FileExistsError(f"Destination '{dst_url}' exists and --force not set")
+
+        if dst_exists and not dst_isdir and src_isdir:
+            raise IsADirectoryError("Cannot copy a directory over a file")
+
+        if src_isdir:
+            if not self.params.recursive:
+                print(f"Skipping directory {src_url} (use -r to copy recursively)")
+                return
+            if not dst_exists:
+                if self.params.dry_run:
+                    print(f"Mkdir {dst_url}")
+                else:
+                    dst_fs.mkdir(dst_path, create_parents=self.params.parent)
+            self._recursive_copy(
+                src_url, src_fs, src_path, dst_url, dst_fs, dst_path, opts
+            )
+            return
+
+        # Resolve destination if it is a directory
+        if dst_isdir:
+            name = Path(src_path.rstrip("/")).name
+            dst_url = dst_url.rstrip("/") + "/" + name
+            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+
+        self._copy_file(
+            src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st.st_size
+        )
+
+    def _recursive_copy(
+        self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, opts
+    ):
+        entries = src_fs.ls(src_path, detail=False)
+        src_path.rstrip("/") + "/"
+        dst_path.rstrip("/") + "/"
+        src_url_base = src_url.rstrip("/") + "/"
+        dst_url_base = dst_url.rstrip("/") + "/"
+
+        for entry_path in entries:
+            name = Path(entry_path.rstrip("/")).name
+            if name in (".", ".."):
+                continue
+            child_src_url = src_url_base + name
+            child_dst_url = dst_url_base + name
+            try:
+                self._do_copy(child_src_url, child_dst_url, opts)
+            except Exception as e:
+                sys.stderr.write(f"ERROR copying {child_src_url}: {e}\n")
+                if self.params.abort_on_failure:
+                    raise
+
+    def _copy_file(
+        self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_size
+    ):
+        """Stream a single file from src to dst with optional progress and checksum."""
+        if self.params.dry_run:
+            print(f"Copy {src_url} => {dst_url}")
+            return
+
+        # Create parent directories if requested
+        if self.params.parent:
+            parent = str(Path(dst_path).parent)
+            if parent:
+                with contextlib.suppress(Exception):
+                    dst_fs.mkdir(parent, create_parents=True)
+
+        # Compute source checksum before transfer if requested
+        src_checksum = None
+        if self.params.checksum and self.params.checksum_mode in ("source", "both"):
+            alg, expected = _parse_checksum_arg(self.params.checksum)
+            src_checksum = _checksum_fs(src_fs, src_path, alg)
+            if expected and src_checksum != expected.lower():
+                raise OSError(
+                    f"Source checksum mismatch: expected {expected}, got {src_checksum}"
+                )
+
+        # Set up progress bar
+        show_progress = sys.stdout.isatty() and not self.params.verbose
+        if show_progress:
+            self.progress_bar = Progress(f"Copying {Path(src_url).name}")
+            self.progress_bar.update(total_size=src_size if src_size else None)
+            self.progress_bar.start()
+        else:
+            print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+
+        start = time.monotonic()
+        transferred = 0
+        dst_checksum_hasher = None
+
+        alg_for_dst = None
+        if self.params.checksum and self.params.checksum_mode in ("target", "both"):
+            alg_for_dst, _ = _parse_checksum_arg(self.params.checksum)
+            dst_checksum_hasher = _make_hasher(alg_for_dst)
+
+        try:
+            with (
+                src_fs.open(src_path, "rb") as src_f,
+                dst_fs.open(dst_path, "wb") as dst_f,
+            ):
+                while True:
+                    chunk = src_f.read(fs.CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    dst_f.write(chunk)
+                    transferred += len(chunk)
+                    if dst_checksum_hasher is not None:
+                        _update_hasher(dst_checksum_hasher, alg_for_dst, chunk)
+                    if show_progress and src_size:
+                        elapsed = time.monotonic() - start
+                        self.progress_bar.update(
+                            curr_size=transferred,
+                            total_size=src_size,
+                            elapsed=elapsed,
+                        )
+        except Exception:
+            if show_progress:
+                self.progress_bar.stop(False)
+                print()
+            raise
+
+        if show_progress:
+            self.progress_bar.stop(True)
+            print()
+
+        # Verify destination checksum
+        if dst_checksum_hasher is not None:
+            dst_checksum = _finalise_hasher(dst_checksum_hasher, alg_for_dst)
+            if src_checksum and dst_checksum != src_checksum:
+                raise OSError(
+                    f"Checksum mismatch after transfer: src={src_checksum} dst={dst_checksum}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Checksum helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_checksum_arg(arg):
+    """Return (algorithm, expected_value_or_None)."""
+    parts = arg.split(":", 1)
+    alg = parts[0].upper()
+    expected = parts[1].lower() if len(parts) > 1 else None
+    return alg, expected
+
+
+def _make_hasher(alg):
+    alg = alg.upper()
+    if alg in ("ADLER32", "CRC32"):
+        return [alg, 1 if alg == "ADLER32" else 0]
+    return hashlib.new(alg.lower().replace("-", ""))
+
+
+def _update_hasher(h, alg, chunk):
+    alg = alg.upper()
+    if alg == "ADLER32":
+        h[1] = zlib.adler32(chunk, h[1]) & 0xFFFFFFFF
+    elif alg == "CRC32":
+        h[1] = zlib.crc32(chunk, h[1]) & 0xFFFFFFFF
+    else:
+        h.update(chunk)
+
+
+def _finalise_hasher(h, alg):
+    alg = alg.upper()
+    if alg in ("ADLER32", "CRC32"):
+        return f"{h[1]:08x}"
+    return h.hexdigest()
+
+
+def _checksum_fs(fso, path, alg):
+    """Compute checksum by reading the file."""
+    h = _make_hasher(alg)
+    with fso.open(path, "rb") as f:
+        while True:
+            chunk = f.read(fs.CHUNK_SIZE)
+            if not chunk:
+                break
+            _update_hasher(h, alg, chunk)
+    return _finalise_hasher(h, alg)

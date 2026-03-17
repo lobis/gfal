@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gfal-cli"
+version = "0.1.0"
+description = "GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "fsspec>=2026.2.0",
+    "fsspec-xrootd>=0.5.2",
+    "aiohttp>=3.8.0",
+    "requests>=2.28.0",
+]
+
+[project.scripts]
+gfal-ls = "gfal_cli.shell:main"
+gfal-cp = "gfal_cli.shell:main"
+gfal-copy = "gfal_cli.shell:main"
+gfal-rm = "gfal_cli.shell:main"
+gfal-mkdir = "gfal_cli.shell:main"
+gfal-stat = "gfal_cli.shell:main"
+gfal-cat = "gfal_cli.shell:main"
+gfal-save = "gfal_cli.shell:main"
+gfal-rename = "gfal_cli.shell:main"
+gfal-chmod = "gfal_cli.shell:main"
+gfal-sum = "gfal_cli.shell:main"
+gfal-xattr = "gfal_cli.shell:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gfal_cli"]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+    "PTH", # use pathlib over os.path (advisory)
+]
+ignore = [
+    "E501",   # line too long – handled by the formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gfal_cli"]

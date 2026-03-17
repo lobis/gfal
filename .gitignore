@@ -191,6 +191,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Reference implementation (not part of the project)
+gfal2-util/
+
 # PyPI configuration file
 .pypirc
 
