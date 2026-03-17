@@ -158,6 +158,36 @@ class CommandBase:
     # Execution
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _format_error(e):
+        """Return a user-friendly error string for an exception.
+
+        fsspec raises FileNotFoundError (and friends) with only the URL as
+        the message and no errno/strerror.  In that case Python's default
+        str(e) looks identical to a normal program output line, so we append
+        the POSIX description ourselves.
+        """
+        msg = str(e)
+        strerror = getattr(e, "strerror", None)
+        if strerror:
+            # Real OS errors already include strerror in str(e); avoid doubling.
+            if strerror not in msg:
+                return f"{msg}: {strerror}"
+            return msg
+        # fsspec-style: no strerror, but the type carries the semantics.
+        _descriptions = {
+            FileNotFoundError: "No such file or directory",
+            PermissionError: "Permission denied",
+            IsADirectoryError: "Is a directory",
+            NotADirectoryError: "Not a directory",
+            FileExistsError: "File exists",
+            TimeoutError: "Operation timed out",
+        }
+        for exc_type, description in _descriptions.items():
+            if isinstance(e, exc_type):
+                return f"{msg}: {description}"
+        return msg
+
     def _executor(self, func):
         """Runs func(self) inside the worker thread, captures exceptions."""
         try:
@@ -170,7 +200,7 @@ class CommandBase:
                 self.return_code = 0
                 return
             ecode = getattr(e, "errno", None)
-            sys.stderr.write(f"{self.progr}: {e}\n")
+            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
             if ecode and 0 < ecode <= 255:
                 self.return_code = ecode
             else:

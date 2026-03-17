@@ -3,6 +3,8 @@
 from pathlib import Path
 from urllib.parse import urlparse
 
+import pytest
+
 from gfal_cli.base import CommandBase, arg, surl
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,8 @@ class TestCommandBase:
 
     def test_get_subclasses_non_empty(self):
         """At least GfalCommands, CommandCopy, CommandLs, CommandRm exist."""
+        import gfal_cli.shell  # noqa: F401 — triggers subclass registration
+
         subs = CommandBase.get_subclasses()
         assert len(subs) >= 4
 
@@ -133,3 +137,106 @@ class TestCommandBase:
         assert rc == 0
         # Log file should exist (may or may not have content depending on log level)
         assert log.exists()
+
+
+# ---------------------------------------------------------------------------
+# _format_error
+# ---------------------------------------------------------------------------
+
+
+class TestFormatError:
+    def test_file_not_found_no_strerror(self):
+        """fsspec-style FileNotFoundError: just a URL, no strerror."""
+        e = FileNotFoundError("root://server//path/to/file")
+        assert e.strerror is None
+        msg = CommandBase._format_error(e)
+        assert "root://server//path/to/file" in msg
+        assert "No such file or directory" in msg
+
+    def test_permission_error_no_strerror(self):
+        e = PermissionError("file:///restricted")
+        msg = CommandBase._format_error(e)
+        assert "Permission denied" in msg
+
+    def test_is_a_directory_no_strerror(self):
+        e = IsADirectoryError("file:///some/dir")
+        msg = CommandBase._format_error(e)
+        assert "Is a directory" in msg
+
+    def test_not_a_directory_no_strerror(self):
+        e = NotADirectoryError("file:///some/file")
+        msg = CommandBase._format_error(e)
+        assert "Not a directory" in msg
+
+    def test_file_exists_no_strerror(self):
+        e = FileExistsError("file:///existing")
+        msg = CommandBase._format_error(e)
+        assert "File exists" in msg
+
+    def test_real_os_error_not_doubled(self):
+        """Real OS FileNotFoundError already has strerror in str(e) — don't double it."""
+        try:
+            Path.open("/tmp/nonexistent_xyz_test_abc")
+        except FileNotFoundError as e:
+            msg = CommandBase._format_error(e)
+            assert msg.count("No such file or directory") == 1
+
+    def test_generic_exception(self):
+        """Non-OSError exceptions just use str(e)."""
+        e = ValueError("something went wrong")
+        msg = CommandBase._format_error(e)
+        assert msg == "something went wrong"
+
+    def test_os_error_with_strerror_not_in_msg(self):
+        """OSError with strerror that isn't in str(e) gets it appended."""
+        e = OSError("custom message")
+        e.strerror = "custom OS error"
+        msg = CommandBase._format_error(e)
+        assert "custom message" in msg
+        assert "custom OS error" in msg
+
+    @pytest.mark.parametrize(
+        "exc_type, expected_desc",
+        [
+            (FileNotFoundError, "No such file or directory"),
+            (PermissionError, "Permission denied"),
+            (IsADirectoryError, "Is a directory"),
+            (NotADirectoryError, "Not a directory"),
+            (FileExistsError, "File exists"),
+            (TimeoutError, "Operation timed out"),
+        ],
+    )
+    def test_all_known_types(self, exc_type, expected_desc):
+        e = exc_type("some://url")
+        msg = CommandBase._format_error(e)
+        assert expected_desc in msg
+
+
+# ---------------------------------------------------------------------------
+# Error output via CLI
+# ---------------------------------------------------------------------------
+
+
+class TestErrorOutput:
+    def test_nonexistent_file_shows_description(self, tmp_path):
+        """Error for a missing file should say 'No such file or directory'."""
+        from helpers import run_gfal
+
+        rc, out, err = run_gfal("stat", (tmp_path / "no_such").as_uri())
+        assert rc != 0
+        assert "No such file or directory" in err
+
+    def test_nonexistent_ls_shows_description(self, tmp_path):
+        from helpers import run_gfal
+
+        rc, out, err = run_gfal("ls", (tmp_path / "no_such").as_uri())
+        assert rc != 0
+        assert "No such file or directory" in err
+
+    def test_error_message_contains_progr_prefix(self, tmp_path):
+        """Error lines must start with the program name."""
+        from helpers import run_gfal
+
+        rc, out, err = run_gfal("stat", (tmp_path / "missing").as_uri())
+        assert rc != 0
+        assert err.startswith("gfal-stat:")
