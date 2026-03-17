@@ -71,7 +71,7 @@ class CommandCopy(base.CommandBase):
         type=base.surl,
         nargs="+",
         help="destination URI(s). Multiple destinations are chained: "
-        "src→dst1, dst1→dst2, …",
+        "src->dst1, dst1->dst2, ...",
     )
     def execute_copy(self):
         """Copy files or directories."""

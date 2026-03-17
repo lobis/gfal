@@ -170,7 +170,9 @@ class GfalCommands(base.CommandBase):
 
     @base.arg("file", type=base.surl, help="URI of the file")
     @base.arg(
-        "checksum_type", type=str, help="algorithm: ADLER32, MD5, SHA1, SHA256, …"
+        "checksum_type",
+        type=str,
+        help="algorithm: ADLER32, CRC32, CRC32C, MD5, SHA1, SHA256, ...",
     )
     def execute_sum(self):
         """Compute a file checksum."""
