@@ -176,7 +176,7 @@ class TestFormatError:
     def test_real_os_error_not_doubled(self):
         """Real OS FileNotFoundError already has strerror in str(e) — don't double it."""
         try:
-            Path.open("/tmp/nonexistent_xyz_test_abc")
+            Path("/tmp/nonexistent_xyz_test_abc").stat()
         except FileNotFoundError as e:
             msg = CommandBase._format_error(e)
             assert msg.count("No such file or directory") == 1
