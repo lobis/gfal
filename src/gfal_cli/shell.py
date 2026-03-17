@@ -79,7 +79,7 @@ def _command_from_argv0(argv0):
     gfal-copy → copy
     gfal-cp   → copy  (alias)
     """
-    name = Path(argv0).name
+    name = Path(argv0).stem  # .stem strips .exe on Windows
     # strip leading 'gfal-' prefix
     token = name.rsplit("-", 1)[1].lower() if "-" in name else name.lower()
     return _ALIASES.get(token, token)

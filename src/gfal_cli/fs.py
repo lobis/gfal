@@ -4,8 +4,9 @@ and a stat-like wrapper around fsspec info() dicts.
 """
 
 import stat as stat_module
+import sys
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import fsspec
 
@@ -52,8 +53,9 @@ def normalize_url(url):
         return url
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
-    if not scheme:
-        return urlunparse(("file", "", str(Path(url).resolve()), "", "", ""))
+    # A single-char scheme is a Windows drive letter (e.g. "C:"), not a real URL scheme
+    if not scheme or len(scheme) == 1:
+        return Path(url).resolve().as_uri()
     if scheme == "dav":
         return "http" + url[3:]
     if scheme == "davs":
@@ -96,8 +98,17 @@ def url_to_fs(url, storage_options=None):
         return fs, path
 
     if scheme == "file":
-        fs = fsspec.filesystem("file")
-        return fs, parsed.path
+        fso = fsspec.filesystem("file")
+        path = parsed.path
+        # On Windows urlparse gives "/C:/..." — strip the leading slash
+        if (
+            sys.platform == "win32"
+            and len(path) > 2
+            and path[0] == "/"
+            and path[2] == ":"
+        ):
+            path = path[1:]
+        return fso, path
 
     # fallback
     fs, path = fsspec.url_to_fs(url, **storage_options)

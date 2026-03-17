@@ -16,14 +16,14 @@ class TestSurl:
     def test_bare_path_becomes_file_url(self, tmp_path):
         f = tmp_path / "foo.txt"
         result = surl(str(f))
-        assert result.startswith("file://")
-        assert str(f) in result
+        assert result == f.as_uri()
 
     def test_bare_relative_path_becomes_absolute(self):
         result = surl("some/relative/path.txt")
         parsed = urlparse(result)
         assert parsed.scheme == "file"
-        assert Path(parsed.path).is_absolute()
+        # URL path always starts with "/" for absolute file:// URIs on all platforms
+        assert parsed.path.startswith("/")
 
     def test_file_url_unchanged(self):
         url = "file:///tmp/foo.txt"

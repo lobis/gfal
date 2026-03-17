@@ -1,6 +1,7 @@
 """Unit tests for the fsspec integration layer (fs.py)."""
 
 import stat as stat_module
+from pathlib import Path
 
 import pytest
 
@@ -175,13 +176,13 @@ class TestUrlToFs:
         f = tmp_path / "test.txt"
         f.write_text("hello")
         fso, path = url_to_fs(f.as_uri())
-        assert path == str(f)
+        assert Path(path) == f
 
     def test_bare_path(self, tmp_path):
         f = tmp_path / "test.txt"
         f.write_text("hello")
         fso, path = url_to_fs(str(f))
-        assert path == str(f)
+        assert Path(path) == f
 
     def test_file_fs_can_read(self, tmp_path):
         f = tmp_path / "test.txt"
@@ -214,7 +215,7 @@ class TestUrlToFs:
         f = tmp_path / "test.txt"
         f.write_text("x")
         fso, path = url_to_fs(f.as_uri(), {"ssl_verify": True})
-        assert path == str(f)
+        assert Path(path) == f
 
 
 # ---------------------------------------------------------------------------

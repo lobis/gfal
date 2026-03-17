@@ -10,7 +10,7 @@ import signal
 import sys
 from pathlib import Path
 from threading import Thread
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 VERSION = "0.1.0"
 
@@ -46,8 +46,9 @@ def surl(value):
     if value == "-":
         return value
     parsed = urlparse(value)
-    if not parsed.scheme:
-        return urlunparse(("file", "", str(Path(value).resolve()), "", "", ""))
+    # A single-char scheme is a Windows drive letter (e.g. "C:"), not a real URL scheme
+    if not parsed.scheme or len(parsed.scheme) == 1:
+        return Path(value).resolve().as_uri()
     return value
 
 
@@ -168,6 +169,22 @@ class CommandBase:
         the POSIX description ourselves.
         """
         msg = str(e)
+        # On Windows, FileNotFoundError etc. carry winerror codes and use
+        # Windows-specific strerror text.  Normalise to POSIX descriptions so
+        # error messages are consistent across platforms.
+        winerror = getattr(e, "winerror", None)
+        if winerror is not None:
+            _win_map = {
+                2: "No such file or directory",  # ERROR_FILE_NOT_FOUND
+                3: "No such file or directory",  # ERROR_PATH_NOT_FOUND
+                5: "Permission denied",  # ERROR_ACCESS_DENIED
+                17: "File exists",  # ERROR_ALREADY_EXISTS
+                183: "File exists",  # ERROR_ALREADY_EXISTS (alt)
+            }
+            desc = _win_map.get(winerror)
+            if desc:
+                filename = getattr(e, "filename", None)
+                return f"{filename}: {desc}" if filename else desc
         strerror = getattr(e, "strerror", None)
         if strerror:
             # Real OS errors already include strerror in str(e); avoid doubling.
