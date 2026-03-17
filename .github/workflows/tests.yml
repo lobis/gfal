@@ -44,6 +44,18 @@ jobs:
       with:
         python-version: "3.12"
 
+    - name: Install CERN CA certificate
+      run: |
+        # CERN Root CA 2 is distributed in DER format; convert to PEM for the system store.
+        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Root%20Certification%20Authority%202.crt" \
+          -O /tmp/cern-root-ca.der
+        openssl x509 -inform DER -in /tmp/cern-root-ca.der \
+          -out /usr/local/share/ca-certificates/cern-root-ca-2.crt
+        sudo update-ca-certificates
+        # Point requests and aiohttp at the updated system bundle.
+        echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
     - name: Install package and test dependencies
       run: pip install ".[dev]"
 

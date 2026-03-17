@@ -5,8 +5,10 @@ These tests exercise real HTTP and XRootD endpoints.  They are marked
 ``integration`` and are **not** run by plain ``pytest tests/``; pass
 ``-m integration`` to include them.
 
-eospublic.cern.ch uses a self-signed CERN CA certificate, so all HTTP
-tests pass ``--no-verify`` to skip SSL validation.
+The CI workflow installs the CERN Root CA 2 certificate into the system
+trust store and sets ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` so that
+both aiohttp and requests accept the server certificate without any
+``--no-verify`` workaround.
 
 Known stable test file
 ----------------------
@@ -94,7 +96,7 @@ _SMALL_FILE_ADLER32 = "335e754f"
 
 @requires_http
 def test_http_stat_file():
-    rc, out, err = run_gfal("stat", "--no-verify", _SMALL_FILE_HTTP)
+    rc, out, err = run_gfal("stat", _SMALL_FILE_HTTP)
 
     assert rc == 0
     assert str(_SMALL_FILE_SIZE) in out
@@ -103,7 +105,7 @@ def test_http_stat_file():
 
 @requires_http
 def test_http_stat_shows_regular_file():
-    rc, out, err = run_gfal("stat", "--no-verify", _SMALL_FILE_HTTP)
+    rc, out, err = run_gfal("stat", _SMALL_FILE_HTTP)
 
     assert rc == 0
     assert "regular file" in out
@@ -111,7 +113,7 @@ def test_http_stat_shows_regular_file():
 
 @requires_http
 def test_http_cat_file():
-    rc, out, err = run_gfal("cat", "--no-verify", _SMALL_FILE_HTTP)
+    rc, out, err = run_gfal("cat", _SMALL_FILE_HTTP)
 
     assert rc == 0
     assert len(out) == _SMALL_FILE_SIZE
@@ -119,7 +121,7 @@ def test_http_cat_file():
 
 @requires_http
 def test_http_sum_md5(tmp_path):
-    rc, out, err = run_gfal("sum", "--no-verify", _SMALL_FILE_HTTP, "MD5")
+    rc, out, err = run_gfal("sum", _SMALL_FILE_HTTP, "MD5")
 
     assert rc == 0
     assert _SMALL_FILE_MD5 in out
@@ -127,7 +129,7 @@ def test_http_sum_md5(tmp_path):
 
 @requires_http
 def test_http_sum_adler32(tmp_path):
-    rc, out, err = run_gfal("sum", "--no-verify", _SMALL_FILE_HTTP, "ADLER32")
+    rc, out, err = run_gfal("sum", _SMALL_FILE_HTTP, "ADLER32")
 
     assert rc == 0
     assert _SMALL_FILE_ADLER32 in out
@@ -137,7 +139,7 @@ def test_http_sum_adler32(tmp_path):
 def test_http_copy_file(tmp_path):
     dst = tmp_path / "downloaded.C"
 
-    rc, out, err = run_gfal("cp", "--no-verify", _SMALL_FILE_HTTP, dst.as_uri())
+    rc, out, err = run_gfal("cp", _SMALL_FILE_HTTP, dst.as_uri())
 
     assert rc == 0
     assert dst.stat().st_size == _SMALL_FILE_SIZE
@@ -147,9 +149,7 @@ def test_http_copy_file(tmp_path):
 def test_http_copy_file_checksum(tmp_path):
     dst = tmp_path / "downloaded.C"
 
-    rc, out, err = run_gfal(
-        "cp", "--no-verify", "-K", "ADLER32", _SMALL_FILE_HTTP, dst.as_uri()
-    )
+    rc, out, err = run_gfal("cp", "-K", "ADLER32", _SMALL_FILE_HTTP, dst.as_uri())
 
     assert rc == 0
     assert dst.stat().st_size == _SMALL_FILE_SIZE
@@ -163,7 +163,7 @@ def test_http_stat_opendata_dir():
     HTTP response — it reports 'regular file' for directory URLs.  We only
     verify the command succeeds and returns stat output.
     """
-    rc, out, err = run_gfal("stat", "--no-verify", f"{_BASE_HTTP}/")
+    rc, out, err = run_gfal("stat", f"{_BASE_HTTP}/")
 
     assert rc == 0
     assert "File:" in out
