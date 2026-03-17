@@ -106,17 +106,36 @@ class CommandLs(base.CommandBase):
         info = fso.info(path)
         st = fs.StatInfo(info)
 
-        if stat.S_ISDIR(st.st_mode) and not self.params.directory:
-            entries = fso.ls(path, detail=True)
+        if self.params.directory:
+            self._print_entry(self.params.file, st)
+            return 0
+
+        # Always attempt ls() — errors (e.g. 403 on HTTP directories that don't
+        # support listing) propagate as real errors rather than silently showing
+        # just the URL.  This also handles HTTP where info() always returns
+        # type='file' even for directories.
+        entries = fso.ls(path, detail=True)
+
+        path_norm = path.rstrip("/")
+        is_self_only = entries and all(
+            e.get("name", "").rstrip("/") == path_norm for e in entries
+        )
+
+        if is_self_only:
+            # fsspec returns [the_entry_itself] when path is a file (local/XRootD)
+            self._print_entry(self.params.file, st)
+        elif not entries:
+            if not stat.S_ISDIR(st.st_mode):
+                # HTTP file: ls() returned nothing; fall back to showing the entry
+                self._print_entry(self.params.file, st)
+            # else: genuinely empty directory — no output
+        else:
             for entry_info in entries:
                 name = Path(entry_info["name"].rstrip("/")).name
                 if not self.params.all and name.startswith("."):
                     continue
                 entry_st = fs.StatInfo(entry_info)
                 self._print_entry(name, entry_st)
-        else:
-            name = self.params.file
-            self._print_entry(name, st)
 
         return 0
 

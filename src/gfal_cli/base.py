@@ -186,6 +186,27 @@ class CommandBase:
         for exc_type, description in _descriptions.items():
             if isinstance(e, exc_type):
                 return f"{msg}: {description}"
+        # HTTP errors from aiohttp: status attribute carries the HTTP code
+        status = getattr(e, "status", None)
+        if status is not None:
+            _http_descriptions = {
+                400: "Bad Request",
+                401: "Unauthorized",
+                403: "Permission denied",
+                404: "No such file or directory",
+                405: "Method not allowed",
+                408: "Request timeout",
+                409: "Conflict",
+                410: "Gone",
+                500: "Internal server error",
+                503: "Service unavailable",
+            }
+            url = getattr(e, "request_info", None)
+            url_str = str(url.url) if url is not None else ""
+            description = _http_descriptions.get(status, f"HTTP {status}")
+            if url_str:
+                return f"{url_str}: {description}"
+            return f"{description}"
         return msg
 
     def _executor(self, func):
