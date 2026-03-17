@@ -170,3 +170,40 @@ class TestMkdirAlreadyExists:
 
         assert rc == 0
         assert child.read_text() == "keep me"
+
+
+# ---------------------------------------------------------------------------
+# Error handling / partial failure
+# ---------------------------------------------------------------------------
+
+
+class TestMkdirErrors:
+    def test_error_message_to_stderr(self, tmp_path):
+        existing = tmp_path / "existing"
+        existing.mkdir()
+
+        rc, out, err = run_gfal("mkdir", existing.as_uri())
+
+        assert rc != 0
+        assert err.strip() != ""
+        assert out.strip() == ""
+
+    def test_partial_failure_continues(self, tmp_path):
+        """If one directory fails, the rest should still be attempted."""
+        existing = tmp_path / "existing"
+        existing.mkdir()
+        new_dir = tmp_path / "new"
+
+        rc, out, err = run_gfal("mkdir", existing.as_uri(), new_dir.as_uri())
+
+        assert rc != 0
+        assert new_dir.is_dir()  # second dir was still created
+
+    def test_parent_needed_but_no_p_flag(self, tmp_path):
+        """Creating a nested path without -p should fail."""
+        d = tmp_path / "missing_parent" / "child"
+
+        rc, out, err = run_gfal("mkdir", d.as_uri())
+
+        assert rc != 0
+        assert not d.exists()

@@ -17,6 +17,8 @@ source .venv/bin/activate   # macOS/Linux
 
 Never use the system `python` / `python3` / `pip` for this project. Always activate the venv or call `.venv/bin/python` explicitly.
 
+**IMPORTANT — editable install:** The package must be installed with `pip install -e .` (editable). A non-editable install caches a snapshot in site-packages; source changes are silently ignored and tests run against stale code. After any change, if unsure whether the install is editable, re-run `.venv/bin/pip install -e .`.
+
 ## Installation
 
 ```bash

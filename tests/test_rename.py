@@ -89,3 +89,24 @@ class TestRenameErrors:
         rc, out, err = run_gfal("rename", src.as_uri(), dst.as_uri())
 
         assert rc != 0
+
+    def test_destination_parent_missing(self, tmp_path):
+        """rename to a path whose parent doesn't exist should fail."""
+        src = tmp_path / "src.txt"
+        src.write_text("data")
+        dst = tmp_path / "nonexistent_parent" / "dst.txt"
+
+        rc, out, err = run_gfal("rename", src.as_uri(), dst.as_uri())
+
+        assert rc != 0
+        assert src.exists()  # source unchanged
+
+    def test_error_message_goes_to_stderr(self, tmp_path):
+        src = tmp_path / "no_such.txt"
+        dst = tmp_path / "dst.txt"
+
+        rc, out, err = run_gfal("rename", src.as_uri(), dst.as_uri())
+
+        assert rc != 0
+        assert err.strip() != ""
+        assert out.strip() == ""

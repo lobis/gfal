@@ -94,11 +94,17 @@ class CommandLs(base.CommandBase):
         default="auto",
         help="colorise output",
     )
+    @base.arg(
+        "-r",
+        "--reverse",
+        action="store_true",
+        help="reverse sort order",
+    )
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to list")
     def execute_ls(self):
         """List directory contents."""
         if self.params.full_time:
-            self.params.time_style = "long-iso"
+            self.params.time_style = "full-iso"
 
         opts = fs.build_storage_options(self.params)
         multi = len(self.params.file) > 1
@@ -134,7 +140,11 @@ class CommandLs(base.CommandBase):
         # support listing) propagate as real errors rather than silently showing
         # just the URL.  This also handles HTTP where info() always returns
         # type='file' even for directories.
-        entries = fso.ls(path, detail=True)
+        entries = sorted(
+            fso.ls(path, detail=True),
+            key=lambda e: Path(e.get("name", "").rstrip("/")).name.lower(),
+            reverse=self.params.reverse,
+        )
 
         path_norm = path.rstrip("/")
         is_self_only = entries and all(

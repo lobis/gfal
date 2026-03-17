@@ -30,9 +30,9 @@ gfal-xattr = "gfal_cli.shell:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
+    "pytest>=8.4",
     "pytest-cov>=4.0",
-    "pre-commit>=3.0",
+    "pre-commit>=4.5",
 ]
 xrootd = [
     "fsspec-xrootd>=0.5.2; sys_platform != 'win32'",

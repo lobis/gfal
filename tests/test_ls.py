@@ -199,6 +199,16 @@ class TestLsTimeStyles:
         assert rc == 0
         assert "f.txt" in out
 
+    def test_full_time_uses_full_iso(self, tmp_path):
+        """--full-time should produce full-ISO timestamps (with seconds and offset)."""
+        (tmp_path / "f.txt").write_text("x")
+
+        rc, out, err = run_gfal("ls", "-l", "--full-time", tmp_path.as_uri())
+
+        assert rc == 0
+        # full-iso format: YYYY-MM-DD HH:MM:SS.ffffff +0000
+        assert "+0000" in out
+
 
 # ---------------------------------------------------------------------------
 # Color output
@@ -367,3 +377,76 @@ class TestLsMultipleUrls:
         assert len(lines) == 1
         # A header line ends with ':'; the file URI itself does not end with ':'
         assert not lines[0].endswith(":")
+
+
+# ---------------------------------------------------------------------------
+# Sorted output
+# ---------------------------------------------------------------------------
+
+
+class TestLsReverse:
+    def test_reverse_flag(self, tmp_path):
+        for name in ["apple.txt", "mango.txt", "zebra.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", "-r", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names == sorted(names, key=str.lower, reverse=True)
+
+    def test_reverse_is_opposite_of_normal(self, tmp_path):
+        for name in ["cat.txt", "ant.txt", "bee.txt"]:
+            (tmp_path / name).write_text(name)
+
+        _, out_normal, _ = run_gfal("ls", tmp_path.as_uri())
+        _, out_reverse, _ = run_gfal("ls", "-r", tmp_path.as_uri())
+
+        normal_names = [ln.strip() for ln in out_normal.splitlines() if ln.strip()]
+        reverse_names = [ln.strip() for ln in out_reverse.splitlines() if ln.strip()]
+        assert normal_names == list(reversed(reverse_names))
+
+    def test_reverse_long_format(self, tmp_path):
+        for name in ["z.txt", "a.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", "-lr", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.split()[-1] for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "z.txt"
+        assert names[1] == "a.txt"
+
+
+class TestLsSorted:
+    def test_alphabetical_order(self, tmp_path):
+        """Directory entries are listed in alphabetical order."""
+        for name in ["zebra.txt", "apple.txt", "mango.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names == sorted(names, key=str.lower)
+
+    def test_sorted_with_long_format(self, tmp_path):
+        for name in ["zoo.txt", "ant.txt", "bee.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", "-l", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.split()[-1] for ln in out.splitlines() if ln.strip()]
+        assert names == sorted(names, key=str.lower)
+
+    def test_case_insensitive_sort(self, tmp_path):
+        """Mixed-case names sort without case sensitivity."""
+        for name in ["Beta.txt", "alpha.txt", "GAMMA.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names == sorted(names, key=str.lower)

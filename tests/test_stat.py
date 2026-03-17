@@ -191,3 +191,27 @@ class TestStatMultipleFiles:
         assert rc == 0
         assert "regular file" in out
         assert "directory" in out
+
+    def test_blank_line_separator_between_files(self, tmp_path):
+        """Multiple files should be separated by a blank line."""
+        a = tmp_path / "a.txt"
+        b = tmp_path / "b.txt"
+        a.write_text("x")
+        b.write_text("y")
+
+        rc, out, err = run_gfal("stat", a.as_uri(), b.as_uri())
+
+        assert rc == 0
+        lines = out.splitlines()
+        # There must be at least one blank line between the two file blocks
+        assert "" in lines
+
+    def test_no_trailing_blank_line_single_file(self, tmp_path):
+        """A single file stat should not have a leading blank line."""
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+
+        rc, out, err = run_gfal("stat", f.as_uri())
+
+        assert rc == 0
+        assert not out.startswith("\n")

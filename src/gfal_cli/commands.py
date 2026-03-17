@@ -38,17 +38,24 @@ class GfalCommands(base.CommandBase):
             int(str(self.params.mode), 8)
 
         opts = fs.build_storage_options(self.params)
+        rc = 0
         for d in self.params.directory:
-            fso, path = fs.url_to_fs(d, opts)
-            if self.params.parents:
-                # makedirs is idempotent; fall back to mkdir if not available
-                if hasattr(fso, "makedirs"):
-                    fso.makedirs(path, exist_ok=True)
+            try:
+                fso, path = fs.url_to_fs(d, opts)
+                if self.params.parents:
+                    # makedirs is idempotent; fall back to mkdir if not available
+                    if hasattr(fso, "makedirs"):
+                        fso.makedirs(path, exist_ok=True)
+                    else:
+                        with contextlib.suppress(FileExistsError):
+                            fso.mkdir(path, create_parents=True)
                 else:
-                    with contextlib.suppress(FileExistsError):
-                        fso.mkdir(path, create_parents=True)
-            else:
-                fso.mkdir(path, create_parents=False)
+                    fso.mkdir(path, create_parents=False)
+            except Exception as e:
+                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                ecode = getattr(e, "errno", None)
+                rc = ecode if ecode and 0 < ecode <= 255 else 1
+        return rc
 
     # ------------------------------------------------------------------
     # save  (stdin → remote file)
@@ -74,14 +81,22 @@ class GfalCommands(base.CommandBase):
     def execute_cat(self):
         """Print file contents to stdout."""
         opts = fs.build_storage_options(self.params)
+        rc = 0
         for url in self.params.file:
-            fso, path = fs.url_to_fs(url, opts)
-            with fso.open(path, "rb") as f:
-                while True:
-                    chunk = f.read(fs.CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    sys.stdout.buffer.write(chunk)
+            try:
+                fso, path = fs.url_to_fs(url, opts)
+                with fso.open(path, "rb") as f:
+                    while True:
+                        chunk = f.read(fs.CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+            except Exception as e:
+                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                ecode = getattr(e, "errno", None)
+                rc = ecode if ecode and 0 < ecode <= 255 else 1
+        return rc
 
     # ------------------------------------------------------------------
     # stat
@@ -92,13 +107,18 @@ class GfalCommands(base.CommandBase):
         """Display file status."""
         opts = fs.build_storage_options(self.params)
         rc = 0
+        first = True
         for url in self.params.file:
             try:
+                if not first:
+                    print()
                 self._stat_one(url, opts)
+                first = False
             except Exception as e:
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
                 ecode = getattr(e, "errno", None)
                 rc = ecode if ecode and 0 < ecode <= 255 else 1
+                first = False
         return rc
 
     def _stat_one(self, url, opts):

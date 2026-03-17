@@ -99,3 +99,28 @@ class TestSaveOverwrite:
 
         assert rc == 0
         assert f.read_text() == "short"
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestSaveErrors:
+    def test_missing_parent_directory_fails(self, tmp_path):
+        """Writing to a path whose parent doesn't exist should fail."""
+        f = tmp_path / "nonexistent_parent" / "out.txt"
+
+        rc, out, err = run_gfal("save", f.as_uri(), input="data")
+
+        assert rc != 0
+
+    def test_error_goes_to_stderr(self, tmp_path):
+        """Error messages should go to stderr, not stdout."""
+        f = tmp_path / "no_parent" / "out.txt"
+
+        rc, out, err = run_gfal("save", f.as_uri(), input="data")
+
+        assert rc != 0
+        assert out.strip() == ""
+        assert err.strip() != ""

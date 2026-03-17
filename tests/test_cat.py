@@ -106,3 +106,51 @@ class TestCatLargeFile:
 
         assert rc == 0
         assert stdout == data
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestCatErrors:
+    def test_nonexistent_error_message(self, tmp_path):
+        rc, out, err = run_gfal("cat", (tmp_path / "no_such.txt").as_uri())
+
+        assert rc != 0
+        assert "No such file" in err or "no such file" in err.lower()
+
+    def test_multi_file_one_missing_continues(self, tmp_path):
+        """Valid files before/after a missing file are still printed."""
+        f1 = tmp_path / "f1.txt"
+        f3 = tmp_path / "f3.txt"
+        f1.write_text("first")
+        f3.write_text("third")
+        missing = tmp_path / "no_such.txt"
+
+        rc, out, err = run_gfal("cat", f1.as_uri(), missing.as_uri(), f3.as_uri())
+
+        assert rc != 0
+        assert "first" in out
+        assert "third" in out
+        assert "no_such" in err or "No such file" in err
+
+    def test_multi_file_all_missing(self, tmp_path):
+        rc, out, err = run_gfal(
+            "cat",
+            (tmp_path / "a.txt").as_uri(),
+            (tmp_path / "b.txt").as_uri(),
+        )
+
+        assert rc != 0
+        assert out == ""
+
+    def test_multi_file_first_missing_rest_printed(self, tmp_path):
+        """Error on first file should not prevent subsequent files from printing."""
+        f2 = tmp_path / "f2.txt"
+        f2.write_text("present")
+
+        rc, out, err = run_gfal("cat", (tmp_path / "missing.txt").as_uri(), f2.as_uri())
+
+        assert rc != 0
+        assert "present" in out
