@@ -4,6 +4,7 @@ gfal-ls implementation.
 
 import math
 import os
+import re
 import stat
 import sys
 from datetime import datetime
@@ -64,6 +65,55 @@ for _entry in _ls_colors.split(":"):
             pass
 
 
+# ---------------------------------------------------------------------------
+# Sorting helpers
+# ---------------------------------------------------------------------------
+
+
+def _version_key(name):
+    """Natural / version sort key: '10' sorts after '9', not before."""
+    return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", name)]
+
+
+def _apply_sort(entries, sort_by, reverse_flag):
+    """Return entries sorted according to sort_by and reverse_flag.
+
+    Default directions match GNU ls:
+      name      — A-Z        (reverse: Z-A)
+      size      — largest first  (reverse: smallest first)
+      time      — newest first   (reverse: oldest first)
+      extension — A-Z by ext, then name  (reverse: Z-A)
+      version   — natural ascending      (reverse: descending)
+      none      — directory order        (reverse: reversed directory order)
+    """
+    if sort_by == "none":
+        return list(reversed(entries)) if reverse_flag else list(entries)
+
+    if sort_by == "size":
+        key = lambda e: fs.StatInfo(e).st_size  # noqa: E731
+        default_reverse = True  # largest first
+    elif sort_by == "time":
+        key = lambda e: fs.StatInfo(e).st_mtime  # noqa: E731
+        default_reverse = True  # newest first
+    elif sort_by == "extension":
+
+        def key(e):
+            name = Path(e.get("name", "").rstrip("/")).name
+            p = Path(name)
+            return (p.suffix.lower(), p.name.lower())
+
+        default_reverse = False
+    elif sort_by == "version":
+        key = lambda e: _version_key(Path(e.get("name", "").rstrip("/")).name)  # noqa: E731
+        default_reverse = False
+    else:  # "name"
+        key = lambda e: Path(e.get("name", "").rstrip("/")).name.lower()  # noqa: E731
+        default_reverse = False
+
+    actual_reverse = default_reverse ^ reverse_flag
+    return sorted(entries, key=key, reverse=actual_reverse)
+
+
 class CommandLs(base.CommandBase):
     @base.arg("-a", "--all", action="store_true", help="show hidden files")
     @base.arg("-l", "--long", action="store_true", help="long listing format")
@@ -99,6 +149,28 @@ class CommandLs(base.CommandBase):
         "--reverse",
         action="store_true",
         help="reverse sort order",
+    )
+    @base.arg(
+        "--sort",
+        dest="sort",
+        type=str,
+        choices=["name", "size", "time", "extension", "version", "none"],
+        default="name",
+        help="sort by: name (default), size, time, extension, version, none",
+    )
+    @base.arg(
+        "-S",
+        dest="sort",
+        action="store_const",
+        const="size",
+        help="sort by file size, largest first (same as --sort=size)",
+    )
+    @base.arg(
+        "-U",
+        dest="sort",
+        action="store_const",
+        const="none",
+        help="do not sort; list entries in directory order (same as --sort=none)",
     )
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to list")
     def execute_ls(self):
@@ -140,10 +212,10 @@ class CommandLs(base.CommandBase):
         # support listing) propagate as real errors rather than silently showing
         # just the URL.  This also handles HTTP where info() always returns
         # type='file' even for directories.
-        entries = sorted(
+        entries = _apply_sort(
             fso.ls(path, detail=True),
-            key=lambda e: Path(e.get("name", "").rstrip("/")).name.lower(),
-            reverse=self.params.reverse,
+            self.params.sort,
+            self.params.reverse,
         )
 
         path_norm = path.rstrip("/")
