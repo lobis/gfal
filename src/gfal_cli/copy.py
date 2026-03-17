@@ -12,7 +12,6 @@ import zlib
 from pathlib import Path
 
 from gfal_cli import base, fs
-from gfal_cli import tpc as tpc_mod
 from gfal_cli.progress import Progress
 
 
@@ -208,7 +207,11 @@ class CommandCopy(base.CommandBase):
         if use_tpc and not self.params.dry_run:
             tpc_timeout = getattr(self.params, "transfer_timeout", 0) or None
             try:
-                tpc_mod.do_tpc(
+                from gfal_cli import (
+                    tpc as _tpc,  # lazy: tpc.py may not be installed  # noqa: PLC0415
+                )
+
+                _tpc.do_tpc(
                     src_url,
                     dst_url,
                     opts,
@@ -218,6 +221,16 @@ class CommandCopy(base.CommandBase):
                     scitag=getattr(self.params, "scitag", None),
                 )
                 return  # TPC succeeded — nothing more to do
+            except ImportError as e:
+                if getattr(self.params, "tpc_only", False):
+                    raise OSError(
+                        "Third-party copy required (--tpc-only) but the tpc "
+                        "module is not available in this installation"
+                    ) from e
+                if self.params.verbose:
+                    sys.stderr.write(
+                        "TPC module not available, falling back to streaming\n"
+                    )
             except NotImplementedError as e:
                 if getattr(self.params, "tpc_only", False):
                     raise OSError(

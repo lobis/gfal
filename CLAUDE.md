@@ -4,6 +4,19 @@ A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gf
 
 The original gfal2-util implementation lives in `gfal2-util/` (gitignored, clone separately for reference) and is the reference for CLI compatibility.
 
+## Development environment
+
+A virtualenv lives at `.venv/` in the project root. Always use it:
+
+```bash
+source .venv/bin/activate   # macOS/Linux
+# or directly:
+.venv/bin/python -m pytest tests/
+.venv/bin/pip install -e .
+```
+
+Never use the system `python` / `python3` / `pip` for this project. Always activate the venv or call `.venv/bin/python` explicitly.
+
 ## Installation
 
 ```bash
@@ -84,6 +97,10 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 These are added automatically by `CommandBase.parse()`. Do not re-declare them in individual commands.
 
 ## Code style
+
+After making any code change, run ruff on the modified files before considering the task done.
+
+Whenever a **new file** is created inside the package (`src/gfal_cli/`) or tests (`tests/`), immediately run `git add <file>`. Hatchling (the build backend) only packages git-tracked files; untracked files are silently excluded from the wheel, causing `ImportError` at runtime even though the file exists in the working tree.
 
 After making any code change, run ruff on the modified files before considering the task done:
 

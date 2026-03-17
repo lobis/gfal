@@ -31,7 +31,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install package and test dependencies
-      run: pip install ".[dev]"
+      run: pip install --no-cache-dir ".[dev]"
 
     - name: Run unit and functional tests
       run: pytest tests/ -v -m "not integration"
@@ -61,7 +61,7 @@ jobs:
         echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
     - name: Install package and test dependencies (with XRootD)
-      run: pip install ".[dev,xrootd]"
+      run: pip install --no-cache-dir ".[dev,xrootd]"
 
     - name: Run integration tests (eospublic.cern.ch)
       run: pytest tests/ -v -m integration
