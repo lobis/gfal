@@ -1,11 +1,18 @@
 import datetime
-import fcntl
 import math
+import shutil
 import struct
 import sys
-import termios
 import threading
 import time
+
+try:
+    import fcntl
+    import termios
+
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 
 class Progress:
@@ -99,14 +106,18 @@ class Progress:
 
     @staticmethod
     def _terminal_width():
-        try:
-            data = fcntl.ioctl(
-                sys.stdin.fileno(), termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0)
-            )
-            _, w, _, _ = struct.unpack("HHHH", data)
-            return w
-        except Exception:
-            return 80
+        if _HAS_FCNTL:
+            try:
+                data = fcntl.ioctl(
+                    sys.stdin.fileno(),
+                    termios.TIOCGWINSZ,
+                    struct.pack("HHHH", 0, 0, 0, 0),
+                )
+                _, w, _, _ = struct.unpack("HHHH", data)
+                return w
+            except Exception:
+                pass
+        return shutil.get_terminal_size(fallback=(80, 24)).columns
 
     @staticmethod
     def _rate_str(rate):
