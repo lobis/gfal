@@ -53,7 +53,10 @@ def surl(value):
     parsed = urlparse(value)
     # A single-char scheme is a Windows drive letter (e.g. "C:"), not a real URL scheme
     if not parsed.scheme or len(parsed.scheme) == 1:
-        return Path(value).resolve().as_uri()
+        p = Path(value)
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        return p.as_uri()
     return value
 
 

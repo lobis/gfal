@@ -55,7 +55,10 @@ def normalize_url(url):
     scheme = parsed.scheme.lower()
     # A single-char scheme is a Windows drive letter (e.g. "C:"), not a real URL scheme
     if not scheme or len(scheme) == 1:
-        return Path(url).resolve().as_uri()
+        p = Path(url)
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        return p.as_uri()
     if scheme == "dav":
         return "http" + url[3:]
     if scheme == "davs":
