@@ -126,35 +126,45 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 These are added automatically by `CommandBase.parse()`. Do not redeclare them in individual commands.
 
-## Running tests
+## After every code change — mandatory checklist
 
-**MANDATORY**: After any code change, run the full test suite before considering the task done:
+Before considering any task done, **both** of the following must pass:
 
 ```bash
+# 1. Lint, format, and spell-check
+.venv/bin/pre-commit run --files <changed files>
+
+# 2. Full unit test suite
 .venv/bin/python -m pytest tests/ -x -q
 ```
 
-Integration tests (require network) are excluded by default; run them separately:
+Integration tests (require network) are excluded by default; run them separately when relevant:
 
 ```bash
 .venv/bin/python -m pytest tests/ -m integration -q
 ```
 
-All unit tests must pass. Do not mark a task complete if there are test failures.
+Do not mark a task complete if either pre-commit or pytest reports failures.
 
 ## Code style
 
-After making any code change, run ruff on the modified files before considering the task done.
+After making any code change, run pre-commit on the modified files before considering the task done:
+
+```bash
+.venv/bin/pre-commit run --files <file1> <file2> ...
+```
+
+pre-commit runs (in order): trailing-whitespace, end-of-file-fixer, YAML/TOML checks, debug-statement detection, **ruff** (lint + auto-fix), **ruff-format**, and **codespell**. Running it directly catches everything the CI gate checks, including spelling mistakes.
+
+To run against every file at once (e.g. after a large refactor):
+
+```bash
+.venv/bin/pre-commit run --all-files
+```
 
 Whenever a **new file** is created inside the package (`src/gfal_cli/`) or tests (`tests/`), immediately run `git add <file>`. Hatchling (the build backend) only packages git-tracked files; untracked files are silently excluded from the wheel, causing `ImportError` at runtime even though the file exists in the working tree.
 
-After making any code change, run ruff on the modified files before considering the task done:
-
-```bash
-ruff check <file1> <file2> ...
-```
-
-ruff is configured as a pre-commit hook and enforces the `PTH` rule family: always use `pathlib.Path` methods instead of `os.path` equivalents. Key mappings:
+The ruff configuration enforces the `PTH` rule family: always use `pathlib.Path` methods instead of `os.path` equivalents. Key mappings:
 
 | `os.path` | `Path` equivalent |
 |-----------|-------------------|

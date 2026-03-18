@@ -8,9 +8,9 @@ No external network access is required.
 
 from __future__ import annotations
 
+import posixpath
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 
 import pytest
 
@@ -64,9 +64,9 @@ def _make_propfind_response(path: str, depth: int) -> str:
 
     if depth == 1 and is_dir:
         for entry in sorted(_vfs):
-            # Direct children only
+            # Direct children only — use posixpath so it works on Windows too
             epath = entry.rstrip("/")
-            parent = str(Path(epath).parent)
+            parent = posixpath.dirname(epath)
             if parent.rstrip("/") != norm:
                 continue
             child_is_dir = entry.endswith("/")
@@ -108,7 +108,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
                 self.send_response(405)
                 self.end_headers()
                 return
-            parent = str(Path(path.rstrip("/")).parent).rstrip("/") + "/"
+            parent = posixpath.dirname(path.rstrip("/")).rstrip("/") + "/"
             # root is always "/"
             if parent != "/" and parent not in _vfs:
                 self.send_response(409)
