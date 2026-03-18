@@ -1,5 +1,7 @@
 """Tests for gfal-ls — mirrors reference gfal2-util/test/functional/test_ls.py."""
 
+import os
+
 import pytest
 
 from helpers import run_gfal
@@ -548,3 +550,75 @@ class TestLsXattr:
         assert rc == 0
         combined = out + err
         assert "xattr" in combined
+
+
+# ---------------------------------------------------------------------------
+# Sort by time
+# ---------------------------------------------------------------------------
+
+
+class TestLsSortByTime:
+    def test_sort_by_time_newest_first(self, tmp_path):
+        """--sort=time lists newest files first (default direction)."""
+        old = tmp_path / "old.txt"
+        new = tmp_path / "new.txt"
+        old.write_text("old")
+        new.write_text("new")
+        os.utime(old, (1_000_000, 1_000_000))
+        os.utime(new, (2_000_000, 2_000_000))
+
+        rc, out, err = run_gfal("ls", "--sort=time", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "new.txt"
+        assert names[1] == "old.txt"
+
+    def test_sort_by_time_reversed(self, tmp_path):
+        """--sort=time -r lists oldest files first."""
+        old = tmp_path / "old.txt"
+        new = tmp_path / "new.txt"
+        old.write_text("old")
+        new.write_text("new")
+        os.utime(old, (1_000_000, 1_000_000))
+        os.utime(new, (2_000_000, 2_000_000))
+
+        rc, out, err = run_gfal("ls", "--sort=time", "-r", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "old.txt"
+        assert names[1] == "new.txt"
+
+    def test_sort_by_time_three_files(self, tmp_path):
+        """Three files with distinct mtimes are sorted newest-first."""
+        for name, mtime in [
+            ("a.txt", 1_000_000),
+            ("b.txt", 3_000_000),
+            ("c.txt", 2_000_000),
+        ]:
+            f = tmp_path / name
+            f.write_text(name)
+            os.utime(f, (mtime, mtime))
+
+        rc, out, err = run_gfal("ls", "--sort=time", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names == ["b.txt", "c.txt", "a.txt"]
+
+    def test_sort_by_time_long_format(self, tmp_path):
+        """--sort=time works together with -l."""
+        old = tmp_path / "old.txt"
+        new = tmp_path / "new.txt"
+        old.write_text("old")
+        new.write_text("new")
+        os.utime(old, (1_000_000, 1_000_000))
+        os.utime(new, (2_000_000, 2_000_000))
+
+        rc, out, err = run_gfal("ls", "-l", "--sort=time", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.split()[-1] for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "new.txt"
+        assert names[1] == "old.txt"

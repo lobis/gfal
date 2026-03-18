@@ -173,6 +173,14 @@ class GfalCommands(base.CommandBase):
         dst_fs, dst_path = fs.url_to_fs(self.params.destination, opts)
         if type(src_fs) is not type(dst_fs):
             raise OSError("rename across different filesystem types is not supported")
+        # XRootDFileSystem inherits mv() from AbstractFileSystem which uses
+        # copy() + rm() and blocks indefinitely in the gfal thread context.
+        # Use the native XRootD client's mv() instead.
+        if hasattr(src_fs, "_myclient"):
+            status, _ = src_fs._myclient.mv(src_path, dst_path)
+            if not status.ok:
+                raise OSError(status.errno, status.message.strip())
+            return
         src_fs.mv(src_path, dst_path)
 
     # ------------------------------------------------------------------

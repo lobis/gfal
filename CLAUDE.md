@@ -35,6 +35,14 @@ Never use the system `python` / `python3` / `pip` for this project. Always activ
 
 **IMPORTANT — editable install:** The package must be installed with `pip install -e .` (editable). A non-editable install caches a snapshot in site-packages; source changes are silently ignored and tests run against stale code. After any change, if unsure whether the install is editable, re-run `.venv/bin/pip install -e .`.
 
+To verify the install is editable (source changes are picked up), check that the module file points into `src/`:
+
+```bash
+.venv/bin/python -c "from gfal_cli import commands; print(commands.__file__)"
+# Good: /path/to/gfal-cli/src/gfal_cli/commands.py
+# Bad:  /path/to/gfal-cli/.venv/lib/pythonX.Y/site-packages/gfal_cli/commands.py
+```
+
 ## Installation
 
 ```bash
@@ -81,6 +89,10 @@ To add a new command:
 - HTTP `info()` returns very few fields (no mode, uid, gid, timestamps). `StatInfo` fills in sensible defaults so the rest of the code doesn't need to guard every access.
 - For XRootD the `info()` dict contains a `mode` integer; rely on that rather than synthesising it.
 - XRootD via `fsspec.filesystem("root")` fails — use `fsspec.url_to_fs(url)` instead so fsspec extracts the `hostid` from the URL and passes it to `XRootDFileSystem.__init__()`.
+- XRootD URL paths use **double-slash** for absolute paths: `root://host//abs/path`. A single slash (`root://host/path`) is treated as a relative path and rejected by servers configured with `oss.localroot`.
+- `XRootDFileSystem.mv()` is inherited from `AbstractFileSystem` and calls `copy()` + `rm()`. `_cp_file` raises `NotImplementedError`, producing a silent empty error (`str(NotImplementedError()) == ""`). Always use `fso._myclient.mv(src_path, dst_path)` for XRootD renames (already done in `execute_rename`).
+- `XRootDFileSystem.ls(file_path)` raises `OSError("not a directory")` when called on a file path instead of returning a single-entry list. Already handled in `ls.py` with a try/except fallback to `[info]`.
+- `XRootDFileSystem._myclient` is an `XRootD.client.FileSystem` instance. Its `mv(src, dst)` returns `(XRootDStatus, None)`. Check `status.ok` for success; `status.errno` is 0 even on failure for some errors — use `status.message` for the human-readable description.
 
 ### HTTP error messages
 
@@ -188,6 +200,8 @@ When a `str` is required (e.g. for `os.environ`, `ctypes.CDLL`, or third-party A
 
 `CommandBase._format_error(e)` converts exceptions to user-friendly strings. It handles three cases: real OS errors (already have `strerror` in `str(e)`), fsspec-style `OSError` subclasses with no `strerror` (appends POSIX description from the type), and aiohttp `ClientResponseError` with an HTTP `status` code (maps to POSIX description).
 
+**Debugging tip:** If `gfal-<cmd>:` shows an empty error message, the exception is likely `NotImplementedError` or another exception type whose `str()` is `""`. These are easy to miss because the output looks like a blank error rather than a crash.
+
 ## Third-party copy (`tpc.py`)
 
 `gfal-cp` supports TPC via `--tpc` (attempt TPC, fall back to streaming) and `--tpc-only` (require TPC). The dispatch in `copy.py:_do_copy` calls `tpc.do_tpc()` before falling through to `_copy_file`.
@@ -257,8 +271,27 @@ pytest test suite lives in `tests/`. Run with:
 ```bash
 pytest tests/                                    # all unit tests
 pytest tests/ -m integration                     # integration tests (need network)
+pytest tests/ -m xrootd                          # XRootD server tests (auto-skip if xrootd not installed)
 pytest tests/test_integration_eospublic.py       # EOS public endpoint tests
 ```
+
+### XRootD integration tests (`tests/test_xrootd.py`)
+
+The `xrootd_server` fixture (in `conftest.py`) starts a real local XRootD daemon automatically. Tests are skipped if the `xrootd` binary or `fsspec-xrootd` package is not installed.
+
+The fixture serves a temp directory over `root://` and optionally `https://` (XrdHttp plugin, requires `openssl`). Minimal server config used:
+
+```
+xrd.port <PORT>
+oss.localroot <data_dir>
+xrd.protocol xrootd *
+xrootd.export /
+sec.protbind * none      # no authentication (test only)
+```
+
+For XrdHttp (HTTPS): `xrd.protocol http:<PORT> /opt/homebrew/lib/libXrdHttp-5.so` — the plugin path is macOS/Homebrew-specific.
+
+The `helpers.py` `_subprocess_env()` sets `DYLD_LIBRARY_PATH` to the `pyxrootd` directory for macOS, since test subprocesses run as `python -c "..."` (not real binaries) and bypass the re-exec guard in `shell.main()`.
 
 Manual smoke tests against local files:
 

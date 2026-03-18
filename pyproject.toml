@@ -61,6 +61,7 @@ version-file = "src/gfal_cli/_version.py"
 testpaths = ["tests"]
 markers = [
     "integration: tests that require network access to external services",
+    "xrootd: tests that require a local XRootD server (started automatically by the fixture)",
 ]
 
 [tool.ruff]

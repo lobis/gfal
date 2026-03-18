@@ -221,11 +221,18 @@ class CommandLs(base.CommandBase):
         # support listing) propagate as real errors rather than silently showing
         # just the URL.  This also handles HTTP where info() always returns
         # type='file' even for directories.
-        entries = _apply_sort(
-            fso.ls(path, detail=True),
-            self.params.sort,
-            self.params.reverse,
-        )
+        try:
+            raw_entries = fso.ls(path, detail=True)
+        except OSError as _e:
+            # XRootD (and some other backends) raise OSError when ls() is called
+            # on a file path ("not a directory").  Fall back to a single-entry
+            # list so the file is displayed normally.
+            _msg = str(_e).lower()
+            if "not a directory" in _msg or getattr(_e, "errno", None) == 20:
+                raw_entries = [info]
+            else:
+                raise
+        entries = _apply_sort(raw_entries, self.params.sort, self.params.reverse)
 
         path_norm = path.rstrip("/")
         is_self_only = entries and all(

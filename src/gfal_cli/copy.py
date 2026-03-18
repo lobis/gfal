@@ -181,6 +181,14 @@ class CommandCopy(base.CommandBase):
                 self.params.tpc = True
                 self.params.tpc_mode = self.params.copy_mode  # "pull" or "push"
 
+        # Validate --scitag range [65, 65535] per WLCG spec
+        if self.params.scitag is not None and not (65 <= self.params.scitag <= 65535):
+            sys.stderr.write(
+                f"{self.progr}: invalid --scitag value {self.params.scitag}: "
+                "must be in range [65, 65535]\n"
+            )
+            return 1
+
         # Warn about accepted-but-ignored GridFTP/SRM flags
         _ignored = {
             "--nbstreams": self.params.nbstreams,
@@ -263,9 +271,13 @@ class CommandCopy(base.CommandBase):
 
         if not self.params.just_copy:
             if dst_exists and not dst_isdir and not self.params.force:
-                raise FileExistsError(
-                    f"Destination '{dst_url}' exists and --force not set"
-                )
+                # Pipes and character devices (e.g. /dev/stdout) can always be
+                # written to without --force — they don't hold persistent data.
+                _is_special = _is_special_file(dst_path)
+                if not _is_special:
+                    raise FileExistsError(
+                        f"Destination '{dst_url}' exists and --force not set"
+                    )
 
             if dst_exists and not dst_isdir and src_isdir:
                 raise IsADirectoryError("Cannot copy a directory over a file")
@@ -522,6 +534,20 @@ def _finalise_hasher(h, alg):
     if alg in ("ADLER32", "CRC32"):
         return f"{h[1]:08x}"
     return h.hexdigest()
+
+
+def _is_special_file(path):
+    """Return True if *path* is a FIFO, character device, or socket.
+
+    These can always be written to without ``--force`` because they don't
+    hold persistent data that would be lost on overwrite (e.g. /dev/stdout).
+    Returns False on any OS error (e.g. path is on a remote filesystem).
+    """
+    try:
+        m = Path(path).stat().st_mode
+        return stat.S_ISFIFO(m) or stat.S_ISCHR(m) or stat.S_ISSOCK(m)
+    except OSError:
+        return False
 
 
 def _checksum_fs(fso, path, alg):

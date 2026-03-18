@@ -199,3 +199,135 @@ def permission_file(tmp_path):
     f.write_text("content")
     f.chmod(0o644)
     return f
+
+
+# ---------------------------------------------------------------------------
+# Local XRootD server fixtures
+# ---------------------------------------------------------------------------
+
+
+def _find_free_port():
+    """Bind to port 0 and return the OS-assigned port number."""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_port(host, port, timeout=10.0):
+    """Block until a TCP port accepts connections or timeout expires."""
+    import socket
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, OSError):
+            time.sleep(0.1)
+    return False
+
+
+@pytest.fixture(scope="session")
+def xrootd_server(tmp_path_factory):
+    """Start a local XRootD server (root:// + https://) for integration tests.
+
+    Yields a dict with keys:
+      ``data_dir``  — pathlib.Path to the directory being served
+      ``root_url``  — base URL for the XRootD protocol (root://localhost:PORT/)
+      ``https_url`` — base URL for the HTTPS interface (https://localhost:PORT/)
+      ``cert_pem``  — path to the self-signed CA/server PEM (for TLS verification)
+    """
+    import shutil
+    import subprocess
+
+    xrootd_bin = shutil.which("xrootd")
+    if xrootd_bin is None:
+        pytest.skip("xrootd binary not found; skipping XRootD server tests")
+
+    try:
+        import fsspec_xrootd  # noqa: F401
+    except ImportError:
+        pytest.skip("fsspec-xrootd not installed; skipping XRootD server tests")
+
+    base = tmp_path_factory.mktemp("xrootd")
+    data_dir = base / "data"
+    data_dir.mkdir()
+    cfg_dir = base / "cfg"
+    cfg_dir.mkdir()
+
+    xroot_port = _find_free_port()
+    http_port = _find_free_port()
+
+    # Self-signed certificate for the HTTPS interface
+    cert_pem = cfg_dir / "cert.pem"
+    key_pem = cfg_dir / "key.pem"
+    try:
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(key_pem),
+                "-out",
+                str(cert_pem),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=localhost",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        has_tls = True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        has_tls = False
+
+    cfg_lines = [
+        f"xrd.port {xroot_port}",
+        f"oss.localroot {data_dir}",
+        "xrd.protocol xrootd *",
+        "xrootd.export /",
+        "sec.protbind * none",
+    ]
+    if has_tls:
+        cfg_lines += [
+            f"xrd.protocol http:{http_port} /opt/homebrew/lib/libXrdHttp-5.so",
+            f"http.cert {cert_pem}",
+            f"http.key {key_pem}",
+        ]
+
+    cfg_file = cfg_dir / "xrootd.cfg"
+    cfg_file.write_text("\n".join(cfg_lines) + "\n")
+    log_file = cfg_dir / "xrootd.log"
+
+    proc = subprocess.Popen(
+        [xrootd_bin, "-c", str(cfg_file), "-l", str(log_file)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    if not _wait_for_port("localhost", xroot_port, timeout=10.0):
+        proc.kill()
+        pytest.skip("XRootD server did not start in time")
+
+    yield {
+        "data_dir": data_dir,
+        # XRootD requires double-slash for absolute paths: root://host//abs/path
+        # Single-slash would be a relative path (disallowed by the server config).
+        "root_url": f"root://localhost:{xroot_port}//",
+        "https_url": f"https://localhost:{http_port}/" if has_tls else None,
+        "cert_pem": str(cert_pem) if has_tls else None,
+    }
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
