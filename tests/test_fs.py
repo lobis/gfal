@@ -326,3 +326,61 @@ class TestBuildStorageOptions:
         params = SimpleNamespace(cert=None, key=None, ssl_verify=False)
         opts = build_storage_options(params)
         assert opts["ssl_verify"] is False
+
+    def test_x509_proxy_from_env(self, monkeypatch, tmp_path):
+        """X509_USER_PROXY env var is used as client cert when no --cert given."""
+        from types import SimpleNamespace
+
+        from gfal_cli.fs import build_storage_options
+
+        proxy = tmp_path / "proxy.pem"
+        proxy.write_text("fake proxy")
+        monkeypatch.setenv("X509_USER_PROXY", str(proxy))
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+        assert opts.get("client_cert") == str(proxy)
+        assert opts.get("client_key") == str(proxy)
+
+    def test_explicit_cert_overrides_x509_proxy(self, monkeypatch, tmp_path):
+        """An explicit --cert flag takes precedence over X509_USER_PROXY."""
+        from types import SimpleNamespace
+
+        from gfal_cli.fs import build_storage_options
+
+        proxy = tmp_path / "proxy.pem"
+        proxy.write_text("fake proxy")
+        explicit_cert = tmp_path / "user_cert.pem"
+        explicit_cert.write_text("user cert")
+        monkeypatch.setenv("X509_USER_PROXY", str(proxy))
+
+        params = SimpleNamespace(cert=str(explicit_cert), key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+        assert opts.get("client_cert") == str(explicit_cert)
+        # The proxy path must NOT appear
+        assert opts.get("client_cert") != str(proxy)
+
+    def test_x509_proxy_nonexistent_path_ignored(self, monkeypatch):
+        """A non-existent path in X509_USER_PROXY is silently ignored."""
+        from types import SimpleNamespace
+
+        from gfal_cli.fs import build_storage_options
+
+        monkeypatch.setenv("X509_USER_PROXY", "/tmp/this_does_not_exist_gfal_test.pem")
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+        # A non-existent proxy file must not be forwarded as client_cert
+        assert "client_cert" not in opts
+
+    def test_x509_proxy_empty_string_ignored(self, monkeypatch):
+        """An empty X509_USER_PROXY is silently ignored."""
+        from types import SimpleNamespace
+
+        from gfal_cli.fs import build_storage_options
+
+        monkeypatch.setenv("X509_USER_PROXY", "")
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+        assert opts == {}

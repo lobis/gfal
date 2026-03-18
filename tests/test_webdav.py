@@ -497,6 +497,60 @@ class TestWebDAVViaGfalCli:
         assert rc == 0
         assert "File:" in out
 
+    def test_gfal_cp_upload(self, dav_server, tmp_path):
+        """gfal-cp from a local file to the mock WebDAV server."""
+        from helpers import run_gfal
+
+        local = tmp_path / "upload_src.txt"
+        local.write_bytes(b"upload content")
+
+        rc, out, err = run_gfal("cp", local.as_uri(), dav_server + "/uploaded.txt")
+        assert rc == 0
+        with _vfs_lock:
+            assert "/uploaded.txt" in _vfs
+
+    def test_gfal_cp_download(self, dav_server, tmp_path):
+        """gfal-cp from the mock WebDAV server to a local file."""
+        from helpers import run_gfal
+
+        with _vfs_lock:
+            _vfs.add("/download.txt")
+
+        local_dst = tmp_path / "downloaded.txt"
+        rc, out, err = run_gfal("cp", dav_server + "/download.txt", local_dst.as_uri())
+        assert rc == 0
+        assert local_dst.exists()
+        # Mock server returns b"hello" for any GET
+        assert local_dst.read_bytes() == b"hello"
+
+    def test_gfal_rename(self, dav_server):
+        """gfal-rename moves a file on the mock WebDAV server."""
+        from helpers import run_gfal
+
+        with _vfs_lock:
+            _vfs.add("/rename_src.txt")
+
+        rc, out, err = run_gfal(
+            "rename",
+            dav_server + "/rename_src.txt",
+            dav_server + "/rename_dst.txt",
+        )
+        assert rc == 0
+        with _vfs_lock:
+            assert "/rename_dst.txt" in _vfs
+            assert "/rename_src.txt" not in _vfs
+
+    def test_gfal_cat_via_webdav(self, dav_server):
+        """gfal-cat reads file content from the mock WebDAV server."""
+        from helpers import run_gfal
+
+        with _vfs_lock:
+            _vfs.add("/cat_me.txt")
+
+        rc, out, err = run_gfal("cat", dav_server + "/cat_me.txt")
+        assert rc == 0
+        assert "hello" in out
+
 
 class TestWebDAVSslError:
     """SSL errors should not be silently mapped to 'No such file or directory'."""

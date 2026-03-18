@@ -536,3 +536,153 @@ class TestAutoTpc:
 
         assert rc == 0
         assert dst.read_bytes() == b"hello"
+
+
+# ---------------------------------------------------------------------------
+# Additional TestCopyTpcFlags tests
+# ---------------------------------------------------------------------------
+
+
+class TestCopyTpcFlagsExtra:
+    def test_tpc_fallback_no_failed_output(self, tmp_path):
+        """--tpc on a local->local copy falls back to streaming.
+
+        Regression test: the lazy progress fix must not print '[FAILED]' to
+        stdout/stderr when TPC raises NotImplementedError and the copy succeeds
+        via the streaming fallback.
+        """
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"fallback data")
+
+        rc, out, err = run_gfal("cp", "--tpc", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert "[FAILED]" not in (out + err)
+        assert dst.read_bytes() == b"fallback data"
+
+    def test_tpc_only_local_to_https_no_fallback(self, tmp_path):
+        """--tpc-only with a local source must fail even if dst is HTTPS.
+
+        TPC is not supported (local src), so with --tpc-only there is no
+        streaming fallback and the command must exit non-zero.
+        """
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"data")
+
+        rc, out, err = run_gfal(
+            "cp", "--tpc-only", src.as_uri(), "https://example.com/dst"
+        )
+
+        assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# TestTpcStartCallback
+# ---------------------------------------------------------------------------
+
+
+class TestTpcStartCallback:
+    def test_start_callback_forwarded_to_xrootd_tpc(self):
+        """do_tpc passes start_callback through to _xrootd_tpc."""
+        cb = MagicMock()
+        with patch.object(tpc_mod, "_xrootd_tpc", return_value=True) as mock_xrd:
+            tpc_mod.do_tpc(
+                "root://a.example.com//file",
+                "root://b.example.com//file",
+                {},
+                start_callback=cb,
+            )
+        _, kwargs = mock_xrd.call_args
+        assert kwargs.get("start_callback") is cb
+
+    def test_start_callback_forwarded_to_http_tpc(self):
+        """do_tpc does not crash when start_callback is passed for HTTP->HTTP.
+
+        _http_tpc does not accept start_callback; do_tpc simply does not
+        forward it.  Verify that _http_tpc is called and no exception is raised.
+        """
+        cb = MagicMock()
+        with patch.object(tpc_mod, "_http_tpc", return_value=True) as mock_http:
+            tpc_mod.do_tpc(
+                "https://src.example.com/file",
+                "https://dst.example.com/file",
+                {},
+                start_callback=cb,
+            )
+        mock_http.assert_called_once()
+
+    def test_xrootd_tpc_invokes_start_callback(self):
+        """_xrootd_tpc calls start_callback() before the blocking CopyProcess."""
+        # Build a minimal mock of the XRootD module hierarchy.
+        xrd_status_ok = MagicMock()
+        xrd_status_ok.ok = True
+        xrd_status_ok.message = ""
+
+        mock_process = MagicMock()
+        mock_process.prepare.return_value = (xrd_status_ok, None)
+        mock_process.run.return_value = (xrd_status_ok, [])
+
+        mock_copy_process_cls = MagicMock(return_value=mock_process)
+        mock_xrd_client = MagicMock()
+        mock_xrd_client.CopyProcess = mock_copy_process_cls
+        mock_xrd_module = MagicMock()
+        mock_xrd_module.client = mock_xrd_client
+
+        import sys
+
+        with patch.dict(
+            sys.modules, {"XRootD": mock_xrd_module, "XRootD.client": mock_xrd_client}
+        ):
+            cb = MagicMock()
+            tpc_mod._xrootd_tpc(
+                "root://a.example.com//file",
+                "root://b.example.com//file",
+                timeout=None,
+                verbose=False,
+                start_callback=cb,
+            )
+
+        cb.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Additional TestParseTpcBody tests
+# ---------------------------------------------------------------------------
+
+
+class TestParseTpcBodyExtra:
+    def _make_resp(self, status_code, lines=None):
+        resp = MagicMock()
+        resp.status_code = status_code
+        if lines is not None:
+            resp.iter_lines.return_value = iter(lines)
+        return resp
+
+    def test_progress_callback_called_with_bytes(self):
+        """progress_callback receives cumulative bytes from perf markers."""
+        lines = [
+            "Perf Marker",
+            "  Stripe Bytes Transferred: 524288",
+            "End",
+            "Perf Marker",
+            "  Stripe Bytes Transferred: 1048576",
+            "End",
+            "success: Created",
+        ]
+        resp = self._make_resp(202, lines)
+        cb = MagicMock()
+        tpc_mod._parse_tpc_body(resp, progress_callback=cb)
+        assert cb.call_count == 2
+        calls = [c[0][0] for c in cb.call_args_list]
+        assert calls[0] == 524288
+        assert calls[1] == 1048576
+
+    def test_progress_callback_not_called_on_immediate_success(self):
+        """progress_callback is NOT called when the server responds 201 with no body."""
+        resp = self._make_resp(201)
+        # iter_lines is not called for non-202; provide empty iterator just in case
+        resp.iter_lines.return_value = iter([])
+        cb = MagicMock()
+        tpc_mod._parse_tpc_body(resp, progress_callback=cb)
+        cb.assert_not_called()

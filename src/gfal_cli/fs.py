@@ -130,7 +130,7 @@ def build_storage_options(params):
     if not cert:
         # Fall back to the proxy auto-detected (or user-set) in the environment.
         proxy = os.environ.get("X509_USER_PROXY")
-        if proxy:
+        if proxy and Path(proxy).is_file():
             cert = proxy
             key = proxy
     if cert:
