@@ -7,11 +7,11 @@ A Python reimplementation of the [gfal2-util](https://github.com/cern-fts/gfal2-
 No PyPI release yet. Install directly from GitHub:
 
 ```bash
-# Latest from the master branch
-pip install "git+https://github.com/lobis/xrootd.git#subdirectory=python/gfal-rewrite/gfal-cli"
+# Latest from the main branch
+pip install "git+https://github.com/lobis/gfal-cli.git"
 
 # With XRootD support (Linux/macOS only)
-pip install "git+https://github.com/lobis/xrootd.git#subdirectory=python/gfal-rewrite/gfal-cli[xrootd]"
+pip install "git+https://github.com/lobis/gfal-cli.git[xrootd]"
 ```
 
 After installation the following commands are available on your `PATH`:
@@ -237,8 +237,8 @@ Every command accepts these global flags:
 ## Development
 
 ```bash
-git clone https://github.com/lobis/xrootd.git
-cd xrootd/python/gfal-rewrite/gfal-cli
+git clone https://github.com/lobis/gfal-cli.git
+cd gfal-cli
 
 python -m venv .venv
 source .venv/bin/activate
