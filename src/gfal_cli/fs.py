@@ -3,6 +3,7 @@ fsspec integration layer: URL normalisation, filesystem acquisition,
 and a stat-like wrapper around fsspec info() dicts.
 """
 
+import os
 import stat as stat_module
 import sys
 from pathlib import Path
@@ -117,11 +118,24 @@ def url_to_fs(url, storage_options=None):
 
 
 def build_storage_options(params):
-    """Build fsspec storage_options from parsed CLI params."""
+    """Build fsspec storage_options from parsed CLI params.
+
+    Picks up the X.509 proxy auto-detected by base.py (X509_USER_PROXY) so
+    that HTTP/HTTPS sessions also present the client certificate when no
+    explicit --cert flag was given.
+    """
     opts = {}
-    if getattr(params, "cert", None):
-        opts["client_cert"] = params.cert
-        opts["client_key"] = params.key or params.cert
+    cert = getattr(params, "cert", None)
+    key = getattr(params, "key", None)
+    if not cert:
+        # Fall back to the proxy auto-detected (or user-set) in the environment.
+        proxy = os.environ.get("X509_USER_PROXY")
+        if proxy:
+            cert = proxy
+            key = proxy
+    if cert:
+        opts["client_cert"] = cert
+        opts["client_key"] = key or cert
     if not getattr(params, "ssl_verify", True):
         opts["ssl_verify"] = False
     return opts

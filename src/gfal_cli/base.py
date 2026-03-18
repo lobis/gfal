@@ -280,6 +280,11 @@ class CommandBase:
             if url_str:
                 return f"{url_str}: {description}"
             return f"{description}"
+        # Last resort: str(e) was empty (e.g. NotImplementedError()).  Show the
+        # exception type so the user sees something actionable instead of a
+        # blank "ERROR:" line.
+        if not msg:
+            return f"({type(e).__name__})"
         return msg
 
     def _executor(self, func):

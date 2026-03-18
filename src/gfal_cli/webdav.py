@@ -12,7 +12,9 @@ matching the convention used by fsspec's HTTPFileSystem.
 from __future__ import annotations
 
 import contextlib
+import io
 import stat as stat_module
+import tempfile
 from email.utils import parsedate_to_datetime
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
@@ -159,6 +161,49 @@ def _raise_for_status(resp, url: str) -> None:
         )
     if sc >= 400:
         resp.raise_for_status()
+
+
+# ---------------------------------------------------------------------------
+# Write-mode file object (HTTP PUT)
+# ---------------------------------------------------------------------------
+
+
+class _RequestsPutFile(io.RawIOBase):
+    """Write-only file object that buffers data and sends an HTTP PUT on close.
+
+    Up to 64 MiB is kept in memory (via SpooledTemporaryFile); beyond that the
+    data is spilled to a temporary file on disk.  The PUT is issued as a single
+    streaming request when close() is called, so the server never sees a
+    partial upload unless close() raises an exception.
+    """
+
+    def __init__(self, session, url: str, verify) -> None:
+        self._session = session
+        self._url = url
+        self._verify = verify
+        self._buf: tempfile.SpooledTemporaryFile = tempfile.SpooledTemporaryFile(  # noqa: SIM115
+            max_size=64 * 1024 * 1024
+        )
+
+    # io.RawIOBase interface
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b) -> int:  # type: ignore[override]
+        return self._buf.write(b)
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._buf.seek(0)
+                resp = self._session.put(self._url, data=self._buf, verify=self._verify)
+                resp.raise_for_status()
+            finally:
+                self._buf.close()
+                super().close()
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +386,8 @@ class WebDAVFileSystem:
     # ------------------------------------------------------------------
 
     def open(self, path: str, mode: str = "rb", **kwargs):
+        if "w" in mode:
+            return _RequestsPutFile(self._session, path, self._verify)
         return self._http_fs.open(path, mode, **kwargs)
 
     def checksum(self, path: str, algorithm: str) -> None:
