@@ -38,8 +38,8 @@ gfal-token = "gfal_cli.shell:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.4",
-    "pytest-cov>=4.0",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
     "pre-commit>=4.5",
     "codespell>=2.4.1",
 ]

@@ -234,10 +234,11 @@ class CommandCopy(base.CommandBase):
 
         rc = 0
         for src, dst in jobs:
-            if dst == "-":
-                dst = "file:///dev/stdout"
             try:
-                self._do_copy(src, dst, opts)
+                if dst == "-":
+                    self._copy_to_stdout(src, opts)
+                else:
+                    self._do_copy(src, dst, opts)
             except Exception as e:
                 sys.stderr.write(f"ERROR: {e}\n")
                 rc = 1
@@ -249,6 +250,21 @@ class CommandCopy(base.CommandBase):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _copy_to_stdout(self, src_url, opts):
+        """Stream *src_url* to sys.stdout.buffer (the ``-`` destination).
+
+        Using sys.stdout.buffer directly is cross-platform; the
+        ``file:///dev/stdout`` approach only works on Unix.
+        """
+        src_fs, src_path = fs.url_to_fs(src_url, opts)
+        with src_fs.open(src_path, "rb") as f:
+            while True:
+                chunk = f.read(fs.CHUNK_SIZE)
+                if not chunk:
+                    break
+                sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
 
     def _do_copy(self, src_url, dst_url, opts):
         """High-level copy: handle directories, overwrite checks, etc."""
