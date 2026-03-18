@@ -1,5 +1,9 @@
 # gfal-cli
 
+> **`AGENTS.md` is a symlink to this file.**  Claude Code reads `CLAUDE.md`;
+> other AI coding agents (Codex, Copilot Workspace, Cursor, …) read `AGENTS.md`.
+> Edit only `CLAUDE.md` — changes are automatically visible through both names.
+
 A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
 
 The original gfal2-util implementation lives in `gfal2-util/` (gitignored, clone separately for reference) and is the reference for CLI compatibility.
