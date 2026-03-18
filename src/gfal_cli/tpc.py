@@ -113,10 +113,12 @@ def _parse_tpc_body(resp):
         End
 
     The final line is either ``success: <message>`` or ``failure: <message>``.
-    """
-    if resp.status_code in (200, 201, 204):
-        return  # immediate success
 
+    EOS (and some other servers) respond with ``201 Created`` instead of
+    ``202 Accepted`` while still streaming performance markers.  We therefore
+    read the body for *any* 2xx response — an empty body is treated as
+    immediate success (covers plain 200/204 from simple servers).
+    """
     if resp.status_code == 405:
         raise NotImplementedError(
             "Server returned HTTP 405 Method Not Allowed — "
@@ -128,11 +130,13 @@ def _parse_tpc_body(resp):
             "Server returned HTTP 501 Not Implemented — no TPC support"
         )
 
-    if resp.status_code != 202:
+    if not (200 <= resp.status_code < 300):
         resp.raise_for_status()
         return
 
-    # 202 Accepted: read streaming performance markers
+    # 2xx: read the (possibly streaming) body for success/failure markers.
+    # Servers that complete immediately return an empty body; that is fine —
+    # the loop simply doesn't execute, and we fall through to success.
     last_non_empty = ""
     for raw in resp.iter_lines(decode_unicode=True):
         line = (raw or "").strip()
