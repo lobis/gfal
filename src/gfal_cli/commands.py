@@ -21,8 +21,9 @@ class GfalCommands(base.CommandBase):
     @base.arg(
         "-m",
         "--mode",
-        type=int,
-        default=755,
+        type=str,
+        default="755",
+        metavar="MODE",
         help="directory permissions in octal (default: 755)",
     )
     @base.arg(
@@ -34,8 +35,13 @@ class GfalCommands(base.CommandBase):
     @base.arg("directory", nargs="+", type=base.surl, help="directory URI(s)")
     def execute_mkdir(self):
         """Create directories."""
-        with contextlib.suppress(ValueError):
-            int(str(self.params.mode), 8)
+        try:
+            mode_int = int(self.params.mode, 8)
+        except ValueError:
+            sys.stderr.write(
+                f"{self.progr}: invalid mode '{self.params.mode}': must be an octal number (e.g. 755, 0755)\n"
+            )
+            return 1
 
         opts = fs.build_storage_options(self.params)
         rc = 0
@@ -51,6 +57,10 @@ class GfalCommands(base.CommandBase):
                             fso.mkdir(path, create_parents=True)
                 else:
                     fso.mkdir(path, create_parents=False)
+                # Apply mode if the filesystem supports chmod (best effort —
+                # not all backends honour permissions, e.g. HTTP/XRootD readonly)
+                with contextlib.suppress(Exception):
+                    fso.chmod(path, mode_int)
             except Exception as e:
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
                 ecode = getattr(e, "errno", None)

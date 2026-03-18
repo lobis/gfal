@@ -4,6 +4,18 @@ A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gf
 
 The original gfal2-util implementation lives in `gfal2-util/` (gitignored, clone separately for reference) and is the reference for CLI compatibility.
 
+## CLI compatibility reference
+
+**[`docs/gfal2-util-help-reference.md`](docs/gfal2-util-help-reference.md)** is the canonical
+reference for this project.  It contains the full `--help` output for every command captured
+from a live `lxplus.cern.ch` node.  **Always consult this file** when implementing or auditing
+CLI flags — do not guess flag names or behaviours from memory.
+
+The reference document also contains a summary table at the bottom showing which flags are:
+- ✅ fully supported
+- ⚠️ accepted but ignored (with a warning)
+- documented as intentionally omitted (gfal2/GridFTP-specific)
+
 ## Development environment
 
 A virtualenv lives at `.venv/` in the project root. Always use it:

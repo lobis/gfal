@@ -214,7 +214,7 @@ class CommandLs(base.CommandBase):
                 if not first:
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{url}:\n")
-            self._print_entry(url, st)
+            self._print_entry(url, st, self._fetch_xattrs(fso, path))
             return 0
 
         # Always attempt ls() — errors (e.g. 403 on HTTP directories that don't
@@ -238,7 +238,7 @@ class CommandLs(base.CommandBase):
                 if not first:
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{url}:\n")
-            self._print_entry(url, st)
+            self._print_entry(url, st, self._fetch_xattrs(fso, path))
         elif not entries:
             if not stat.S_ISDIR(st.st_mode):
                 # HTTP file: ls() returned nothing; fall back to showing the entry
@@ -246,7 +246,7 @@ class CommandLs(base.CommandBase):
                     if not first:
                         sys.stdout.write("\n")
                     sys.stdout.write(f"{url}:\n")
-                self._print_entry(url, st)
+                self._print_entry(url, st, self._fetch_xattrs(fso, path))
             # else: genuinely empty directory — print header only
             elif print_header:
                 if not first:
@@ -262,11 +262,31 @@ class CommandLs(base.CommandBase):
                 if not self.params.all and name.startswith("."):
                     continue
                 entry_st = fs.StatInfo(entry_info)
-                self._print_entry(name, entry_st)
+                xattrs = self._fetch_xattrs(fso, entry_info["name"])
+                self._print_entry(name, entry_st, xattrs)
 
         return 0
 
-    def _print_entry(self, name, st):
+    def _fetch_xattrs(self, fso, path):
+        """Fetch the extended attributes named by ``--xattr`` for *path*.
+
+        Returns a dict ``{attr_name: value_str_or_None}``.  An empty dict is
+        returned when ``--xattr`` was not given, ``-l`` is not active, or the
+        filesystem does not support extended attributes.
+        """
+        if not self.params.long or not self.params.xattr:
+            return {}
+        if not hasattr(fso, "getxattr"):
+            return {}
+        result = {}
+        for attr in self.params.xattr:
+            try:
+                result[attr] = str(fso.getxattr(path, attr))
+            except Exception:
+                result[attr] = None
+        return result
+
+    def _print_entry(self, name, st, xattrs=None):
         if self.params.long:
             size = st.st_size
             if self.params.human_readable:
@@ -277,9 +297,18 @@ class CommandLs(base.CommandBase):
 
             date = _TIME_FORMATS[self.params.time_style](st.st_mtime)
 
+            xattr_suffix = ""
+            if xattrs:
+                parts = [
+                    f"{k}={v}" if v is not None else f"{k}=<error>"
+                    for k, v in xattrs.items()
+                ]
+                xattr_suffix = "  " + "  ".join(parts)
+
             sys.stdout.write(
                 f"{file_mode_str(st.st_mode)} {st.st_nlink:3d} {st.st_uid:<5d} {st.st_gid:<5d}"
-                f" {size_field} {str(date).ljust(11)} {self._colorize(name, st.st_mode)}\n"
+                f" {size_field} {str(date).ljust(11)} {self._colorize(name, st.st_mode)}"
+                f"{xattr_suffix}\n"
             )
         else:
             sys.stdout.write(f"{self._colorize(name, None)}\n")
