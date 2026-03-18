@@ -110,6 +110,22 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 These are added automatically by `CommandBase.parse()`. Do not redeclare them in individual commands.
 
+## Running tests
+
+**MANDATORY**: After any code change, run the full test suite before considering the task done:
+
+```bash
+.venv/bin/python -m pytest tests/ -x -q
+```
+
+Integration tests (require network) are excluded by default; run them separately:
+
+```bash
+.venv/bin/python -m pytest tests/ -m integration -q
+```
+
+All unit tests must pass. Do not mark a task complete if there are test failures.
+
 ## Code style
 
 After making any code change, run ruff on the modified files before considering the task done.

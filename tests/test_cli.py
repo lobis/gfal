@@ -4,7 +4,7 @@ Tests that exercise the *installed* gfal-* executables (console scripts).
 These verify that:
   - every entry point declared in pyproject.toml is actually installed and on PATH
   - the shebang / wrapper script invokes the right Python entry point
-  - basic end-to-end behaviour works through the real binary, not via python -c
+  - basic end-to-end behavior works through the real binary, not via python -c
 
 All tests skip gracefully when a binary is not found (e.g. in a bare venv
 that hasn't run ``pip install -e .``).

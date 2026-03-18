@@ -271,3 +271,26 @@ class TestRmNoArgs:
     def test_no_args(self):
         rc, out, err = run_gfal("rm")
         assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# --bulk flag
+# ---------------------------------------------------------------------------
+
+
+class TestRmBulk:
+    def test_bulk_accepted(self, tmp_path):
+        """--bulk flag is accepted; deletion still works sequentially."""
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+
+        rc, out, err = run_gfal("rm", "--bulk", f.as_uri())
+
+        assert rc == 0
+        assert not f.exists()
+
+    def test_bulk_appears_in_help(self):
+        rc, out, err = run_gfal("rm", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "bulk" in combined

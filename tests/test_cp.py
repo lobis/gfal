@@ -534,3 +534,197 @@ class TestCopyTransferTimeout:
     def test_transfer_timeout_appears_in_help(self):
         rc, out, err = run_gfal("cp", "--help")
         assert "transfer-timeout" in out or "transfer-timeout" in err
+
+    def test_transfer_timeout_short_flag(self, tmp_path):
+        """-T is accepted as a short alias for --transfer-timeout."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"hello")
+
+        rc, out, err = run_gfal("cp", "-T", "60", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"hello"
+
+
+# ---------------------------------------------------------------------------
+# --copy-mode
+# ---------------------------------------------------------------------------
+
+
+class TestCopyCopyMode:
+    def test_copy_mode_streamed(self, tmp_path):
+        """--copy-mode=streamed should work for local-to-local copies."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"streamed data")
+
+        rc, out, err = run_gfal(
+            "cp", "--copy-mode", "streamed", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert dst.read_bytes() == b"streamed data"
+
+    def test_copy_mode_pull_falls_back_for_local(self, tmp_path):
+        """--copy-mode=pull falls back to streamed for local files (no HTTP TPC)."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"pull data")
+
+        rc, out, err = run_gfal("cp", "--copy-mode", "pull", src.as_uri(), dst.as_uri())
+
+        # Either succeeds with fallback or fails gracefully — but must not crash
+        # with an unhandled exception (no traceback in stderr)
+        assert "Traceback" not in err
+
+    def test_copy_mode_push_falls_back_for_local(self, tmp_path):
+        """--copy-mode=push falls back to streamed for local files."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"push data")
+
+        rc, out, err = run_gfal("cp", "--copy-mode", "push", src.as_uri(), dst.as_uri())
+
+        assert "Traceback" not in err
+
+    def test_copy_mode_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "copy-mode" in combined
+
+
+# ---------------------------------------------------------------------------
+# --just-copy
+# ---------------------------------------------------------------------------
+
+
+class TestCopyJustCopy:
+    def test_just_copy_skips_overwrite_check(self, tmp_path):
+        """--just-copy skips overwrite protection; existing dst is overwritten."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new content")
+        dst.write_bytes(b"old content")
+
+        rc, out, err = run_gfal("cp", "--just-copy", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"new content"
+
+    def test_just_copy_basic(self, tmp_path):
+        """--just-copy works for a normal copy (no prior dst)."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"data")
+
+        rc, out, err = run_gfal("cp", "--just-copy", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"data"
+
+    def test_just_copy_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "just-copy" in combined
+
+
+# ---------------------------------------------------------------------------
+# --disable-cleanup
+# ---------------------------------------------------------------------------
+
+
+class TestCopyDisableCleanup:
+    def test_disable_cleanup_accepted(self, tmp_path):
+        """--disable-cleanup flag is accepted without error."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"data")
+
+        rc, out, err = run_gfal("cp", "--disable-cleanup", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"data"
+
+    def test_disable_cleanup_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "disable-cleanup" in combined
+
+
+# ---------------------------------------------------------------------------
+# Common ignored args (-D, -C, -4, -6)
+# ---------------------------------------------------------------------------
+
+
+class TestCopyCommonIgnoredArgs:
+    def test_definition_flag(self, tmp_path):
+        """-D/--definition is accepted and ignored."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"def")
+
+        rc, out, err = run_gfal(
+            "cp", "-D", "CORE:CHECKSUM_CHECK=0", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert dst.read_bytes() == b"def"
+
+    def test_client_info_flag(self, tmp_path):
+        """-C/--client-info is accepted and ignored."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"ci")
+
+        rc, out, err = run_gfal("cp", "-C", "myapp/1.0", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"ci"
+
+    def test_ipv4_flag(self, tmp_path):
+        """-4 is accepted and ignored."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"ipv4")
+
+        rc, out, err = run_gfal("cp", "-4", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"ipv4"
+
+    def test_ipv6_flag(self, tmp_path):
+        """-6 is accepted and ignored."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"ipv6")
+
+        rc, out, err = run_gfal("cp", "-6", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"ipv6"
+
+    def test_gridftp_nbstreams_warned(self, tmp_path):
+        """-n/--nbstreams is accepted (with a warning) and the copy still works."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"streams")
+
+        rc, out, err = run_gfal("cp", "-n", "4", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"streams"
+
+    def test_gridftp_spacetoken_warned(self, tmp_path):
+        """-s/--src-spacetoken is accepted (with a warning) and copy still works."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"spacetoken")
+
+        rc, out, err = run_gfal("cp", "-s", "MYTOKEN", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"spacetoken"

@@ -467,6 +467,11 @@ class CommandCopy(base.CommandBase):
             if show_progress:
                 self.progress_bar.stop(False)
                 print()
+            # Remove the partially-written destination file unless the caller
+            # explicitly opted out with --disable-cleanup.
+            if not self.params.disable_cleanup:
+                with contextlib.suppress(Exception):
+                    dst_fs.rm(dst_path, recursive=False)
             raise
 
         if show_progress:

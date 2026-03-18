@@ -55,7 +55,7 @@ def _cern_ca_bundle(tmp_path_factory):
     When the CI workflow already sets ``SSL_CERT_FILE`` (after installing the
     CERN Root CA into the system trust store) this fixture is a no-op.
 
-    Otherwise it:
+    Otherwise, it:
     1. Downloads and caches the CERN Root CA 2 PEM certificate.
     2. Creates a combined bundle: certifi's default bundle + CERN Root CA 2.
     3. Sets ``SSL_CERT_FILE`` and ``REQUESTS_CA_BUNDLE`` in ``os.environ`` so

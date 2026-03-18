@@ -450,3 +450,101 @@ class TestLsSorted:
         assert rc == 0
         names = [ln.strip() for ln in out.splitlines() if ln.strip()]
         assert names == sorted(names, key=str.lower)
+
+    def test_sort_by_size(self, tmp_path):
+        """--sort=size / -S: largest file first."""
+        small = tmp_path / "small.txt"
+        large = tmp_path / "large.txt"
+        small.write_bytes(b"x")
+        large.write_bytes(b"x" * 1000)
+
+        rc, out, err = run_gfal("ls", "--sort=size", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "large.txt"
+        assert names[1] == "small.txt"
+
+    def test_sort_size_short_flag(self, tmp_path):
+        """-S is a short alias for --sort=size."""
+        small = tmp_path / "a.txt"
+        large = tmp_path / "b.txt"
+        small.write_bytes(b"x")
+        large.write_bytes(b"x" * 512)
+
+        rc, out, err = run_gfal("ls", "-S", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names[0] == "b.txt"
+
+    def test_sort_none_flag(self, tmp_path):
+        """-U (--sort=none) is accepted and returns entries without sorting."""
+        for name in ["c.txt", "a.txt", "b.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", "-U", tmp_path.as_uri())
+
+        assert rc == 0
+        # Just check all files are present — no specific order guaranteed
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert set(names) == {"a.txt", "b.txt", "c.txt"}
+
+    def test_sort_by_extension(self, tmp_path):
+        """--sort=extension groups by extension."""
+        (tmp_path / "b.py").write_text("py")
+        (tmp_path / "a.txt").write_text("txt")
+        (tmp_path / "c.py").write_text("py2")
+
+        rc, out, err = run_gfal("ls", "--sort=extension", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        # .py files should appear together, before .txt
+        py_indices = [i for i, n in enumerate(names) if n.endswith(".py")]
+        txt_indices = [i for i, n in enumerate(names) if n.endswith(".txt")]
+        assert py_indices  # at least one .py found
+        assert txt_indices  # at least one .txt found
+        assert max(py_indices) < min(txt_indices)
+
+    def test_sort_by_version(self, tmp_path):
+        """--sort=version uses natural sort so 10 > 9."""
+        for name in ["file10.txt", "file2.txt", "file1.txt"]:
+            (tmp_path / name).write_text(name)
+
+        rc, out, err = run_gfal("ls", "--sort=version", tmp_path.as_uri())
+
+        assert rc == 0
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        assert names == ["file1.txt", "file2.txt", "file10.txt"]
+
+    def test_sort_appears_in_help(self):
+        rc, out, err = run_gfal("ls", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "sort" in combined
+
+
+# ---------------------------------------------------------------------------
+# --xattr
+# ---------------------------------------------------------------------------
+
+
+class TestLsXattr:
+    def test_xattr_accepted_with_long_format(self, tmp_path):
+        """--xattr is accepted with -l; unknown attributes don't crash."""
+        (tmp_path / "f.txt").write_text("x")
+
+        rc, out, err = run_gfal(
+            "ls", "-l", "--xattr", "user.nonexistent", tmp_path.as_uri()
+        )
+
+        # Should not crash — either shows value or shows <error>
+        assert rc == 0
+        assert "Traceback" not in err
+
+    def test_xattr_appears_in_help(self):
+        rc, out, err = run_gfal("ls", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "xattr" in combined
