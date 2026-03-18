@@ -48,6 +48,9 @@ optional arguments:
                         print colored entries with -l
 ```
 
+**Note on `--full-time`:** The help text says "same as --time-style=full-iso" but the
+actual output from gfal2-util uses long-iso format (`YYYY-MM-DD HH:MM`).
+
 **Notes:**
 - The original only accepts a single `file` URI (not `nargs="+"`); our implementation accepts multiple (extension).
 - The original has no `-r/--reverse`, `-S`, `-U`, `--sort` flags; our implementation adds these (extension).

@@ -138,7 +138,10 @@ class GfalCommands(base.CommandBase):
         return rc
 
     def _stat_one(self, url, opts):
-        st = fs.stat(url, opts)
+        fso, path = fs.url_to_fs(url, opts)
+        info = fso.info(path)
+        info = fs.xrootd_enrich(info, fso)
+        st = fs.StatInfo(info)
         print(f"  File: '{url}'")
         print(f"  Size: {st.st_size}\t{file_type_str(stat.S_IFMT(st.st_mode))}")
         print(

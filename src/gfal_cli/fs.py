@@ -170,6 +170,88 @@ class StatInfo:
         self.st_ctime = float(info.get("ctime") or self.st_mtime)
 
 
+def _xrootd_flags_to_mode(flags):
+    """Convert XRootD StatInfoFlags to a POSIX file mode integer."""
+    from XRootD.client.flags import StatInfoFlags
+
+    is_dir = bool(flags & StatInfoFlags.IS_DIR)
+    is_readable = bool(flags & StatInfoFlags.IS_READABLE)
+    is_writable = bool(flags & StatInfoFlags.IS_WRITABLE)
+
+    if is_dir:
+        ftype = stat_module.S_IFDIR
+        perms = (0o555 if is_readable else 0) | (0o200 if is_writable else 0)
+    else:
+        ftype = stat_module.S_IFREG
+        perms = (0o444 if is_readable else 0) | (0o200 if is_writable else 0)
+    return ftype | perms
+
+
+def xrootd_enrich(info, fso):
+    """
+    Enrich a single XRootD info dict with mtime and mode.
+
+    fsspec-xrootd's _info() discards modtime and flags; we recover them
+    via a direct _myclient.stat() call and add them back.
+    """
+    if not hasattr(fso, "_myclient"):
+        return info
+    try:
+        from XRootD.client.flags import StatInfoFlags  # noqa: F401
+    except ImportError:
+        return info
+
+    path = info.get("name", "")
+    timeout = getattr(fso, "timeout", 30)
+    status, st = fso._myclient.stat(path, timeout=timeout)
+    if not status.ok:
+        return info
+
+    enriched = dict(info)
+    enriched["mtime"] = st.modtime
+    enriched["mode"] = _xrootd_flags_to_mode(st.flags)
+    return enriched
+
+
+def xrootd_ls_enrich(fso, path):
+    """
+    Directory listing for XRootD with mtime and mode included.
+
+    Calls _myclient.dirlist(DirListFlags.STAT) directly to capture the
+    statinfo fields that fsspec-xrootd discards in its _ls() method.
+    Falls back to fso.ls(path, detail=True) on any error.
+    """
+    if not hasattr(fso, "_myclient"):
+        return fso.ls(path, detail=True)
+    try:
+        from XRootD.client.flags import DirListFlags, StatInfoFlags  # noqa: F401
+    except ImportError:
+        return fso.ls(path, detail=True)
+
+    timeout = getattr(fso, "timeout", 30)
+    status, deets = fso._myclient.dirlist(path, DirListFlags.STAT, timeout=timeout)
+    if not status.ok:
+        return fso.ls(path, detail=True)
+
+    entries = []
+    for item in deets:
+        flags = item.statinfo.flags
+        is_dir = bool(flags & StatInfoFlags.IS_DIR)
+        entries.append(
+            {
+                "name": path + "/" + item.name,
+                "size": item.statinfo.size,
+                "type": "directory" if is_dir else "file",
+                "mtime": item.statinfo.modtime,
+                "mode": _xrootd_flags_to_mode(flags),
+                "nlink": 0,
+                "uid": 0,
+                "gid": 0,
+            }
+        )
+    return entries
+
+
 def stat(url, storage_options=None):
     """Stat a URL, returning a StatInfo."""
     fs, path = url_to_fs(url, storage_options)

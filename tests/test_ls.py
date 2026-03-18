@@ -201,15 +201,17 @@ class TestLsTimeStyles:
         assert rc == 0
         assert "f.txt" in out
 
-    def test_full_time_uses_full_iso(self, tmp_path):
-        """--full-time should produce full-ISO timestamps (with seconds and offset)."""
+    def test_full_time_uses_long_iso(self, tmp_path):
+        """--full-time should produce long-iso timestamps (YYYY-MM-DD HH:MM)."""
         (tmp_path / "f.txt").write_text("x")
 
         rc, out, err = run_gfal("ls", "-l", "--full-time", tmp_path.as_uri())
 
         assert rc == 0
-        # full-iso format: YYYY-MM-DD HH:MM:SS.ffffff +0000
-        assert "+0000" in out
+        # long-iso format: YYYY-MM-DD HH:MM (actual gfal2-util behavior)
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", out)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +237,7 @@ class TestLsColor:
         assert "\033[" in out
 
     def test_color_always_directory(self, tmp_path):
-        """Directories should be colorised differently from files."""
+        """Directories should be colored differently from files."""
         sub = tmp_path / "mysubdir"
         sub.mkdir()
 
@@ -442,8 +444,8 @@ class TestLsSorted:
         names = [ln.split()[-1] for ln in out.splitlines() if ln.strip()]
         assert names == sorted(names, key=str.lower)
 
-    def test_case_insensitive_sort(self, tmp_path):
-        """Mixed-case names sort without case sensitivity."""
+    def test_case_sensitive_sort(self, tmp_path):
+        """Mixed-case names sort with case sensitivity (POSIX/C locale order)."""
         for name in ["Beta.txt", "alpha.txt", "GAMMA.txt"]:
             (tmp_path / name).write_text(name)
 
@@ -451,7 +453,8 @@ class TestLsSorted:
 
         assert rc == 0
         names = [ln.strip() for ln in out.splitlines() if ln.strip()]
-        assert names == sorted(names, key=str.lower)
+        # POSIX/C locale: uppercase letters sort before lowercase
+        assert names == sorted(names)
 
     def test_sort_by_size(self, tmp_path):
         """--sort=size / -S: largest file first."""

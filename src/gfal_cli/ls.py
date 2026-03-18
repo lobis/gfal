@@ -19,6 +19,9 @@ from gfal_cli.utils import file_mode_str
 
 
 def _fmt_full_iso(ts):
+    # gfal2-util uses local time for all formats and appends "+0000" for
+    # full-iso regardless of the actual timezone.  We replicate this so that
+    # output on UTC servers (lxplus) matches the reference exactly.
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f +0000")
 
 
@@ -107,7 +110,7 @@ def _apply_sort(entries, sort_by, reverse_flag):
         key = lambda e: _version_key(Path(e.get("name", "").rstrip("/")).name)  # noqa: E731
         default_reverse = False
     else:  # "name"
-        key = lambda e: Path(e.get("name", "").rstrip("/")).name.lower()  # noqa: E731
+        key = lambda e: Path(e.get("name", "").rstrip("/")).name  # noqa: E731
         default_reverse = False
 
     actual_reverse = default_reverse ^ reverse_flag
@@ -185,7 +188,7 @@ class CommandLs(base.CommandBase):
     def execute_ls(self):
         """List directory contents."""
         if self.params.full_time:
-            self.params.time_style = "full-iso"
+            self.params.time_style = "long-iso"
 
         opts = fs.build_storage_options(self.params)
         multi = len(self.params.file) > 1
@@ -228,7 +231,11 @@ class CommandLs(base.CommandBase):
             # on a file path ("not a directory").  Fall back to a single-entry
             # list so the file is displayed normally.
             _msg = str(_e).lower()
-            if "not a directory" in _msg or getattr(_e, "errno", None) == 20:
+            if (
+                "not a directory" in _msg
+                or "unable to open directory" in _msg
+                or getattr(_e, "errno", None) == 20
+            ):
                 raw_entries = [info]
             else:
                 raise
@@ -260,6 +267,16 @@ class CommandLs(base.CommandBase):
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{url}:\n")
         else:
+            visible = [
+                e
+                for e in entries
+                if self.params.all
+                or not Path(e["name"].rstrip("/")).name.startswith(".")
+            ]
+            max_size_w = max(
+                (len(str(fs.StatInfo(e).st_size)) for e in visible),
+                default=1,
+            )
             if print_header:
                 if not first:
                     sys.stdout.write("\n")
@@ -270,7 +287,7 @@ class CommandLs(base.CommandBase):
                     continue
                 entry_st = fs.StatInfo(entry_info)
                 xattrs = self._fetch_xattrs(fso, entry_info["name"])
-                self._print_entry(name, entry_st, xattrs)
+                self._print_entry(name, entry_st, xattrs, size_width=max_size_w)
 
         return 0
 
@@ -293,14 +310,15 @@ class CommandLs(base.CommandBase):
                 result[attr] = None
         return result
 
-    def _print_entry(self, name, st, xattrs=None):
+    def _print_entry(self, name, st, xattrs=None, *, size_width=None):
         if self.params.long:
             size = st.st_size
             if self.params.human_readable:
                 size_str = _human_size(size)
                 size_field = size_str.rjust(4)
             else:
-                size_field = str(size).rjust(9)
+                w = size_width if size_width is not None else 9
+                size_field = str(size).rjust(w)
 
             date = _TIME_FORMATS[self.params.time_style](st.st_mtime)
 
@@ -315,7 +333,7 @@ class CommandLs(base.CommandBase):
             sys.stdout.write(
                 f"{file_mode_str(st.st_mode)} {st.st_nlink:3d} {st.st_uid:<5d} {st.st_gid:<5d}"
                 f" {size_field} {str(date).ljust(11)} {self._colorize(name, st.st_mode)}"
-                f"{xattr_suffix}\n"
+                f"{xattr_suffix}\t\n"
             )
         else:
             sys.stdout.write(f"{self._colorize(name, None)}\n")
