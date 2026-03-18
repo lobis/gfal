@@ -243,6 +243,19 @@ class CommandBase:
         for exc_type, description in _descriptions.items():
             if isinstance(e, exc_type):
                 return f"{msg}: {description}"
+        # SSL / connection errors from requests: give a clear hint.
+        try:
+            import requests as _requests
+
+            if isinstance(e, _requests.exceptions.SSLError):
+                cause = str(e)
+                if "WRONG_VERSION_NUMBER" in cause or "UNKNOWN_PROTOCOL" in cause:
+                    return f"{msg}: server does not speak HTTPS on this port (try http:// instead)"
+                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+            if isinstance(e, _requests.exceptions.ConnectionError):
+                return msg
+        except ImportError:
+            pass
         # HTTP errors from aiohttp: status attribute carries the HTTP code
         status = getattr(e, "status", None)
         if status is not None:

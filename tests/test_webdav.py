@@ -496,3 +496,78 @@ class TestWebDAVViaGfalCli:
         rc, out, err = run_gfal("stat", dav_server + "/stat_me.txt")
         assert rc == 0
         assert "File:" in out
+
+
+class TestWebDAVSslError:
+    """SSL errors should not be silently mapped to 'No such file or directory'."""
+
+    def test_ssl_error_propagates_from_info(self):
+        """info() re-raises SSLError when ssl_verify=True (default)."""
+        from unittest.mock import patch
+
+        import requests
+
+        fs = WebDAVFileSystem()  # ssl_verify defaults to True
+        ssl_exc = requests.exceptions.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
+
+        with (
+            patch.object(fs, "_propfind", side_effect=ssl_exc),
+            pytest.raises(requests.exceptions.SSLError),
+        ):
+            fs.info("https://example.com/path")
+
+    def test_ssl_error_falls_through_when_no_verify(self, dav_server):
+        """info() falls through to _http_fs when ssl_verify=False (--no-verify)."""
+        from unittest.mock import patch
+
+        import requests
+
+        fs = WebDAVFileSystem({"ssl_verify": False})
+        ssl_exc = requests.exceptions.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
+
+        with _vfs_lock:
+            _vfs.add("/nv_fallback.txt")
+
+        # With ssl_verify=False, SSLError from PROPFIND is caught; falls through
+        # to _http_fs.info() which contacts the (plain HTTP) mock server.
+        with patch.object(fs, "_propfind", side_effect=ssl_exc):
+            info = fs.info(dav_server + "/nv_fallback.txt")
+        assert info["type"] == "file"
+
+    def test_connection_error_propagates_from_info(self):
+        """info() re-raises ConnectionError when ssl_verify=True (default)."""
+        from unittest.mock import patch
+
+        import requests
+
+        fs = WebDAVFileSystem()
+        conn_exc = requests.exceptions.ConnectionError("connection refused")
+
+        with (
+            patch.object(fs, "_propfind", side_effect=conn_exc),
+            pytest.raises(requests.exceptions.ConnectionError),
+        ):
+            fs.info("https://example.com/path")
+
+    def test_405_still_falls_through_to_head(self, dav_server):
+        """NotImplementedError (405) falls through to HEAD as before."""
+        import contextlib
+        from unittest.mock import patch
+
+        with _vfs_lock:
+            _vfs.add("/fallback.txt")
+        fs = WebDAVFileSystem()
+
+        original_propfind = fs._propfind
+
+        def propfind_raise_on_depth0(url, depth=0):
+            if depth == 0:
+                raise NotImplementedError("405")
+            return original_propfind(url, depth=depth)
+
+        # Should not raise — falls through to _http_fs.info()
+        with (
+            patch.object(fs, "_propfind", side_effect=propfind_raise_on_depth0),
+            contextlib.suppress(Exception),
+        ):
+            fs.info(dav_server + "/fallback.txt")

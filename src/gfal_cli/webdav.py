@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import fsspec
+import requests as _requests
 
 _DAV = "{DAV:}"
 
@@ -34,9 +35,7 @@ _PROPFIND_BODY = (
 
 def _make_session(storage_options):
     """Build a ``requests.Session`` with cert / SSL-verify config."""
-    import requests
-
-    session = requests.Session()
+    session = _requests.Session()
     cert = storage_options.get("client_cert")
     key = storage_options.get("client_key")
     if cert:
@@ -183,6 +182,7 @@ class WebDAVFileSystem:
 
     def __init__(self, storage_options: dict | None = None) -> None:
         self._opts = dict(storage_options or {})
+        self._verify = self._opts.get("ssl_verify", True)
         self._session = _make_session(self._opts)
         self._http_fs = fsspec.filesystem("http", **_http_fs_opts(self._opts))
 
@@ -200,6 +200,7 @@ class WebDAVFileSystem:
                 "Content-Type": "application/xml; charset=utf-8",
             },
             data=_PROPFIND_BODY.encode(),
+            verify=self._verify,
         )
         _raise_for_status(resp, url)
         return _parse_propfind(resp.content, url)
@@ -215,8 +216,19 @@ class WebDAVFileSystem:
             entries = self._propfind(path, depth=0)
             if entries:
                 return entries[0]
-        except (NotImplementedError, Exception):
-            pass  # fall through to HEAD
+        except NotImplementedError:
+            pass  # 405: server doesn't support WebDAV; fall through to HEAD
+        except (
+            _requests.exceptions.SSLError,
+            _requests.exceptions.ConnectionError,
+        ):
+            # Re-raise only when the user has NOT opted out of SSL verification.
+            # With --no-verify (ssl_verify=False) fall through to _http_fs.info()
+            # which uses aiohttp with a fully-disabled SSL context.
+            if self._verify:
+                raise
+        except Exception:
+            pass  # Other PROPFIND failures (non-WebDAV server); fall through to HEAD
         # Fall back to fsspec's HTTP HEAD request (works for any plain-HTTP file)
         return self._http_fs.info(path)
 
@@ -254,7 +266,7 @@ class WebDAVFileSystem:
         if create_parents:
             self.makedirs(path, exist_ok=True)
             return
-        resp = self._session.request("MKCOL", path)
+        resp = self._session.request("MKCOL", path, verify=self._verify)
         if resp.status_code == 201:
             return
         if resp.status_code in (301, 405):
@@ -273,7 +285,7 @@ class WebDAVFileSystem:
         for i in range(1, len(parts) + 1):
             partial_path = "/" + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
-            resp = self._session.request("MKCOL", partial_url)
+            resp = self._session.request("MKCOL", partial_url, verify=self._verify)
             sc = resp.status_code
             if sc == 201:
                 continue  # created
@@ -294,7 +306,7 @@ class WebDAVFileSystem:
 
     def rm(self, path: str, recursive: bool = False) -> None:
         """Delete a file or directory via HTTP DELETE."""
-        resp = self._session.delete(path)
+        resp = self._session.delete(path, verify=self._verify)
         _raise_for_status(resp, path)
 
     def rmdir(self, path: str) -> None:
@@ -313,6 +325,7 @@ class WebDAVFileSystem:
             "MOVE",
             path1,
             headers={"Destination": path2, "Overwrite": "T"},
+            verify=self._verify,
         )
         resp.raise_for_status()
 
