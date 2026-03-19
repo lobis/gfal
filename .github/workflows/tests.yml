@@ -61,7 +61,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y uuid-dev openssl
 
     - name: Install package and test dependencies (with XRootD)
-      run: pip install --no-cache-dir ".[dev,xrootd]"
+      run: pip install --no-cache-dir ".[dev]"
 
     - name: Override fsspec-xrootd with gfal3-updates branch (pending merge)
       run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
@@ -94,7 +94,7 @@ jobs:
         echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
     - name: Install package and test dependencies (with XRootD)
-      run: pip install --no-cache-dir ".[dev,xrootd]"
+      run: pip install --no-cache-dir ".[dev]"
 
     - name: Override fsspec-xrootd with gfal3-updates branch (pending merge)
       run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"

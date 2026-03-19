@@ -9,9 +9,6 @@ No PyPI release yet. Install directly from GitHub:
 ```bash
 # Latest from the main branch
 pip install "git+https://github.com/lobis/gfal-cli.git"
-
-# With XRootD support (Linux/macOS only)
-pip install "git+https://github.com/lobis/gfal-cli.git[xrootd]"
 ```
 
 After installation the following commands are available on your `PATH`:
