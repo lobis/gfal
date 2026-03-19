@@ -801,3 +801,50 @@ class TestLsNonWebDAVFallback:
 
         assert len(names) == 1
         assert isinstance(names[0], str)
+
+
+# ---------------------------------------------------------------------------
+# Checksum / Digest header parsing
+# ---------------------------------------------------------------------------
+
+
+class TestWebDAVChecksum:
+    def test_checksum_parses_digest_header(self):
+        from unittest.mock import MagicMock
+
+        fs = WebDAVFileSystem()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Digest": "md5=O123456789, adler32=335e754f"}
+        fs._session.head = MagicMock(return_value=mock_resp)
+
+        assert fs.checksum("https://server/file", "adler32") == "335e754f"
+        assert fs.checksum("https://server/file", "MD5") == "O123456789"
+
+        fs._session.head.assert_called_with(
+            "https://server/file", headers={"Want-Digest": "md5"}, verify=True
+        )
+
+    def test_checksum_no_digest_header_raises(self):
+        from unittest.mock import MagicMock
+
+        fs = WebDAVFileSystem()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {}
+        fs._session.head = MagicMock(return_value=mock_resp)
+
+        with pytest.raises(NotImplementedError):
+            fs.checksum("https://server/file", "adler32")
+
+    def test_checksum_missing_algorithm_raises(self):
+        from unittest.mock import MagicMock
+
+        fs = WebDAVFileSystem()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Digest": "sha256=abcdef"}
+        fs._session.head = MagicMock(return_value=mock_resp)
+
+        with pytest.raises(NotImplementedError):
+            fs.checksum("https://server/file", "adler32")

@@ -406,7 +406,33 @@ class WebDAVFileSystem:
             return _RequestsPutFile(self._session, path, self._verify)
         return self._http_fs.open(path, mode, **kwargs)
 
-    def checksum(self, path: str, algorithm: str) -> None:
+    def checksum(self, path: str, algorithm: str) -> str:
+        """Fetch server-side checksum via HTTP HEAD and the Digest header."""
+        alg_lower = algorithm.lower()
+
+        # Ask the server to return the digest (RFC 3230)
+        headers = {"Want-Digest": alg_lower}
+        resp = self._session.head(path, headers=headers, verify=self._verify)
+        _raise_for_status(resp, path)
+
+        digest_header = resp.headers.get("Digest")
+        if not digest_header:
+            raise NotImplementedError(
+                "Server-side checksum is not available (no Digest header returned)"
+            )
+
+        # Digest can be a comma-separated list: "md5=X, adler32=Y"
+        for piece in digest_header.split(","):
+            piece = piece.strip()
+            if "=" in piece:
+                key, val = piece.split("=", 1)
+                # Handle variations like 'adler-32' vs 'adler32'
+                if key.lower().replace("-", "") == alg_lower.replace("-", ""):
+                    # In WLCG, adler32 is typically returned as hex. If a server
+                    # strictly follows RFC 3230 for other algorithms, it might use Base64.
+                    # Currently we just return the raw string (works for adler32 hex).
+                    return val
+
         raise NotImplementedError(
-            "Server-side checksum is not available for HTTP/WebDAV"
+            f"Server returned Digest header but missing requested algorithm {algorithm}: {digest_header}"
         )
