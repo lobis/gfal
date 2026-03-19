@@ -219,15 +219,21 @@ class GfalCommands(base.CommandBase):
         alg = self.params.checksum_type.upper()
         fso, path = fs.url_to_fs(self.params.file, opts)
 
-        # Try server-side checksum first (XRootD exposes this)
+        # Try server-side checksum first (XRootD/HTTP exposes this)
         if hasattr(fso, "checksum"):
             try:
                 result = fso.checksum(path, alg.lower())
-                # fsspec-xrootd returns (algorithm, value)
+                # fsspec-xrootd/webdav returns (algorithm, value)
                 if isinstance(result, (tuple, list)):
-                    result = result[1]
-                sys.stdout.write(f"{self.params.file} {result}\n")
-                return
+                    # Verify algorithm matches what we requested
+                    if result[0].lower() == alg.lower():
+                        sys.stdout.write(f"{self.params.file} {result[1]}\n")
+                        return
+                else:
+                    # Single value returned (e.g. from aiohttp/fsspec fallback)
+                    # We assume it's the correct algorithm if we got here.
+                    sys.stdout.write(f"{self.params.file} {result}\n")
+                    return
             except Exception:
                 pass  # fall through to client-side computation
 
