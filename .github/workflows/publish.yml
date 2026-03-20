@@ -65,7 +65,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: rpm-package-distributions-${{ matrix.os.name }}
-        path: rpmbuild/RPMS/noarch/*.rpm
+        path: rpmbuild/RPMS/*/*.rpm
 
     - name: Store SRPMs
       uses: actions/upload-artifact@v4
