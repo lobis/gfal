@@ -96,7 +96,7 @@ def normalize_url(url):
     return url
 
 
-def url_to_fs(url, storage_options=None):
+def url_to_fs(url, storage_options=None, **kwargs):
     """
     Return (AbstractFileSystem, path) for a URL.
 
@@ -104,8 +104,9 @@ def url_to_fs(url, storage_options=None):
     For HTTP(S) these may include 'client_cert'/'client_key'.
     For XRootD auth is handled via X509_* environment variables.
     """
-    if storage_options is None:
-        storage_options = {}
+    storage_options = {} if storage_options is None else dict(storage_options)
+
+    storage_options.update(kwargs)
 
     url = normalize_url(url)
     parsed = urlparse(url)

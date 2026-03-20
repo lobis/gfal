@@ -152,9 +152,11 @@ def main(argv=None):
     # `gfal` (no hyphen) — top-level dispatcher
     # -----------------------------------------------------------------------
     if prog_stem == "gfal":
-        # No subcommand given
+        # No subcommand given -> launch TUI
         if len(argv) < 2:
-            _print_gfal_help()
+            from gfal_cli.tui import GfalTui
+
+            GfalTui().run()
             sys.exit(0)
 
         subcmd = argv[1]
