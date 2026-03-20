@@ -4,10 +4,8 @@ Simple commands: mkdir, save, cat, stat, rename, chmod, sum, xattr.
 
 import contextlib
 import errno
-import hashlib
 import stat
 import sys
-import zlib
 from datetime import datetime
 
 from gfal_cli import base, fs
@@ -225,31 +223,12 @@ class GfalCommands(base.CommandBase):
         alg = self.params.checksum_type.upper()
         fso, path = fs.url_to_fs(self.params.file, opts)
 
-        # Try server-side checksum first (XRootD/HTTP exposes this)
-        if hasattr(fso, "checksum"):
-            try:
-                result = fso.checksum(path, alg.lower())
-                # fsspec-xrootd/webdav returns (algorithm, value)
-                if isinstance(result, (tuple, list)):
-                    # Verify algorithm matches what we requested
-                    if result[0].lower() == alg.lower():
-                        sys.stdout.write(f"{self.params.file} {result[1]}\n")
-                        return
-                else:
-                    # Single value returned (e.g. from aiohttp/fsspec fallback)
-                    # We assume it's the correct algorithm if we got here.
-                    sys.stdout.write(f"{self.params.file} {result}\n")
-                    return
-            except Exception as e:
-                # Do not swallow SSL errors; they will likely fail client-side too
-                # and we want to report the clear SSL error message.
-                cause = str(e.__cause__ or e).lower()
-                if "ssl" in cause or "certificate" in cause:
-                    raise
-                pass  # fall through to client-side computation
-
-        checksum = _compute_checksum(fso, path, alg)
-        sys.stdout.write(f"{self.params.file} {checksum}\n")
+        try:
+            checksum = fs.compute_checksum(fso, path, alg)
+            sys.stdout.write(f"{self.params.file} {checksum}\n")
+        except Exception as e:
+            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            return 1
 
     # ------------------------------------------------------------------
     # xattr
@@ -288,113 +267,3 @@ class GfalCommands(base.CommandBase):
                     sys.stdout.write(f"{attr} = {val}\n\n")
                 except Exception as e:
                     sys.stdout.write(f"{attr} FAILED: {e}\n\n")
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _compute_checksum(fso, path, alg):
-    """Read the file and compute a checksum client-side."""
-    alg_upper = alg.upper()
-
-    if alg_upper == "ADLER32":
-        value = 1  # zlib.adler32 initial value
-        with fso.open(path, "rb") as f:
-            while True:
-                chunk = f.read(fs.CHUNK_SIZE)
-                if not chunk:
-                    break
-                value = zlib.adler32(chunk, value) & 0xFFFFFFFF
-        return f"{value:08x}"
-
-    if alg_upper == "CRC32":
-        value = 0
-        with fso.open(path, "rb") as f:
-            while True:
-                chunk = f.read(fs.CHUNK_SIZE)
-                if not chunk:
-                    break
-                value = zlib.crc32(chunk, value) & 0xFFFFFFFF
-        return f"{value:08x}"
-
-    if alg_upper == "CRC32C":
-        value = _crc32c_file(fso, path)
-        return f"{value:08x}"
-
-    # For MD5, SHA*, etc. use hashlib
-    name = alg_upper.lower().replace("-", "")  # sha256, md5, …
-    try:
-        h = hashlib.new(name)
-    except ValueError as err:
-        raise ValueError(f"unsupported checksum algorithm: {alg}") from err
-
-    with fso.open(path, "rb") as f:
-        while True:
-            chunk = f.read(fs.CHUNK_SIZE)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _crc32c_file(fso, path):
-    """Compute CRC32C checksum. Uses the crc32c package if available, otherwise
-    falls back to crcmod (if installed) or a pure-Python polynomial."""
-    try:
-        import crc32c as _crc32c
-
-        value = 0
-        with fso.open(path, "rb") as f:
-            while True:
-                chunk = f.read(fs.CHUNK_SIZE)
-                if not chunk:
-                    break
-                value = _crc32c.crc32c(chunk, value)
-        return value & 0xFFFFFFFF
-    except ImportError:
-        pass
-
-    try:
-        import crcmod
-
-        crc_fn = crcmod.predefined.mkCrcFun("crc-32c")
-        crc = crc_fn(b"")  # initialise
-        with fso.open(path, "rb") as f:
-            while True:
-                chunk = f.read(fs.CHUNK_SIZE)
-                if not chunk:
-                    break
-                crc = crcmod.predefined.mkCrcFun("crc-32c")(chunk, crc)
-        return crc & 0xFFFFFFFF
-    except (ImportError, Exception):
-        pass
-
-    # Pure-Python fallback (slow but correct; no external deps)
-    return _crc32c_pure(fso, path)
-
-
-def _crc32c_pure(fso, path):
-    """Pure-Python CRC32C using the Castagnoli polynomial 0x82F63B78."""
-    # Build lookup table
-    poly = 0x82F63B78
-    table = []
-    for i in range(256):
-        crc = i
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ poly
-            else:
-                crc >>= 1
-        table.append(crc)
-
-    crc = 0xFFFFFFFF
-    with fso.open(path, "rb") as f:
-        while True:
-            chunk = f.read(fs.CHUNK_SIZE)
-            if not chunk:
-                break
-            for byte in chunk:
-                crc = (crc >> 8) ^ table[(crc ^ byte) & 0xFF]
-    return (~crc) & 0xFFFFFFFF

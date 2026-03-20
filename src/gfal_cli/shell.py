@@ -154,9 +154,13 @@ def main(argv=None):
     if prog_stem == "gfal":
         # No subcommand given -> launch TUI
         if len(argv) < 2:
+            import tempfile
+
             from gfal_cli.tui import GfalTui
 
             GfalTui().run()
+            log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
+            sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
             sys.exit(0)
 
         subcmd = argv[1]

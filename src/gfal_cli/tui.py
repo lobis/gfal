@@ -21,7 +21,7 @@ from textual.widgets import (
     Tree,
 )
 
-from gfal_cli.fs import url_to_fs
+from gfal_cli.fs import compute_checksum, url_to_fs
 from gfal_cli.utils import (
     human_readable_size,
     human_readable_time,
@@ -293,7 +293,10 @@ class GfalTui(App):
 
     def action_stat(self) -> None:
         """Fetch and log information for the selected node."""
-        node = self.query_one("Tree:focus").cursor_node
+        tree = self._get_focused_tree()
+        if not tree:
+            return
+        node = tree.cursor_node
         path = self._get_node_path(node)
         if not path:
             return
@@ -360,30 +363,21 @@ class GfalTui(App):
 
         def get_checksum():
             try:
-                algo = "ADLER32"
                 fs, fs_path = url_to_fs(path, ssl_verify=self.ssl_verify)
                 # Try common checksum algorithms
                 result = None
+                algo = "ADLER32"
                 for a in ["ADLER32", "MD5"]:
                     try:
-                        # Some fsspec backends support checksum(path)
-                        if hasattr(fs, "checksum"):
-                            result = fs.checksum(fs_path, a)
-                            if result:
-                                algo = a
-                                break
+                        result = compute_checksum(fs, fs_path, a)
+                        if result:
+                            algo = a
+                            break
                     except Exception:
                         continue
 
                 if result:
-                    # Ensure hex format if it's bytes or int
-                    hex_val = result
-                    if isinstance(result, bytes):
-                        hex_val = result.hex()
-                    elif isinstance(result, int):
-                        hex_val = hex(result)[2:]
-
-                    msg = f"Checksum ({algo}) for {path}:\n  {hex_val}"
+                    msg = f"Checksum ({algo}) for {path}:\n  {result}"
                     self.log_activity(f"gfal-sum {path} {algo}", level="command")
                     self.log_activity(msg, level="success")
                     self.call_from_thread(
@@ -400,7 +394,9 @@ class GfalTui(App):
 
     def action_refresh(self) -> None:
         """Refresh the selected directory node."""
-        tree = self.query_one("Tree:focus")
+        tree = self._get_focused_tree()
+        if not tree:
+            return
         node = tree.cursor_node
         if not node:
             return

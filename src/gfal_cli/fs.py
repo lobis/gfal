@@ -4,9 +4,11 @@ and a stat-like wrapper around fsspec info() dicts.
 """
 
 import contextlib
+import hashlib
 import os
 import stat as stat_module
 import sys
+import zlib
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -325,3 +327,147 @@ def isdir(url, storage_options=None):
         return fs.isdir(path)
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Checksum computation
+# ---------------------------------------------------------------------------
+
+
+def compute_checksum(fso, path, alg):
+    """Compute a checksum for a file.
+
+    Tries server-side computation first (if the filesystem supports it and
+    accepts an algorithm argument). Falls back to client-side computation
+    by reading the file.
+    """
+    alg_upper = alg.upper()
+
+    # 1. Try server-side checksum(path, algorithm)
+    # This is a fsspec-xrootd and WebDAVFileSystem extension.
+    if hasattr(fso, "checksum"):
+        try:
+            # Check if it accepts the second argument (algorithm)
+            # WebDAVFileSystem and fsspec-xrootd's _checksum do.
+            # fsspec's LocalFileSystem.checksum only takes 'path'.
+            import inspect
+
+            sig = inspect.signature(fso.checksum)
+            if len(sig.parameters) >= 2 or any(
+                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                result = fso.checksum(path, alg_upper)
+                if result:
+                    return _format_checksum_result(result)
+        except Exception:
+            pass  # Fall back to client-side
+
+    # 2. Client-side computation
+    if alg_upper == "ADLER32":
+        value = 1  # zlib.adler32 initial value
+        with fso.open(path, "rb") as f:
+            while True:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                value = zlib.adler32(chunk, value) & 0xFFFFFFFF
+        return f"{value:08x}"
+
+    if alg_upper == "CRC32":
+        value = 0
+        with fso.open(path, "rb") as f:
+            while True:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                value = zlib.crc32(chunk, value) & 0xFFFFFFFF
+        return f"{value:08x}"
+
+    if alg_upper == "CRC32C":
+        value = _crc32c_file(fso, path)
+        return f"{value:08x}"
+
+    # For MD5, SHA*, etc. use hashlib
+    name = alg_upper.lower().replace("-", "")  # sha256, md5, …
+    try:
+        h = hashlib.new(name)
+    except ValueError as err:
+        raise ValueError(f"unsupported checksum algorithm: {alg}") from err
+
+    with fso.open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _format_checksum_result(result):
+    """Ensure checksum result is a hex string."""
+    if isinstance(result, bytes):
+        return result.hex()
+    if isinstance(result, int):
+        return f"{result:x}"
+    return str(result)
+
+
+def _crc32c_file(fso, path):
+    """Compute CRC32C checksum. Uses the crc32c package if available, otherwise
+    falls back to crcmod (if installed) or a pure-Python polynomial."""
+    try:
+        import crc32c as _crc32c
+
+        value = 0
+        with fso.open(path, "rb") as f:
+            while True:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                value = _crc32c.crc32c(chunk, value)
+        return value & 0xFFFFFFFF
+    except ImportError:
+        pass
+
+    try:
+        import crcmod
+
+        crc_fn = crcmod.predefined.mkCrcFun("crc-32c")
+        crc = crc_fn(b"")  # initialise
+        with fso.open(path, "rb") as f:
+            while True:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                crc = crc_fn(chunk, crc)
+        return crc & 0xFFFFFFFF
+    except (ImportError, Exception):
+        pass
+
+    # Pure-Python fallback (slow but correct; no external deps)
+    return _crc32c_pure(fso, path)
+
+
+def _crc32c_pure(fso, path):
+    """Pure-Python CRC32C using the Castagnoli polynomial 0x82F63B78."""
+    # Build lookup table
+    poly = 0x82F63B78
+    table = []
+    for i in range(256):
+        crc = i
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ poly
+            else:
+                crc >>= 1
+        table.append(crc)
+
+    crc = 0xFFFFFFFF
+    with fso.open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            for byte in chunk:
+                crc = (crc >> 8) ^ table[(crc ^ byte) & 0xFF]
+    return (~crc) & 0xFFFFFFFF
