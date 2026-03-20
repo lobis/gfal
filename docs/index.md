@@ -1,6 +1,6 @@
 # gfal-cli
 
-A Python reimplementation of the [gfal2-util](https://github.com/cern-fts/gfal2-util) command-line tools, built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports local files, **HTTP/HTTPS**, and **XRootD** (`root://`).
+A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
 
 ## Installation
 
