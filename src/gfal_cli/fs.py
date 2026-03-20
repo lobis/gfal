@@ -29,15 +29,41 @@ def _fix_xrootd_plugin_path():
 # ---------------------------------------------------------------------------
 
 
-async def _no_verify_get_client(loop=None, **kwargs):
-    """aiohttp client factory that skips SSL certificate verification."""
-    import ssl as _ssl
+def get_ssl_context(verify=True):
+    """Return an ssl.SSLContext.
 
+    Uses the `truststore` library (if available) to leverage the system
+    trust store on macOS and Windows for verified connections.
+    """
+    import ssl
+
+    if not verify:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except (ImportError, AttributeError):
+        return ssl.create_default_context()
+
+
+async def _no_verify_get_client(loop=None, **kwargs):
+    """aiohttp client factory for fsspec without SSL verification."""
     import aiohttp
 
-    ctx = _ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = _ssl.CERT_NONE
+    ctx = get_ssl_context(verify=False)
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx))
+
+
+async def _verify_get_client(loop=None, **kwargs):
+    """aiohttp client factory for fsspec with system trust (truststore)."""
+    import aiohttp
+
+    ctx = get_ssl_context(verify=True)
     return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx))
 
 

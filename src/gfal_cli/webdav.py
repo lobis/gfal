@@ -55,11 +55,14 @@ def _make_session(storage_options):
 
 def _http_fs_opts(storage_options):
     """Convert storage_options to kwargs for fsspec's HTTPFileSystem."""
-    from gfal_cli.fs import _no_verify_get_client
+    from gfal_cli.fs import _no_verify_get_client, _verify_get_client
 
     opts = {k: v for k, v in storage_options.items() if k != "ssl_verify"}
-    if not storage_options.get("ssl_verify", True):
+    verify = storage_options.get("ssl_verify", True)
+    if not verify:
         opts["get_client"] = _no_verify_get_client
+    else:
+        opts["get_client"] = _verify_get_client
     return opts
 
 
@@ -264,19 +267,18 @@ class WebDAVFileSystem:
             entries = self._propfind(path, depth=0)
             if entries:
                 return entries[0]
-        except NotImplementedError:
-            pass  # 405: server doesn't support WebDAV; fall through to HEAD
-        except (
-            _requests.exceptions.SSLError,
-            _requests.exceptions.ConnectionError,
-        ):
+        except (_requests.exceptions.SSLError, _requests.exceptions.ConnectionError):
             # Re-raise only when the user has NOT opted out of SSL verification.
             # With --no-verify (ssl_verify=False) fall through to _http_fs.info()
             # which uses aiohttp with a fully-disabled SSL context.
             if self._verify:
                 raise
+        except NotImplementedError:
+            pass  # 405: server doesn't support WebDAV; fall through to HEAD
         except Exception:
-            pass  # Other PROPFIND failures (non-WebDAV server); fall through to HEAD
+            # For other errors (e.g. 403, 500 on PROPFIND), we fall back to HEAD
+            # but ONLY if we haven't already failed SSL.
+            pass
         # Fall back to fsspec's HTTP HEAD request (works for any plain-HTTP file)
         result = dict(self._http_fs.info(path))
         # Heuristic: plain HTTP servers can't tell us a resource is a directory,

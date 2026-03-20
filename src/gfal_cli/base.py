@@ -259,6 +259,19 @@ class CommandBase:
                 return msg
         except ImportError:
             pass
+
+        # SSL / connection errors from aiohttp (used by fsspec)
+        try:
+            import aiohttp as _aiohttp
+
+            if isinstance(e, _aiohttp.ClientConnectorSSLError):
+                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+            if isinstance(e, _aiohttp.ClientConnectorError):
+                cause = str(e.__cause__ or e)
+                if "SSL" in cause or "certificate" in cause.lower():
+                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+        except ImportError:
+            pass
         # HTTP errors from aiohttp: status attribute carries the HTTP code
         status = getattr(e, "status", None)
         if status is not None:
