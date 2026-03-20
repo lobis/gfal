@@ -210,6 +210,18 @@ jobs:
     - name: List artifacts
       run: ls -R artifacts/
 
+    - name: Create latest aliases
+      run: |
+        cd artifacts
+        # Find the actual packages and create 'latest' copies
+        # RPMs (EL9, EL10)
+        find . -name "*el9*.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9.rpm \;
+        find . -name "*el10*.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10.rpm \;
+        # DEB
+        find . -name "*.deb" -exec cp {} python3-gfal-cli-latest.deb \;
+        echo "Created latest aliases:"
+        ls -l python3-gfal-cli-latest*
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:

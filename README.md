@@ -4,11 +4,30 @@ A Python reimplementation of the [gfal2-util](https://github.com/cern-fts/gfal2-
 
 ## Installation
 
-No PyPI release yet. Install directly from GitHub:
+### From PyPI
 
 ```bash
-# Latest from the main branch
-pip install "git+https://github.com/lobis/gfal-cli.git"
+pip install gfal-cli
+```
+
+### From GitHub Releases (Latest RPM/DEB)
+
+We provide bundled, version-less packages for various distributions. These are installed into an isolated `/opt/gfal-cli` directory to prevent system conflicts.
+
+**AlmaLinux 9**:
+```bash
+dnf install -y https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest-el9.rpm
+```
+
+**AlmaLinux 10**:
+```bash
+dnf install -y https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest-el10.rpm
+```
+
+**Ubuntu (DEB)**:
+```bash
+curl -L -O https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest.deb
+sudo apt-get update && sudo apt-get install -y ./python3-gfal-cli-latest.deb
 ```
 
 After installation the following commands are available on your `PATH`:
