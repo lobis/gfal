@@ -1,33 +1,119 @@
-name: Publish to PyPI
+name: CI/CD
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Tests & Linting
+  # ---------------------------------------------------------------------------
+
+  codespell:
+    name: Codespell  spell-check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: codespell-project/actions-codespell@v2
+      with:
+        ignore_words_list: cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag
+
+  pre-commit:
+    name: Pre-commit checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - uses: pre-commit/action@v3.0.1
+
+  tests:
+    name: Tests (${{ matrix.os }}, Py ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        python-version: [ "3.9", "3.10", "3.11", "3.12", "3.13" ]
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install package and test dependencies
+      run: pip install --no-cache-dir ".[dev]"
+    - name: Run unit and functional tests
+      run: pytest tests/ -v -m "not integration and not xrootd"
+
+  xrootd:
+    name: XRootD Server Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install system build dependencies
+      run: sudo apt-get update && sudo apt-get install -y uuid-dev openssl
+    - name: Install package and test dependencies (with XRootD)
+      run: pip install --no-cache-dir ".[dev]"
+    - name: Override fsspec-xrootd with gfal3-updates branch (pending merge)
+      run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
+    - name: Run local XRootD server tests
+      run: pytest tests/ -v -m xrootd
+
+  integration:
+    name: Integration Tests (EOS)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install system build dependencies
+      run: sudo apt-get update && sudo apt-get install -y uuid-dev
+    - name: Install CERN CA certificate
+      run: |
+        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Root%20Certification%20Authority%202.crt" -O /tmp/cern.der
+        openssl x509 -inform DER -in /tmp/cern.der -out /tmp/cern.crt
+        sudo cp /tmp/cern.crt /usr/local/share/ca-certificates/cern-root-ca-2.crt
+        sudo update-ca-certificates
+        echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+    - name: Install package and test dependencies
+      run: pip install --no-cache-dir ".[dev]"
+    - name: Override fsspec-xrootd with gfal3-updates
+      run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
+    - name: Run integration tests
+      run: pytest tests/ -v -m integration
+
+  # ---------------------------------------------------------------------------
+  # 2. Packaging (Depends on ALL tests)
+  # ---------------------------------------------------------------------------
+
   build:
     name: Build distribution 📦
+    needs: [codespell, pre-commit, tests, xrootd, integration]
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - uses: actions/setup-python@v6
       with:
         python-version: "3.x"
-
     - name: Install build dependencies
       run: python -m pip install build hatchling hatch-vcs
-
     - name: Build sdist and wheel
       run: python -m build
-
     - name: Store distributions
       uses: actions/upload-artifact@v7
       with:
@@ -36,6 +122,7 @@ jobs:
 
   build-rpm:
     name: Build RPM 📦 (${{ matrix.os.name }}) [${{ matrix.arch }}]
+    needs: [codespell, pre-commit, tests, xrootd, integration]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -46,15 +133,11 @@ jobs:
           - image: almalinux:10
             name: el10
         arch: [x86_64, aarch64]
-
     steps:
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-
+    - uses: docker/setup-qemu-action@v4
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
-
     - name: Build RPM in Container
       run: |
         docker run --rm \
@@ -66,39 +149,29 @@ jobs:
                    git config --global --add safe.directory '*' && \
                    python3 -m pip install build hatchling hatch-vcs && \
                    make rpm"
-
     - name: Store RPMs
       uses: actions/upload-artifact@v7
       with:
         name: rpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/RPMS/*/*.rpm
 
-    - name: Store SRPMs
-      uses: actions/upload-artifact@v7
-      with:
-        name: srpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
-        path: rpmbuild/SRPMS/*.src.rpm
-
   build-deb:
     name: Build DEB 📦 [${{ matrix.arch }}]
+    needs: [codespell, pre-commit, tests, xrootd, integration]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-
     steps:
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
-
+    - uses: docker/setup-qemu-action@v4
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
-
     - name: Build DEB in Container
       run: |
         docker run --rm \
-          --platform linux/${{ matrix.arch == 'amd64' && 'amd64' || 'arm64' }} \
+          --platform linux/${{ matrix.arch }} \
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
           ubuntu:22.04 \
@@ -127,12 +200,15 @@ jobs:
                      -C buildroot \
                      -p python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb \
                      usr/"
-
     - name: Store DEBs
       uses: actions/upload-artifact@v7
       with:
         name: deb-package-distributions-${{ matrix.arch }}
         path: "*.deb"
+
+  # ---------------------------------------------------------------------------
+  # 3. Validation (Depends on Build)
+  # ---------------------------------------------------------------------------
 
   test-install:
     name: Test Install 🧪 (${{ matrix.target.name }})
@@ -144,33 +220,31 @@ jobs:
         target:
           - name: AlmaLinux 9
             container: almalinux:9
-            artifact: rpm-package-distributions-el9
+            artifact: rpm-package-distributions-el9-x86_64
             install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
           - name: AlmaLinux 10
             container: almalinux:10
-            artifact: rpm-package-distributions-el10
+            artifact: rpm-package-distributions-el10-x86_64
             install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
           - name: Ubuntu 24.04
             container: ubuntu:24.04
-            artifact: deb-package-distributions
+            artifact: deb-package-distributions-amd64
             install_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
-
     container: ${{ matrix.target.container }}
-
     steps:
-    - name: Download package
-      uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v8
       with:
         name: ${{ matrix.target.artifact }}
-
     - name: Install package
       run: ${{ matrix.target.install_cmd }}
-
     - name: Verify executables exist and run
       run: |
-        echo "✅ Verifying installation..."
         command -v gfal-copy
         gfal-copy --help
+
+  # ---------------------------------------------------------------------------
+  # 4. Publishing (Tags only, depends on validation)
+  # ---------------------------------------------------------------------------
 
   publish-to-pypi:
     name: Publish to PyPI 🚀
@@ -182,16 +256,12 @@ jobs:
       url: https://pypi.org/p/gfal-cli
     permissions:
       id-token: write
-
     steps:
-    - name: Download distributions
-      uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v8
       with:
         name: python-package-distributions
         path: dist/
-
-    - name: Publish package distributions to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+    - uses: pypa/gh-action-pypi-publish@release/v1
 
   update-repo:
     name: Update YUM/APT Repository 🌐
@@ -205,47 +275,29 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
     - uses: actions/checkout@v6
-
-    - name: Download all artifacts
-      uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v8
       with:
         path: artifacts/
         merge-multiple: true
-
-    - name: Install repository and docs tools
+    - name: Install tools
       run: |
-        sudo apt-get update
-        sudo apt-get install -y createrepo-c apt-utils
+        sudo apt-get update && sudo apt-get install -y createrepo-c apt-utils
         pip install mkdocs-material
-
-    - name: Build Documentation 📚
+    - name: Build Docs 📚
       run: mkdocs build
-
-    - name: Prepare and Update Repository
+    - name: Prepare Repository
       run: |
-        # The MkDocs website is in 'site/'
-        # We'll put our repository into 'site/rpm' and 'site/deb'
-        mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64
-        mkdir -p site/rpm/el10/x86_64 site/rpm/el10/aarch64
-        mkdir -p site/deb/pool/main/g/gfal-cli
-        mkdir -p site/deb/dists/stable/main/binary-amd64 site/deb/dists/stable/main/binary-arm64
-
-        # Copy RPMs
+        mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64 site/rpm/el10/x86_64 site/rpm/el10/aarch64
+        mkdir -p site/deb/pool/main/g/gfal-cli site/deb/dists/stable/main/binary-amd64 site/deb/dists/stable/main/binary-arm64
         find artifacts/ -type f -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
         find artifacts/ -type f -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
         find artifacts/ -type f -name "*el10*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
         find artifacts/ -type f -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
-
-        # Generate YUM metadata
         createrepo_c site/rpm/el9/x86_64/
         createrepo_c site/rpm/el9/aarch64/
         createrepo_c site/rpm/el10/x86_64/
         createrepo_c site/rpm/el10/aarch64/
-
-        # Copy DEBs
         cp artifacts/*.deb site/deb/pool/main/g/gfal-cli/
-
-        # Generate APT metadata
         cd site/deb
         apt-ftparchive packages pool/main/g/gfal-cli --arch amd64 > dists/stable/main/binary-amd64/Packages
         gzip -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
@@ -253,8 +305,6 @@ jobs:
         gzip -c dists/stable/main/binary-arm64/Packages > dists/stable/main/binary-arm64/Packages.gz
         apt-ftparchive release dists/stable > dists/stable/Release
         cd ../..
-
-        # Generate the .repo file for easier installation
         cat <<EOF > site/rpm/gfal-cli.repo
         [gfal-cli]
         name=gfal-cli repository
@@ -262,18 +312,11 @@ jobs:
         enabled=1
         gpgcheck=0
         EOF
-
-    - name: List Site Contents 📂
-      run: ls -R site/
-
-    - name: Upload Pages Artifact 📦
-      uses: actions/upload-pages-artifact@v4
+    - uses: actions/upload-pages-artifact@v4
       with:
         path: ./site/
-
-    - name: Deploy to GitHub Pages 🚀
+    - uses: actions/deploy-pages@v4
       id: deployment
-      uses: actions/deploy-pages@v4
 
   github-release:
     name: Create GitHub Release 🚀
@@ -282,39 +325,28 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v8
       with:
         path: artifacts/
         merge-multiple: true
-
-    - name: List artifacts
-      run: ls -R artifacts/
-
     - name: Create latest aliases
       run: |
         cd artifacts
-        # Find the actual packages and create 'latest' copies
-        # RPMs (EL9, EL10) - Default to x86_64 for generic names
         find . -name "*el9*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9.rpm \;
         find . -name "*el10*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10.rpm \;
-        # RPM ARM aliases
         find . -name "*el9*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9-aarch64.rpm \;
         find . -name "*el10*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10-aarch64.rpm \;
-        # DEB (Default to amd64 for generic name)
         find . -name "*amd64.deb" -exec cp {} python3-gfal-cli-latest.deb \;
-        # DEB ARM alias
         find . -name "*arm64.deb" -exec cp {} python3-gfal-cli-latest-arm64.deb \;
-        echo "Created latest aliases:"
-        ls -l python3-gfal-cli-latest*
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
+    - uses: softprops/action-gh-release@v2
       with:
         files: artifacts/**/*
         generate_release_notes: true
+
+  # ---------------------------------------------------------------------------
+  # 5. Final Verification (Tags only)
+  # ---------------------------------------------------------------------------
 
   verify-deployment:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
@@ -330,73 +362,34 @@ jobs:
             install_cmd: |
               dnf install -y epel-release
               curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-              for i in {1..12}; do
-                echo "Attempt $i..."
-                dnf clean all
-                if dnf install -y python3-gfal-cli; then
-                  break
-                fi
-                sleep 10
-              done
+              for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
           - name: AlmaLinux 10
             container: almalinux:10
             install_cmd: |
               dnf install -y epel-release
               curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-              for i in {1..12}; do
-                echo "Attempt $i..."
-                dnf clean all
-                if dnf install -y python3-gfal-cli; then
-                  break
-                fi
-                sleep 10
-              done
+              for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
           - name: Ubuntu 24.04
             container: ubuntu:24.04
             install_cmd: |
               apt-get update && apt-get install -y curl
               echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | tee /etc/apt/sources.list.d/gfal-cli.list
-              for i in {1..12}; do
-                echo "Attempt $i..."
-                if apt-get update && apt-get install -y python3-gfal-cli; then
-                  break
-                fi
-                sleep 10
-              done
+              for i in {1..12}; do apt-get update && apt-get install -y python3-gfal-cli && break || sleep 10; done
           - name: PyPI
             container: python:3.9
             install_cmd: |
-              for i in {1..12}; do
-                echo "Attempt $i..."
-                if pip install --no-cache-dir gfal-cli; then
-                  break
-                fi
-                sleep 10
-              done
-
+              for i in {1..12}; do pip install --no-cache-dir gfal-cli && break || sleep 10; done
     container: ${{ matrix.target.container }}
-
     steps:
     - name: Install and Verify
       run: |
         ${{ matrix.target.install_cmd }}
-
-        echo "✅ Verifying installation..."
-        # Command should be available
-        # On Linux OS packages, the binary is gfal-copy etc.
-        # Check if gfal-copy is in path
         export PATH=$PATH:/usr/local/bin
         command -v gfal-copy || exit 1
-
         INSTALLED_VERSION=$(gfal-copy --version | awk '{print $NF}')
         EXPECTED_VERSION=${{ github.ref_name }}
         EXPECTED_VERSION=${EXPECTED_VERSION#v}
-
-        echo "Installed version: $INSTALLED_VERSION"
-        echo "Expected version: $EXPECTED_VERSION"
-
         if [ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]; then
-          echo "❌ Version mismatch!"
+          echo "❌ Version mismatch: $INSTALLED_VERSION != $EXPECTED_VERSION"
           exit 1
         fi
-        echo "✅ Version verification PASSED!"
