@@ -24,17 +24,19 @@ prepare: dist
 	cp $(SPECFILE) $(RPMBUILD)/SPECS/
 
 srpm: prepare
-	@VERSION=$$(python3 -m hatchling version | sed 's/\+.*//'); \
-	RELEASE=$$(python3 -m hatchling version | grep -o '+.*' | sed 's/+/./' || echo "1"); \
+	@FULL_VERSION=$$(python3 -m hatchling version); \
+	VERSION=$$(echo $${FULL_VERSION} | sed 's/\+.*//'); \
+	RELEASE=$$(echo $${FULL_VERSION} | grep -o '+.*' | sed 's/+/./'); \
 	rpmbuild -bs $(RPMBUILD)/SPECS/$(SPECFILE) \
 		--define "_topdir $(RPMBUILD)" \
 		--define "version $${VERSION}" \
-		--define "release $${RELEASE}"
+		--define "release $${RELEASE:-1}"
 
 rpm: srpm
-	@VERSION=$$(python3 -m hatchling version | sed 's/\+.*//'); \
-	RELEASE=$$(python3 -m hatchling version | grep -o '+.*' | sed 's/+/./' || echo "1"); \
+	@FULL_VERSION=$$(python3 -m hatchling version); \
+	VERSION=$$(echo $${FULL_VERSION} | sed 's/\+.*//'); \
+	RELEASE=$$(echo $${FULL_VERSION} | grep -o '+.*' | sed 's/+/./'); \
 	rpmbuild -bb $(RPMBUILD)/SPECS/$(SPECFILE) \
 		--define "_topdir $(RPMBUILD)" \
 		--define "version $${VERSION}" \
-		--define "release $${RELEASE}"
+		--define "release $${RELEASE:-1}"
