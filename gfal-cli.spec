@@ -48,6 +48,7 @@ mkdir -p %{buildroot}%{_bindir}
 # Pip hardcodes the temporary GitHub Actions build path into the script shebangs.
 # We use sed to strip %{buildroot} out, so the shebang correctly becomes: #!/opt/gfal-cli/bin/python
 find %{buildroot}%{install_dir}/bin -type f -exec sed -i 's|%{buildroot}||g' {} +
+sed -i 's|%{buildroot}||g' %{buildroot}%{install_dir}/pyvenv.cfg
 
 # 5. Symlink the executables to /usr/bin
 # This allows users to run `gfal-copy` from anywhere, but it routes traffic into the isolated /opt/ environment
