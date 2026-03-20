@@ -246,7 +246,7 @@ jobs:
         cat <<EOF > repo/rpm/gfal-cli.repo
         [gfal-cli]
         name=GFAL-CLI Repository
-        baseurl=https://lobis.github.io/gfal-cli/repo/rpm/el\$releasever/\$basearch/
+        baseurl=https://lobis.github.io/gfal-cli/rpm/el\$releasever/\$basearch/
         enabled=1
         gpgcheck=0
         EOF

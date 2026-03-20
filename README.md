@@ -17,7 +17,8 @@ Enable the repository to receive automatic updates via `dnf update` or `apt upgr
 #### YUM (AlmaLinux / RHEL)
 
 ```bash
-sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/repo/rpm/gfal-cli.repo && sudo dnf install -y gfal-cli
+sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
+sudo dnf install -y python3-gfal-cli
 ```
 
 #### APT (Ubuntu / Debian)
@@ -25,7 +26,8 @@ sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli
 Add the repository:
 ```bash
 echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/repo/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal-cli.list
-sudo apt-get update && sudo apt-get install -y python3-gfal-cli
+sudo apt-get update
+sudo apt-get install -y python3-gfal-cli
 ```
 
 After installation the following commands are available on your `PATH`:
