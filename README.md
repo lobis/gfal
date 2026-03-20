@@ -53,26 +53,17 @@ After installation the following commands are available on your `PATH`:
 All commands accept any URL that fsspec understands. Local paths must be given as `file://` URIs.
 
 ```bash
-# Stat a local file
-gfal-stat file:///tmp/test.txt
+# Stat a remote file (HTTPS)
+gfal-stat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root
 
-# List a remote HTTP directory
-gfal-ls https://example.com/data/
+# Compute a checksum (XRootD)
+gfal-sum root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root ADLER32
 
-# Copy a file from XRootD to local
-gfal-cp root://eosuser.cern.ch//eos/user/j/jdoe/file.root file:///tmp/file.root
+# Copy a remote file to local
+gfal-cp root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root file:///tmp/higgs.root
 
-# Copy with checksum verification
-gfal-cp -K ADLER32 root://server//path/src.dat file:///tmp/dst.dat
-
-# Recursive copy
-gfal-cp -r root://server//path/srcdir/ file:///tmp/dstdir/
-
-# Remove a directory tree
-gfal-rm -r file:///tmp/old_dir/
-
-# Compute a checksum
-gfal-sum file:///tmp/file.root ADLER32
+# Cat a remote file (first 100 bytes)
+gfal-cat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root | head -c 100
 ```
 
 ## Command reference
