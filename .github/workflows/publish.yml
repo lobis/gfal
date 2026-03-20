@@ -245,7 +245,7 @@ jobs:
         # Generate the .repo file for easier installation
         cat <<EOF > repo/rpm/gfal-cli.repo
         [gfal-cli]
-        name=GFAL-CLI Repository
+        name=gfal-cli repository
         baseurl=https://lobis.github.io/gfal-cli/rpm/el\$releasever/\$basearch/
         enabled=1
         gpgcheck=0
