@@ -186,7 +186,7 @@ jobs:
         Section: utils
         Priority: optional
         Architecture: ${{ matrix.arch }}
-        Maintainer: Lobis <lobis@cern.ch>
+        Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
         Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
