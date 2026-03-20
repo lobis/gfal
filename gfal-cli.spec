@@ -1,3 +1,6 @@
+%{!?python3_sitelib: %global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || echo /usr/lib/python3/site-packages)}
+%{!?__python3: %global __python3 /usr/bin/python3}
+
 %define base_name gfal-cli
 %define dist_name gfal_cli
 
@@ -32,7 +35,7 @@ Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 
 %install
 mkdir -p %{buildroot}%{python3_sitelib}
-%{__python3} -m pip install --no-deps --no-binary :all: --root %{buildroot} --prefix %{_prefix} %{SOURCE0}
+%{__python3} -m pip install --no-deps --ignore-installed --no-build-isolation --root %{buildroot} --prefix %{_prefix} %{SOURCE0}
 
 %files
 %defattr(-,root,root,-)

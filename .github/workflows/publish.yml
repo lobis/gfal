@@ -55,22 +55,18 @@ jobs:
   build-rpm:
     name: Build RPM 📦
     runs-on: ubuntu-latest
+    container: almalinux:9
 
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.x"
-
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y rpm
-        python -m pip install build hatchling hatch-vcs
+        dnf install -y rpm-build make python3-devel python3-pip git
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        python3 -m pip install build hatchling hatch-vcs
 
     - name: Build RPM
       run: make rpm
