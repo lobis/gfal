@@ -504,3 +504,60 @@ async def test_tui_local_checksum_command_logging(tmp_path):
             assert log_file.exists()
             content = log_file.read_text()
             assert "gfal-sum" in content
+
+
+@pytest.mark.asyncio
+async def test_tui_human_readable_stat():
+    """Verify that stat modal contains human-readable size and time."""
+    app = GfalTui()
+    async with app.run_test() as pilot:
+        tree = app.query_one("#local-tree", DirectoryTree)
+        tree.focus()
+        await pilot.pause()
+
+        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+            mock_fs = MagicMock()
+            # 10 MB = 10 * 1024 * 1024 = 10485760 bytes
+            timestamp = 1710972000.0  # 2024-03-20 22:00:00 UTC
+            mock_fs.info.return_value = {"size": 10485760, "mtime": timestamp}
+            mock_url_to_fs.return_value = (mock_fs, "/")
+
+            await pilot.press("s")
+            # Wait for modal
+            for _ in range(20):
+                if isinstance(app.screen, MessageModal):
+                    break
+                await pilot.pause(0.1)
+
+            assert isinstance(app.screen, MessageModal)
+            message = app.screen.message
+            assert "10.00 MB" in message
+            assert "2024-03-20 22:00:00 UTC" in message
+
+
+@pytest.mark.asyncio
+async def test_tui_checksum_formatting_v2():
+    """Verify that checksum modal contains algorithm name and hex value."""
+    app = GfalTui()
+    async with app.run_test() as pilot:
+        tree = app.query_one("#local-tree", DirectoryTree)
+        tree.focus()
+        await pilot.pause()
+
+        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+            mock_fs = MagicMock()
+            # Return bytes checksum
+            mock_fs.checksum.return_value = b"\xab\xcd\xef"
+            mock_url_to_fs.return_value = (mock_fs, "/")
+
+            await pilot.press("c")
+            # Wait for modal
+            for _ in range(20):
+                if isinstance(app.screen, MessageModal):
+                    break
+                await pilot.pause(0.1)
+
+            assert isinstance(app.screen, MessageModal)
+            message = app.screen.message
+            assert "Checksum (ADLER32)" in message
+            assert "abcdef" in message
