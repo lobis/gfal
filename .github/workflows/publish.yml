@@ -113,6 +113,9 @@ jobs:
         mv buildroot/usr/lib/python3/dist-packages/bin/* buildroot/usr/bin/
         rm -rf buildroot/usr/lib/python3/dist-packages/bin
 
+        # Fix shebangs to use the target system's Python instead of the GitHub Actions runner Python
+        sed -i '1s|^.*$|#!/usr/bin/python3|' buildroot/usr/bin/*
+
         # 4. Package the raw directory using fpm
         fpm -s dir -t deb \
           --name python3-gfal-cli \
@@ -167,7 +170,7 @@ jobs:
     - name: Verify executables exist and run
       run: |
         echo "✅ Verifying installation..."
-        which gfal-copy
+        command -v gfal-copy
         gfal-copy --help
 
   publish-to-pypi:

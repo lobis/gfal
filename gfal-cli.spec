@@ -18,10 +18,11 @@ BuildRequires: python3-pip
 BuildRequires: python3-setuptools
 BuildRequires: python3-wheel
 
-Requires: python3-fsspec
+# Only require the base C++ XRootD library from the OS.
 Requires: python3-xrootd
-Requires: python3-aiohttp
-Requires: python3-requests
+
+# Stop RPM from auto-generating strict python3.Xdist() requirements
+AutoReq: no
 
 %description
 A pip-installable Python rewrite of the gfal2-util CLI tools, built on fsspec.
@@ -36,16 +37,18 @@ Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 %install
 mkdir -p %{buildroot}%{python3_sitelib}
 
-# 1. Pull the missing dependency from PyPI and bundle it in the RPM buildroot
-%{__python3} -m pip install fsspec-xrootd --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix}
-
-# 2. Install the gfal-cli wheel into the RPM buildroot
+# Install the app AND all its dependencies into the RPM buildroot
+%{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix}
 %{__python3} -m pip install --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix} %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
+
+# Because we used --no-deps to avoid pulling dependencies twice,
+# let's do one final pip pass to pull all sub-dependencies (like urllib3, certifi, etc.)
+%{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl --ignore-installed --root %{buildroot} --prefix %{_prefix}
 
 %files
 %defattr(-,root,root,-)
 %{_bindir}/gfal*
-%{python3_sitelib}/gfal_cli*
-%{python3_sitelib}/fsspec_xrootd*
+# Grab the app and all bundled dependencies
+%{python3_sitelib}/*
 
 %changelog -f CHANGELOG
