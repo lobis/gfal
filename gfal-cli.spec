@@ -1,10 +1,8 @@
-%{!?python3_sitelib: %global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || echo /usr/lib/python3/site-packages)}
-# Add the macro for architecture-specific compiled files (lib64)
-%{!?python3_sitearch: %global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))" 2>/dev/null || echo /usr/lib64/python3/site-packages)}
 %{!?__python3: %global __python3 /usr/bin/python3}
 
 %define base_name gfal-cli
 %define dist_name gfal_cli
+%define install_dir /opt/%{base_name}
 
 Name: python3-%{base_name}
 Version: %{pkg_version}
@@ -14,21 +12,19 @@ License: MIT
 URL: https://github.com/lobis/gfal-cli
 Source0: %{dist_name}-%{version}-py3-none-any.whl
 
-# REMOVED: BuildArch: noarch (Because we are bundling compiled C-extensions from aiohttp)
-
 BuildRequires: python3-devel
 BuildRequires: python3-pip
-BuildRequires: python3-setuptools
 BuildRequires: python3-wheel
 
+# Still require the OS to provide the heavy C++ XRootD bindings
 Requires: python3-xrootd
 
-# Stop RPM from auto-generating strict python3.Xdist() requirements
+# Stop RPM from auto-generating strict version requirements
 AutoReq: no
 
 %description
 A pip-installable Python rewrite of the gfal2-util CLI tools, built on fsspec.
-Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
+This package is bundled in an isolated environment in %{install_dir} to prevent system conflicts.
 
 %prep
 # Nothing to prep for wheel
@@ -37,25 +33,33 @@ Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 # Nothing to build for wheel
 
 %install
-mkdir -p %{buildroot}%{python3_sitelib}
-mkdir -p %{buildroot}%{python3_sitearch}
+# 1. Create the base directories
+mkdir -p %{buildroot}%{install_dir}
+mkdir -p %{buildroot}%{_bindir}
 
-# Install the app AND all its dependencies into the RPM buildroot
-%{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix}
-%{__python3} -m pip install --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix} %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
+# 2. Create a virtual environment inside the RPM buildroot
+# --system-site-packages is REQUIRED so it can still find python3-xrootd from the OS
+%{__python3} -m venv --system-site-packages %{buildroot}%{install_dir}
 
-# Final pass to pull all sub-dependencies
-%{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl --ignore-installed --root %{buildroot} --prefix %{_prefix}
+# 3. Use the venv's isolated pip to install the app and all bundled dependencies
+%{buildroot}%{install_dir}/bin/python -m pip install --no-cache-dir fsspec-xrootd fsspec aiohttp requests %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
 
-# Clean up random executable scripts installed by sub-dependencies (like normalizer)
-find %{buildroot}%{_bindir} -type f -not -name "gfal*" -delete
+# 4. Clean up hardcoded build paths
+# Pip hardcodes the temporary GitHub Actions build path into the script shebangs.
+# We use sed to strip %{buildroot} out, so the shebang correctly becomes: #!/opt/gfal-cli/bin/python
+find %{buildroot}%{install_dir}/bin -type f -exec sed -i 's|%{buildroot}||g' {} +
+
+# 5. Symlink the executables to /usr/bin
+# This allows users to run `gfal-copy` from anywhere, but it routes traffic into the isolated /opt/ environment
+for cmd in %{buildroot}%{install_dir}/bin/gfal*; do
+    ln -s %{install_dir}/bin/$(basename $cmd) %{buildroot}%{_bindir}/$(basename $cmd)
+done
 
 %files
 %defattr(-,root,root,-)
+# Own the symlinks we created in /usr/bin/
 %{_bindir}/gfal*
-# Grab the pure Python dependencies (lib)
-%{python3_sitelib}/*
-# Grab the compiled C-extension dependencies (lib64)
-%{python3_sitearch}/*
+# Own the entire isolated directory in /opt/
+%{install_dir}/
 
 %changelog -f CHANGELOG
