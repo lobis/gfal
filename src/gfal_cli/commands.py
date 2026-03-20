@@ -240,7 +240,12 @@ class GfalCommands(base.CommandBase):
                     # We assume it's the correct algorithm if we got here.
                     sys.stdout.write(f"{self.params.file} {result}\n")
                     return
-            except Exception:
+            except Exception as e:
+                # Do not swallow SSL errors; they will likely fail client-side too
+                # and we want to report the clear SSL error message.
+                cause = str(e.__cause__ or e).lower()
+                if "ssl" in cause or "certificate" in cause:
+                    raise
                 pass  # fall through to client-side computation
 
         checksum = _compute_checksum(fso, path, alg)

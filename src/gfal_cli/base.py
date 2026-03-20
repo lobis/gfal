@@ -256,8 +256,11 @@ class CommandBase:
                 cause = str(e)
                 if "WRONG_VERSION_NUMBER" in cause or "UNKNOWN_PROTOCOL" in cause:
                     return f"{msg}: server does not speak HTTPS on this port (try http:// instead)"
-                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
             if isinstance(e, _requests.exceptions.ConnectionError):
+                cause = str(e.__cause__ or e).lower()
+                if "ssl" in cause or "certificate" in cause:
+                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
                 return msg
         except ImportError:
             pass
@@ -267,11 +270,11 @@ class CommandBase:
             import aiohttp as _aiohttp
 
             if isinstance(e, _aiohttp.ClientConnectorSSLError):
-                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
             if isinstance(e, _aiohttp.ClientConnectorError):
-                cause = str(e.__cause__ or e)
-                if "SSL" in cause or "certificate" in cause.lower():
-                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA)"
+                cause = str(e.__cause__ or e).lower()
+                if "ssl" in cause or "certificate" in cause:
+                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
         except ImportError:
             pass
         # HTTP errors from aiohttp: status attribute carries the HTTP code
