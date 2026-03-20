@@ -150,7 +150,7 @@ jobs:
                    python3 -m pip install build hatchling hatch-vcs && \
                    make rpm"
     - name: Store RPMs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/RPMS/*/*.rpm
@@ -196,7 +196,7 @@ jobs:
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
                    dpkg-deb --build pkg python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb"
     - name: Store DEBs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: deb-package-distributions-${{ matrix.arch }}
         path: "*.deb"
@@ -227,7 +227,7 @@ jobs:
             install_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
     container: ${{ matrix.target.container }}
     steps:
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v8
       with:
         name: ${{ matrix.target.artifact }}
     - name: Install package
@@ -249,8 +249,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/download-artifact@v4
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v8
       with:
         path: artifacts/
         merge-multiple: true
@@ -293,6 +293,23 @@ jobs:
     - uses: actions/deploy-pages@v4
       id: deployment
 
+  publish-to-pypi:
+    name: Publish to PyPI 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, build-rpm, build-deb, test-install]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/gfal-cli
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - uses: pypa/gh-action-pypi-publish@release/v1
+
   github-release:
     name: Create GitHub Release 🚀
     if: startsWith(github.ref, 'refs/tags/v')
@@ -301,7 +318,7 @@ jobs:
     permissions:
       contents: write
     steps:
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v8
       with:
         path: artifacts/
         merge-multiple: true
