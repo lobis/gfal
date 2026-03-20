@@ -10,33 +10,45 @@ from textual.widgets import (
     Header,
     Input,
     Label,
-    Static,
+    Tree,
 )
 
 from gfal_cli.fs import url_to_fs
 
 
-class RemoteDirectoryTree(DirectoryTree):
-    """A DirectoryTree that can handle remote URLs via fsspec."""
+class RemoteDirectoryTree(Tree):
+    """A lazy-loading tree for remote filesystems."""
 
-    def __init__(self, path: str, **kwargs):
-        self.url = path
+    def __init__(self, url: str, ssl_verify: bool = False, **kwargs):
+        self.url = url
+        self.ssl_verify = ssl_verify
+        super().__init__(url, data=url, **kwargs)
+
+    def on_mount(self):
+        # Use call_after_refresh to ensure the tree is ready
+        self.call_after_refresh(self.root.expand)
+
+    def _on_tree_node_expanded(self, event: Tree.NodeExpanded):
+        node = event.node
+        if not node.children:
+            self.run_worker(self.load_directory(node))
+
+    async def load_directory(self, node):
+        path = node.data
         try:
-            self.fs, self.fs_path = url_to_fs(path)
-        except Exception:
-            self.fs, self.fs_path = None, None
-        super().__init__(self.fs_path or path, **kwargs)
-
-    def load_directory(self, node):
-        """Custom loader for remote paths."""
-        if not self.fs:
-            return super().load_directory(node)
-
-        # Implementation detail: DirectoryTree uses path.iterdir()
-        # We might need to override more if we want true remote support
-        # inside the built-in widget, or implement our own Tree.
-        # For the PoC, we'll try to stick to local or simple remote if possible.
-        return super().load_directory(node)
+            fs, fs_path = url_to_fs(path, ssl_verify=self.ssl_verify)
+            # Use detail=True to distinguish files and directories
+            entries = fs.ls(fs_path, detail=True)
+            for entry in sorted(
+                entries, key=lambda e: (e["type"] != "directory", e["name"])
+            ):
+                name = Path(entry["name"]).name
+                if not name:
+                    continue
+                is_dir = entry["type"] == "directory"
+                node.add(name, data=entry["name"], allow_expand=is_dir)
+        except Exception as e:
+            self.app.notify(f"Error loading {path}: {e}", severity="error")
 
 
 class GfalTui(App):
@@ -94,32 +106,32 @@ class GfalTui(App):
                 yield DirectoryTree("./", id="local-tree")
             with Vertical(classes="pane", id="remote-pane"):
                 yield Label("Remote / Target")
-                yield Static(
-                    "Enter a URL above to browse remote paths", id="remote-placeholder"
+                yield RemoteDirectoryTree(
+                    "https://eospublic.cern.ch:8444/eos/opendata/cms/", id="remote-tree"
                 )
         yield Footer()
 
     @on(Input.Submitted, "#url-input")
-    def handle_url(self, event: Input.Submitted):
+    async def handle_url(self, event: Input.Submitted):
         url = event.value
         if not url:
             return
 
-        # For the PoC, we update the remote placeholder with the LS output
-        # A full tree implementation would take more time.
-        self.run_worker(self.update_remote(url), thread=True)
+        await self.update_remote(url)
 
     async def update_remote(self, url: str):
-        placeholder = self.query_one("#remote-placeholder", Static)
         ssl_verify = self.query_one("#ssl-verify", Checkbox).value
         try:
-            placeholder.update(f"Fetching {url}... (SSL Verify: {ssl_verify})")
-            fs, path = url_to_fs(url, ssl_verify=ssl_verify)
-            files = fs.ls(path, detail=False)
-            output = "\n".join([Path(f).name for f in files])
-            placeholder.update(f"Contents of {url}:\n\n{output}")
+            # Replace the old tree with a new one
+            remote_pane = self.query_one("#remote-pane", Vertical)
+            old_tree = self.query("#remote-tree")
+            if old_tree:
+                await old_tree.remove()
+
+            new_tree = RemoteDirectoryTree(url, ssl_verify=ssl_verify, id="remote-tree")
+            await remote_pane.mount(new_tree)
         except Exception as e:
-            placeholder.update(f"Error: {e}")
+            self.notify(f"Error updating remote: {e}", severity="error")
 
 
 def main():

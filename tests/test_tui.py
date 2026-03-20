@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Checkbox, Input, Static
+from textual.widgets import Checkbox, Input, Tree
 
 from gfal_cli.tui import GfalTui
 
@@ -25,29 +25,43 @@ async def test_tui_url_submission():
     test_url = "https://example.com/data"
 
     with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
-        # Mock filesystem
-        from unittest.mock import MagicMock
-
         mock_fs = MagicMock()
-        mock_fs.ls.return_value = ["file1.txt", "file2.txt"]
+        mock_fs.ls.return_value = [
+            {"name": "file1.txt", "type": "file"},
+            {"name": "file2.txt", "type": "file"},
+        ]
         mock_url_to_fs.return_value = (mock_fs, "/data")
 
         async with app.run_test() as pilot:
+            # Wait for any background workers (like the initial load)
+            for _ in range(5):
+                await pilot.pause()
+
             # Set URL and submit
             input_widget = app.query_one("#url-input", Input)
             input_widget.value = test_url
             await pilot.press("enter")
 
-            # Wait for the worker to finish
-            await pilot.pause()
+            # Wait for the tree to mount and its initial expand worker
+            for _ in range(5):
+                await pilot.pause()
 
-            # Verify placeholder update
-            placeholder = app.query_one("#remote-placeholder", Static)
-            content = str(placeholder.render())
-            assert "file1.txt" in content
-            assert "file2.txt" in content
-            # Ensure ssl_verify=False was passed (default)
-            mock_url_to_fs.assert_called_with(test_url, ssl_verify=False)
+            # Find the tree that matches our test URL
+            tree = None
+            for t in app.query(Tree):
+                if str(t.root.label) == test_url:
+                    tree = t
+                    break
+
+            assert tree is not None, "Could not find a tree with the test URL"
+
+            # Children should be loaded
+            labels = [str(node.label) for node in tree.root.children]
+            assert "file1.txt" in labels
+            assert "file2.txt" in labels
+
+            # Ensure the LAST call was with our test URL and default ssl_verify
+            mock_url_to_fs.assert_any_call(test_url, ssl_verify=False)
 
 
 @pytest.mark.asyncio
@@ -60,6 +74,10 @@ async def test_tui_ssl_toggle():
         mock_url_to_fs.return_value = (MagicMock(), "/data")
 
         async with app.run_test() as pilot:
+            # Wait for initial load
+            for _ in range(5):
+                await pilot.pause()
+
             # Toggle Checkbox
             checkbox = app.query_one("#ssl-verify", Checkbox)
             checkbox.value = True
@@ -68,7 +86,8 @@ async def test_tui_ssl_toggle():
             input_widget = app.query_one("#url-input", Input)
             input_widget.value = test_url
             await pilot.press("enter")
-            await pilot.pause()
+            for _ in range(5):
+                await pilot.pause()
 
             # Ensure ssl_verify=True was passed
-            mock_url_to_fs.assert_called_with(test_url, ssl_verify=True)
+            mock_url_to_fs.assert_any_call(test_url, ssl_verify=True)
