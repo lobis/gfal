@@ -67,4 +67,4 @@ popd
 # Own the entire isolated directory in /opt/
 %{install_dir}/
 
-%changelog -f CHANGELOG
+%changelog -f %{_sourcedir}/CHANGELOG

@@ -18,10 +18,12 @@ dist: clean
 	python3 -m build --no-isolation
 
 prepare: dist
-	@VERSION=$$(python3 -m hatchling version | sed 's/\+.*//'); \
+	@FULL_VERSION=$$(python3 -m hatchling version); \
+	VERSION=$$(echo $${FULL_VERSION} | sed 's/\+.*//'); \
 	mkdir -p $(RPMBUILD)/BUILD $(RPMBUILD)/RPMS $(RPMBUILD)/SOURCES $(RPMBUILD)/SPECS $(RPMBUILD)/SRPMS; \
-	cp $(DIST_DIR)/$(NAME_DIST)-$${VERSION}-py3-none-any.whl $(RPMBUILD)/SOURCES/; \
-	cp $(SPECFILE) CHANGELOG $(RPMBUILD)/SPECS/
+	cp $(DIST_DIR)/$(NAME_DIST)-$${FULL_VERSION}-py3-none-any.whl $(RPMBUILD)/SOURCES/$(NAME_DIST)-$${VERSION}-py3-none-any.whl; \
+	cp $(SPECFILE) $(RPMBUILD)/SPECS/; \
+	cp CHANGELOG $(RPMBUILD)/SOURCES/
 
 srpm: prepare
 	@FULL_VERSION=$$(python3 -m hatchling version); \
