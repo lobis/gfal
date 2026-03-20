@@ -15,7 +15,7 @@ clean:
 
 dist: clean
 	python3 -m pip install --upgrade build hatchling hatch-vcs
-	python3 -m build
+	python3 -m build --no-isolation
 
 prepare: dist
 	@VERSION=$$(python3 -m hatchling version | sed 's/\+.*//'); \
