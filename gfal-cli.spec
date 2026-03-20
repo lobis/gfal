@@ -8,7 +8,7 @@ Name: python3-%{base_name}
 Version: %{pkg_version}
 Release: %{pkg_release}%{?dist}
 Summary: GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)
-License: MIT
+License: BSD-3-Clause
 URL: https://github.com/lobis/gfal-cli
 Source0: %{dist_name}-%{version}-py3-none-any.whl
 
