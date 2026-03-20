@@ -10,24 +10,22 @@ A Python reimplementation of the [gfal2-util](https://github.com/cern-fts/gfal2-
 pip install gfal-cli
 ```
 
-### From GitHub Releases (Latest RPM/DEB)
+### From Native Repository (Recommended for Updates)
 
-We provide bundled, version-less packages for various distributions. These are installed into an isolated `/opt/gfal-cli` directory to prevent system conflicts.
+Enable the repository to receive automatic updates via `dnf update` or `apt upgrade`.
 
-**AlmaLinux 9**:
+#### YUM (AlmaLinux / RHEL)
+
 ```bash
-dnf install -y https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest-el9.rpm
+sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/repo/rpm/gfal-cli.repo && sudo dnf install -y gfal-cli
 ```
 
-**AlmaLinux 10**:
-```bash
-dnf install -y https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest-el10.rpm
-```
+#### APT (Ubuntu / Debian)
 
-**Ubuntu (DEB)**:
+Add the repository:
 ```bash
-curl -L -O https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest.deb
-sudo apt-get update && sudo apt-get install -y ./python3-gfal-cli-latest.deb
+echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/repo/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal-cli.list
+sudo apt-get update && sudo apt-get install -y python3-gfal-cli
 ```
 
 After installation the following commands are available on your `PATH`:

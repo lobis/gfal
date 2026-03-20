@@ -193,6 +193,73 @@ jobs:
     - name: Publish package distributions to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
 
+  update-repo:
+    name: Update YUM/APT Repository 🌐
+    needs: [build-rpm, build-deb, test-install]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+        merge-multiple: true
+
+    - name: Install repository tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y createrepo-c apt-utils
+
+    - name: Prepare and Update Repository
+      run: |
+        mkdir -p repo/rpm/el9/x86_64 repo/rpm/el10/x86_64
+        mkdir -p repo/deb/pool/main/g/gfal-cli
+        mkdir -p repo/deb/dists/stable/main/binary-amd64
+
+        # Copy RPMs
+        cp artifacts/*el9*.rpm repo/rpm/el9/x86_64/
+        cp artifacts/*el10*.rpm repo/rpm/el10/x86_64/
+
+        # Generate YUM metadata
+        createrepo_c repo/rpm/el9/x86_64/
+        createrepo_c repo/rpm/el10/x86_64/
+
+        # Copy DEBs
+        cp artifacts/*.deb repo/deb/pool/main/g/gfal-cli/
+
+        # Generate APT metadata
+        cd repo/deb
+        apt-ftparchive packages pool/main/g/gfal-cli > dists/stable/main/binary-amd64/Packages
+        gzip -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+        apt-ftparchive release dists/stable > dists/stable/Release
+        cd ../..
+
+        # Generate the .repo file for easier installation
+        cat <<EOF > repo/rpm/gfal-cli.repo
+        [gfal-cli]
+        name=GFAL-CLI Repository
+        baseurl=https://lobis.github.io/gfal-cli/repo/rpm/el\$releasever/\$basearch/
+        enabled=1
+        gpgcheck=0
+        EOF
+
+    - name: Upload Pages Artifact 📦
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ./repo/
+
+    - name: Deploy to GitHub Pages 🚀
+      id: deployment
+      uses: actions/deploy-pages@v4
+
   github-release:
     name: Create GitHub Release 🚀
     needs: [build, build-rpm, build-deb, test-install]
