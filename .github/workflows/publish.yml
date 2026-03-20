@@ -27,7 +27,7 @@ jobs:
       run: python -m build
 
     - name: Store distributions
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: python-package-distributions
         path: dist/
@@ -62,13 +62,13 @@ jobs:
       run: make rpm
 
     - name: Store RPMs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rpm-package-distributions-${{ matrix.os.name }}
         path: rpmbuild/RPMS/*/*.rpm
 
     - name: Store SRPMs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: srpm-package-distributions-${{ matrix.os.name }}
         path: rpmbuild/SRPMS/*.src.rpm
@@ -130,7 +130,7 @@ jobs:
           usr/
 
     - name: Store DEBs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: deb-package-distributions
         path: "*.deb"
