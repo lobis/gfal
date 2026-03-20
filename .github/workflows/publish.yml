@@ -2,6 +2,8 @@ name: Publish to PyPI
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -175,6 +177,7 @@ jobs:
 
   publish-to-pypi:
     name: Publish to PyPI 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, build-rpm, build-deb, test-install]
     runs-on: ubuntu-latest
     environment:
@@ -196,7 +199,6 @@ jobs:
   update-repo:
     name: Update YUM/APT Repository 🌐
     needs: [build-rpm, build-deb, test-install]
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -213,37 +215,43 @@ jobs:
         path: artifacts/
         merge-multiple: true
 
-    - name: Install repository tools
+    - name: Install repository and docs tools
       run: |
         sudo apt-get update
         sudo apt-get install -y createrepo-c apt-utils
+        pip install mkdocs-material
+
+    - name: Build Documentation 📚
+      run: mkdocs build
 
     - name: Prepare and Update Repository
       run: |
-        mkdir -p repo/rpm/el9/x86_64 repo/rpm/el10/x86_64
-        mkdir -p repo/deb/pool/main/g/gfal-cli
-        mkdir -p repo/deb/dists/stable/main/binary-amd64
+        # The MkDocs website is in 'site/'
+        # We'll put our repository into 'site/rpm' and 'site/deb'
+        mkdir -p site/rpm/el9/x86_64 site/rpm/el10/x86_64
+        mkdir -p site/deb/pool/main/g/gfal-cli
+        mkdir -p site/deb/dists/stable/main/binary-amd64
 
         # Copy RPMs
-        find artifacts/ -type f -name "*el9*.rpm" ! -name "*.src.rpm" -exec cp {} repo/rpm/el9/x86_64/ \;
-        find artifacts/ -type f -name "*el10*.rpm" ! -name "*.src.rpm" -exec cp {} repo/rpm/el10/x86_64/ \;
+        find artifacts/ -type f -name "*el9*.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
+        find artifacts/ -type f -name "*el10*.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
 
         # Generate YUM metadata
-        createrepo_c repo/rpm/el9/x86_64/
-        createrepo_c repo/rpm/el10/x86_64/
+        createrepo_c site/rpm/el9/x86_64/
+        createrepo_c site/rpm/el10/x86_64/
 
         # Copy DEBs
-        cp artifacts/*.deb repo/deb/pool/main/g/gfal-cli/
+        cp artifacts/*.deb site/deb/pool/main/g/gfal-cli/
 
         # Generate APT metadata
-        cd repo/deb
+        cd site/deb
         apt-ftparchive packages pool/main/g/gfal-cli > dists/stable/main/binary-amd64/Packages
         gzip -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
         apt-ftparchive release dists/stable > dists/stable/Release
         cd ../..
 
         # Generate the .repo file for easier installation
-        cat <<EOF > repo/rpm/gfal-cli.repo
+        cat <<EOF > site/rpm/gfal-cli.repo
         [gfal-cli]
         name=gfal-cli repository
         baseurl=https://lobis.github.io/gfal-cli/rpm/el\$releasever/\$basearch/
@@ -251,13 +259,13 @@ jobs:
         gpgcheck=0
         EOF
 
-    - name: List Repository Contents 📂
-      run: ls -R repo/
+    - name: List Site Contents 📂
+      run: ls -R site/
 
     - name: Upload Pages Artifact 📦
       uses: actions/upload-pages-artifact@v4
       with:
-        path: ./repo/
+        path: ./site/
 
     - name: Deploy to GitHub Pages 🚀
       id: deployment
@@ -265,6 +273,7 @@ jobs:
 
   github-release:
     name: Create GitHub Release 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, build-rpm, build-deb, test-install]
     runs-on: ubuntu-latest
     permissions:
