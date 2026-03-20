@@ -35,106 +35,103 @@ jobs:
         path: dist/
 
   build-rpm:
-    name: Build RPM 📦 (${{ matrix.os.name }})
+    name: Build RPM 📦 (${{ matrix.os.name }}) [${{ matrix.arch }}]
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         os:
           - image: almalinux:9
             name: el9
           - image: almalinux:10
             name: el10
-    container: ${{ matrix.os.image }}
+        arch: [x86_64, aarch64]
 
     steps:
-    - name: Install git
-      run: dnf install -y git
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
 
-    - name: Install dependencies
+    - name: Build RPM in Container
       run: |
-        dnf install -y rpm-build make python3-devel python3-pip
-        git config --global --add safe.directory '*'
-        python3 -m pip install build hatchling hatch-vcs
-
-    - name: Build RPM
-      run: make rpm
+        docker run --rm \
+          --platform linux/${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          ${{ matrix.os.image }} \
+          bash -c "dnf install -y git rpm-build make python3-devel python3-pip && \
+                   git config --global --add safe.directory '*' && \
+                   python3 -m pip install build hatchling hatch-vcs && \
+                   make rpm"
 
     - name: Store RPMs
       uses: actions/upload-artifact@v7
       with:
-        name: rpm-package-distributions-${{ matrix.os.name }}
+        name: rpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/RPMS/*/*.rpm
 
     - name: Store SRPMs
       uses: actions/upload-artifact@v7
       with:
-        name: srpm-package-distributions-${{ matrix.os.name }}
+        name: srpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/SRPMS/*.src.rpm
 
   build-deb:
-    name: Build DEB 📦
+    name: Build DEB 📦 [${{ matrix.arch }}]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     steps:
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: "3.x"
-
-    - name: Install dependencies
+    - name: Build DEB in Container
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential
-        sudo gem install fpm
-        python -m pip install build hatchling hatch-vcs
-
-    - name: Build distributions
-      run: python -m build
-
-    - name: Build DEB
-      run: |
-        VERSION=$(python3 -m hatchling version | sed 's/\+.*//')
-
-        # 1. Create a fake root filesystem targeting Debian's expected paths
-        mkdir -p buildroot/usr/lib/python3/dist-packages
-        mkdir -p buildroot/usr/bin
-
-        # 2. Bundle fsspec-xrootd and your app directly into dist-packages
-        python3 -m pip install fsspec-xrootd --no-deps --ignore-installed --target buildroot/usr/lib/python3/dist-packages
-        python3 -m pip install dist/gfal_cli-*.whl --no-deps --ignore-installed --target buildroot/usr/lib/python3/dist-packages
-
-        # 3. Move the CLI scripts to /usr/bin where they belong
-        mv buildroot/usr/lib/python3/dist-packages/bin/* buildroot/usr/bin/
-        rm -rf buildroot/usr/lib/python3/dist-packages/bin
-
-        # Fix shebangs to use the target system's Python instead of the GitHub Actions runner Python
-        sed -i '1s|^.*$|#!/usr/bin/python3|' buildroot/usr/bin/*
-
-        # 4. Package the raw directory using fpm
-        fpm -s dir -t deb \
-          --name python3-gfal-cli \
-          --version "$VERSION" \
-          --architecture all \
-          --depends "python3-fsspec" \
-          --depends "python3-xrootd" \
-          --depends "python3-aiohttp" \
-          --depends "python3-requests" \
-          --description "GFAL2-compatible CLI tools based on fsspec" \
-          -C buildroot \
-          usr/
+        docker run --rm \
+          --platform linux/${{ matrix.arch == 'amd64' && 'amd64' || 'arm64' }} \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          ubuntu:22.04 \
+          bash -c "apt-get update && \
+                   DEBIAN_FRONTEND=noninteractive apt-get install -y ruby ruby-dev build-essential python3-pip git && \
+                   gem install --no-document fpm && \
+                   python3 -m pip install build hatchling hatch-vcs && \
+                   VERSION=\$(python3 -m hatchling version | sed 's/\+.*//') && \
+                   python3 -m build --no-isolation && \
+                   mkdir -p buildroot/usr/lib/python3/dist-packages && \
+                   mkdir -p buildroot/usr/bin && \
+                   python3 -m pip install fsspec-xrootd --no-deps --ignore-installed --target buildroot/usr/lib/python3/dist-packages && \
+                   python3 -m pip install dist/gfal_cli-*.whl --no-deps --ignore-installed --target buildroot/usr/lib/python3/dist-packages && \
+                   mv buildroot/usr/lib/python3/dist-packages/bin/* buildroot/usr/bin/ && \
+                   rm -rf buildroot/usr/lib/python3/dist-packages/bin && \
+                   sed -i '1s|^.*$|#!/usr/bin/python3|' buildroot/usr/bin/* && \
+                   fpm -s dir -t deb \
+                     --name python3-gfal-cli \
+                     --version \"\$VERSION\" \
+                     --architecture ${{ matrix.arch }} \
+                     --depends \"python3-fsspec\" \
+                     --depends \"python3-xrootd\" \
+                     --depends \"python3-aiohttp\" \
+                     --depends \"python3-requests\" \
+                     --description \"GFAL2-compatible CLI tools based on fsspec\" \
+                     -C buildroot \
+                     -p python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb \
+                     usr/"
 
     - name: Store DEBs
       uses: actions/upload-artifact@v7
       with:
-        name: deb-package-distributions
+        name: deb-package-distributions-${{ matrix.arch }}
         path: "*.deb"
 
   test-install:
@@ -228,25 +225,32 @@ jobs:
       run: |
         # The MkDocs website is in 'site/'
         # We'll put our repository into 'site/rpm' and 'site/deb'
-        mkdir -p site/rpm/el9/x86_64 site/rpm/el10/x86_64
+        mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64
+        mkdir -p site/rpm/el10/x86_64 site/rpm/el10/aarch64
         mkdir -p site/deb/pool/main/g/gfal-cli
-        mkdir -p site/deb/dists/stable/main/binary-amd64
+        mkdir -p site/deb/dists/stable/main/binary-amd64 site/deb/dists/stable/main/binary-arm64
 
         # Copy RPMs
-        find artifacts/ -type f -name "*el9*.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
-        find artifacts/ -type f -name "*el10*.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
+        find artifacts/ -type f -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
+        find artifacts/ -type f -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
+        find artifacts/ -type f -name "*el10*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
+        find artifacts/ -type f -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
 
         # Generate YUM metadata
         createrepo_c site/rpm/el9/x86_64/
+        createrepo_c site/rpm/el9/aarch64/
         createrepo_c site/rpm/el10/x86_64/
+        createrepo_c site/rpm/el10/aarch64/
 
         # Copy DEBs
         cp artifacts/*.deb site/deb/pool/main/g/gfal-cli/
 
         # Generate APT metadata
         cd site/deb
-        apt-ftparchive packages pool/main/g/gfal-cli > dists/stable/main/binary-amd64/Packages
+        apt-ftparchive packages pool/main/g/gfal-cli --arch amd64 > dists/stable/main/binary-amd64/Packages
         gzip -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+        apt-ftparchive packages pool/main/g/gfal-cli --arch arm64 > dists/stable/main/binary-arm64/Packages
+        gzip -c dists/stable/main/binary-arm64/Packages > dists/stable/main/binary-arm64/Packages.gz
         apt-ftparchive release dists/stable > dists/stable/Release
         cd ../..
 
@@ -293,11 +297,16 @@ jobs:
       run: |
         cd artifacts
         # Find the actual packages and create 'latest' copies
-        # RPMs (EL9, EL10)
-        find . -name "*el9*.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9.rpm \;
-        find . -name "*el10*.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10.rpm \;
-        # DEB
-        find . -name "*.deb" -exec cp {} python3-gfal-cli-latest.deb \;
+        # RPMs (EL9, EL10) - Default to x86_64 for generic names
+        find . -name "*el9*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9.rpm \;
+        find . -name "*el10*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10.rpm \;
+        # RPM ARM aliases
+        find . -name "*el9*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9-aarch64.rpm \;
+        find . -name "*el10*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10-aarch64.rpm \;
+        # DEB (Default to amd64 for generic name)
+        find . -name "*amd64.deb" -exec cp {} python3-gfal-cli-latest.deb \;
+        # DEB ARM alias
+        find . -name "*arm64.deb" -exec cp {} python3-gfal-cli-latest-arm64.deb \;
         echo "Created latest aliases:"
         ls -l python3-gfal-cli-latest*
 
