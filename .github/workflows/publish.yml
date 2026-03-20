@@ -225,8 +225,8 @@ jobs:
         mkdir -p repo/deb/dists/stable/main/binary-amd64
 
         # Copy RPMs
-        cp artifacts/*el9*.rpm repo/rpm/el9/x86_64/
-        cp artifacts/*el10*.rpm repo/rpm/el10/x86_64/
+        find artifacts/ -type f -name "*el9*.rpm" ! -name "*.src.rpm" -exec cp {} repo/rpm/el9/x86_64/ \;
+        find artifacts/ -type f -name "*el10*.rpm" ! -name "*.src.rpm" -exec cp {} repo/rpm/el10/x86_64/ \;
 
         # Generate YUM metadata
         createrepo_c repo/rpm/el9/x86_64/
