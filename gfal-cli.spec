@@ -1,4 +1,6 @@
 %{!?python3_sitelib: %global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || echo /usr/lib/python3/site-packages)}
+# Add the macro for architecture-specific compiled files (lib64)
+%{!?python3_sitearch: %global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))" 2>/dev/null || echo /usr/lib64/python3/site-packages)}
 %{!?__python3: %global __python3 /usr/bin/python3}
 
 %define base_name gfal-cli
@@ -12,13 +14,13 @@ License: MIT
 URL: https://github.com/lobis/gfal-cli
 Source0: %{dist_name}-%{version}-py3-none-any.whl
 
-BuildArch: noarch
+# REMOVED: BuildArch: noarch (Because we are bundling compiled C-extensions from aiohttp)
+
 BuildRequires: python3-devel
 BuildRequires: python3-pip
 BuildRequires: python3-setuptools
 BuildRequires: python3-wheel
 
-# Only require the base C++ XRootD library from the OS.
 Requires: python3-xrootd
 
 # Stop RPM from auto-generating strict python3.Xdist() requirements
@@ -36,19 +38,24 @@ Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 
 %install
 mkdir -p %{buildroot}%{python3_sitelib}
+mkdir -p %{buildroot}%{python3_sitearch}
 
 # Install the app AND all its dependencies into the RPM buildroot
 %{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix}
 %{__python3} -m pip install --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix} %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
 
-# Because we used --no-deps to avoid pulling dependencies twice,
-# let's do one final pip pass to pull all sub-dependencies (like urllib3, certifi, etc.)
+# Final pass to pull all sub-dependencies
 %{__python3} -m pip install fsspec-xrootd fsspec aiohttp requests %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl --ignore-installed --root %{buildroot} --prefix %{_prefix}
+
+# Clean up random executable scripts installed by sub-dependencies (like normalizer)
+find %{buildroot}%{_bindir} -type f -not -name "gfal*" -delete
 
 %files
 %defattr(-,root,root,-)
 %{_bindir}/gfal*
-# Grab the app and all bundled dependencies
+# Grab the pure Python dependencies (lib)
 %{python3_sitelib}/*
+# Grab the compiled C-extension dependencies (lib64)
+%{python3_sitearch}/*
 
 %changelog -f CHANGELOG
