@@ -3,6 +3,7 @@ Simple commands: mkdir, save, cat, stat, rename, chmod, sum, xattr.
 """
 
 import contextlib
+import errno
 import hashlib
 import stat
 import sys
@@ -109,6 +110,8 @@ class GfalCommands(base.CommandBase):
                         sys.stdout.buffer.write(chunk)
                 sys.stdout.buffer.flush()
             except Exception as e:
+                if isinstance(e, OSError) and e.errno == errno.EPIPE:
+                    raise
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
                 ecode = getattr(e, "errno", None)
                 rc = ecode if ecode and 0 < ecode <= 255 else 1
@@ -131,6 +134,8 @@ class GfalCommands(base.CommandBase):
                 self._stat_one(url, opts)
                 first = False
             except Exception as e:
+                if isinstance(e, OSError) and e.errno == errno.EPIPE:
+                    raise
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
                 ecode = getattr(e, "errno", None)
                 rc = ecode if ecode and 0 < ecode <= 255 else 1

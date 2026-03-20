@@ -2,6 +2,7 @@
 gfal-ls implementation.
 """
 
+import errno
 import math
 import os
 import re
@@ -198,6 +199,8 @@ class CommandLs(base.CommandBase):
             try:
                 r = self._list_one(url, opts, print_header=multi, first=first)
             except Exception as e:
+                if isinstance(e, OSError) and e.errno == errno.EPIPE:
+                    raise
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
                 rc = 1
             else:
