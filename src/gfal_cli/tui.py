@@ -183,7 +183,11 @@ class GfalTui(App):
 
 
 def main():
+    import os
     import sys
+
+    # Disable clipboard synchronization to avoid macOS system prompts on exit
+    os.environ.setdefault("TEXTUAL_CLIPBOARD", "none")
 
     app = GfalTui()
     try:
