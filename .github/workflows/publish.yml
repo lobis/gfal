@@ -146,15 +146,15 @@ jobs:
           - name: AlmaLinux 9
             container: almalinux:9
             artifact: rpm-package-distributions-el9
-            install_cmd: dnf install -y epel-release && dnf install -y ./*.rpm
+            install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
           - name: AlmaLinux 10
             container: almalinux:10
             artifact: rpm-package-distributions-el10
-            install_cmd: dnf install -y epel-release && dnf install -y ./*.rpm
+            install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
           - name: Ubuntu 24.04
             container: ubuntu:24.04
             artifact: deb-package-distributions
-            install_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ./*.deb
+            install_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
 
     container: ${{ matrix.target.container }}
 
