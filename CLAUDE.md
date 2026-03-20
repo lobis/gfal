@@ -136,6 +136,15 @@ The `xrootd` pip package embeds Linux-style `$ORIGIN` RPATHs in its `.dylib` fil
 
 If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute()` automatically looks for a proxy at `/tmp/x509up_u<uid>` (the standard location written by `voms-proxy-init`). No environment setup needed for typical CERN workflows.
 
+## Packaging
+
+- `pyproject.toml` is the **source of truth** for versioning and dependencies.
+- `Makefile`: Use `make dist` to build Python distributions and `make rpm` for RPMs (requires Linux/`rpmbuild`).
+- `gfal-cli.spec`: RPM spec file.
+  - > [!IMPORTANT]
+  - > Always keep the `Requires:` and `BuildRequires:` in the `.spec` file in sync with the `dependencies` in `pyproject.toml`.
+- **GitHub Actions**: The `publish.yml` workflow automatically builds and publishes PyPI packages, RPMs, and DEBs to both PyPI and GitHub Releases when a new `v*` tag is pushed.
+
 ## Common args (every command)
 
 `-v / --verbose`, `-t / --timeout`, `-E / --cert`, `--key`, `--log-file`

@@ -51,3 +51,105 @@ jobs:
 
     - name: Publish package distributions to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
+
+  build-rpm:
+    name: Build RPM 📦
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y rpm
+        python -m pip install build hatchling hatch-vcs
+
+    - name: Build RPM
+      run: make rpm
+
+    - name: Store RPMs
+      uses: actions/upload-artifact@v4
+      with:
+        name: rpm-package-distributions
+        path: rpmbuild/RPMS/noarch/*.rpm
+
+    - name: Store SRPMs
+      uses: actions/upload-artifact@v4
+      with:
+        name: srpm-package-distributions
+        path: rpmbuild/SRPMS/*.src.rpm
+
+  build-deb:
+    name: Build DEB 📦
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo gem install fpm
+        python -m pip install build hatchling hatch-vcs
+
+    - name: Build sdist
+      run: python -m build --sdist
+
+    - name: Build DEB
+      run: |
+        VERSION=$(python3 -c 'from src.gfal_cli._version import __version__; print(__version__)' | sed 's/\+.*//')
+        fpm -s python -t deb \
+          --name python3-gfal-cli \
+          --version "$VERSION" \
+          --python-bin python3 \
+          --python-package-name-prefix python3 \
+          --depends "python3-fsspec" \
+          --depends "python3-fsspec-xrootd" \
+          --depends "python3-aiohttp" \
+          --depends "python3-requests" \
+          dist/gfal_cli-*.tar.gz
+
+    - name: Store DEBs
+      uses: actions/upload-artifact@v4
+      with:
+        name: deb-package-distributions
+        path: "*.deb"
+
+  github-release:
+    name: Create GitHub Release 🚀
+    needs: [build, build-rpm, build-deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+        merge-multiple: true
+
+    - name: List artifacts
+      run: ls -R artifacts/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/**/*
+        generate_release_notes: true

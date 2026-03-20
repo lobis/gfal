@@ -215,3 +215,5 @@ gfal2-util/
 .idea/
 
 .claude/
+
+!gfal-cli.spec
