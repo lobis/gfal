@@ -19,7 +19,7 @@ BuildRequires: python3-setuptools
 BuildRequires: python3-wheel
 
 Requires: python3-fsspec
-Requires: python3-fsspec-xrootd
+Requires: python3-xrootd
 Requires: python3-aiohttp
 Requires: python3-requests
 
@@ -35,11 +35,17 @@ Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 
 %install
 mkdir -p %{buildroot}%{python3_sitelib}
+
+# 1. Pull the missing dependency from PyPI and bundle it in the RPM buildroot
+%{__python3} -m pip install fsspec-xrootd --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix}
+
+# 2. Install the gfal-cli wheel into the RPM buildroot
 %{__python3} -m pip install --no-deps --ignore-installed --root %{buildroot} --prefix %{_prefix} %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
 
 %files
 %defattr(-,root,root,-)
 %{_bindir}/gfal*
 %{python3_sitelib}/gfal_cli*
+%{python3_sitelib}/fsspec_xrootd*
 
 %changelog -f CHANGELOG
