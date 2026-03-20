@@ -251,6 +251,9 @@ jobs:
         gpgcheck=0
         EOF
 
+    - name: List Repository Contents 📂
+      run: ls -R repo/
+
     - name: Upload Pages Artifact 📦
       uses: actions/upload-pages-artifact@v4
       with:
@@ -307,7 +310,7 @@ jobs:
           - name: AlmaLinux 9
             container: almalinux:9
             install_cmd: |
-              dnf install -y epel-release curl
+              dnf install -y epel-release
               curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
               for i in {1..12}; do
                 echo "Attempt $i..."
@@ -320,7 +323,7 @@ jobs:
           - name: AlmaLinux 10
             container: almalinux:10
             install_cmd: |
-              dnf install -y epel-release curl
+              dnf install -y epel-release
               curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
               for i in {1..12}; do
                 echo "Attempt $i..."
