@@ -1,4 +1,5 @@
 %define base_name gfal-cli
+%define dist_name gfal_cli
 
 Name: python3-%{base_name}
 Version: %{version}
@@ -24,7 +25,7 @@ A pip-installable Python rewrite of the gfal2-util CLI tools, built on fsspec.
 Supports HTTP/HTTPS and XRootD only (via fsspec-xrootd).
 
 %prep
-%autosetup -n %{base_name}-%{version}
+%autosetup -n %{dist_name}-%{version}
 
 %build
 # Nothing to build for pure python
