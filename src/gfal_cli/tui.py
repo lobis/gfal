@@ -6,8 +6,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from rich.style import Style
+from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -22,6 +25,7 @@ from textual.widgets import (
     Static,
     Tree,
 )
+from textual.widgets._tree import TreeNode
 
 from gfal_cli.fs import compute_checksum, url_to_fs
 from gfal_cli.utils import (
@@ -30,13 +34,26 @@ from gfal_cli.utils import (
 )
 
 
-class RemoteDirectoryTree(Tree):
-    """A lazy-loading tree for remote filesystems."""
+class HighlightableRemoteDirectoryTree(Tree):
+    """A lazy-loading tree for remote filesystems with yank highlight support."""
+
+    yanked_url: reactive[str | None] = reactive(None)
 
     def __init__(self, url: str, ssl_verify: bool = False, **kwargs):
         self.url = url
         self.ssl_verify = ssl_verify
         super().__init__(url, data=url, **kwargs)
+
+    def render_label(
+        self, node: TreeNode[Any], base_style: Style, control_style: Style
+    ) -> Any:
+        label = super().render_label(node, base_style, control_style)
+        if self.yanked_url and node.data == self.yanked_url:
+            if isinstance(label, Text):
+                label.append(" [YANKED]", style="bold yellow")
+            else:
+                label = Text.assemble(label, " [YANKED]", style="bold yellow")
+        return label
 
     def on_mount(self):
         # Use call_after_refresh to ensure the tree is ready
@@ -76,6 +93,29 @@ class RemoteDirectoryTree(Tree):
             )
 
 
+class HighlightableDirectoryTree(DirectoryTree):
+    """A DirectoryTree that supports yank highlight."""
+
+    yanked_url: reactive[str | None] = reactive(None)
+
+    def render_label(
+        self, node: TreeNode[Any], base_style: Style, control_style: Style
+    ) -> Any:
+        label = super().render_label(node, base_style, control_style)
+        # DirectoryTree data is DirEntry (has .path)
+        if (
+            self.yanked_url
+            and node.data
+            and hasattr(node.data, "path")
+            and str(node.data.path) == self.yanked_url
+        ):
+            if isinstance(label, Text):
+                label.append(" [YANKED]", style="bold yellow")
+            else:
+                label = Text.assemble(label, " [YANKED]", style="bold yellow")
+        return label
+
+
 class GfalTui(App):
     """A k9s-style TUI for gfal-cli."""
 
@@ -83,6 +123,7 @@ class GfalTui(App):
 
     ssl_verify = reactive(False)
     tpc_enabled = reactive(True)
+    yanked_url = reactive(None)
     log_file = reactive(str(Path(tempfile.gettempdir()) / "gfal-tui.log"))
 
     def __init__(self, log_file: str | None = None, *args, **kwargs):
@@ -168,8 +209,11 @@ class GfalTui(App):
         ("/", "search", "Search"),
         ("g", "cursor_top", "Top"),
         ("G", "cursor_bottom", "Bottom"),
-        ("v", "toggle_ssl", "SSL [OFF]"),
-        ("t", "toggle_tpc", "TPC [ON]"),
+        Binding("v", "toggle_ssl", "SSL [OFF]", show=True),
+        Binding("t", "toggle_tpc", "TPC [ON]", show=True),
+        Binding("y", "yank", "Yank", show=True),
+        Binding("p", "paste", "Paste", show=True),
+        Binding("L", "toggle_log", "Log", show=True),
         ("left,h", "focus_left", "Focus Left"),
         ("right,l", "focus_right", "Focus Right"),
     ]
@@ -177,14 +221,20 @@ class GfalTui(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            with Vertical(classes="pane", id="left-pane"):
-                yield Label("Source", classes="pane-label")
-                yield DirectoryTree("./", id="local-tree")
-            with Vertical(classes="pane", id="right-pane"):
-                yield Label("Destination", classes="pane-label")
-                yield RemoteDirectoryTree(
-                    "https://eospublic.cern.ch:8444/eos/opendata/cms/", id="remote-tree"
+            with Vertical(classes="pane", id="local-pane"):
+                yield Label("Source (Local)", classes="pane-header")
+                tree = HighlightableDirectoryTree("./", id="local-tree")
+                tree.yanked_url = self.yanked_url
+                yield tree
+            with Vertical(classes="pane", id="remote-pane"):
+                yield Label("Destination (Remote)", classes="pane-header")
+                tree = HighlightableRemoteDirectoryTree(
+                    "https://eospublic.cern.ch:8444/eos/opendata/cms/",
+                    id="remote-tree",
+                    ssl_verify=self.ssl_verify,
                 )
+                tree.yanked_url = self.yanked_url
+                yield tree
         yield RichLog(id="log-window", auto_scroll=True, max_lines=1000)
         yield Footer()
 
@@ -209,10 +259,85 @@ class GfalTui(App):
 
     def on_key(self, event: events.Key) -> None:
         """Handle global keys, especially those swallowed by sub-widgets."""
-        if event.key == "left":
+        if event.key == "left" or event.key == "h":
             self.action_focus_left()
-        elif event.key == "right":
+        elif event.key == "right" or event.key == "l":
             self.action_focus_right()
+
+    def action_yank(self) -> None:
+        """Yank the currently selected file/directory."""
+        tree = self._get_focused_tree()
+        if not tree or not tree.cursor_node:
+            return
+
+        node = tree.cursor_node
+        url = (
+            node.data
+            if isinstance(tree, HighlightableRemoteDirectoryTree)
+            else str(node.data.path)
+        )
+        self.yanked_url = url
+        self.log_activity(f"Yanked: {url}", level="success")
+
+        # Update trees to show highlights
+        for tree_widget in self.query(
+            "HighlightableDirectoryTree, HighlightableRemoteDirectoryTree"
+        ):
+            tree_widget.yanked_url = url
+            tree_widget.refresh()
+
+    def action_paste(self) -> None:
+        """Paste the yanked file/directory to the currently selected directory."""
+        if not self.yanked_url:
+            self.notify(
+                "Nothing yanked! Press 'y' to yank an item first.", severity="warning"
+            )
+            return
+
+        tree = self._get_focused_tree()
+        if not tree or not tree.cursor_node:
+            return
+
+        node = tree.cursor_node
+        # For RemoteDirectoryTree, data is the full URL.
+        # For DirectoryTree, data is DirEntry (has .path and .is_dir).
+        target_is_dir = False
+        target_path = ""
+
+        if isinstance(tree, HighlightableRemoteDirectoryTree):
+            target_path = node.data
+            # We assume highlighted remote nodes that allow expand are directories
+            target_is_dir = node.allow_expand
+        else:
+            target_path = str(node.data.path)
+            target_is_dir = node.data.is_dir
+
+        if not target_is_dir:
+            self.notify("Can only paste into directories!", severity="error")
+            return
+
+        def handle_paste(dest_name: str) -> None:
+            if not dest_name:
+                return
+
+            # Construct final destination URL
+            # Use a local variable to avoid UnboundLocalError with the closure
+            tp = target_path
+            if "://" in tp:
+                if not tp.endswith("/"):
+                    tp += "/"
+                dst_url = tp + dest_name
+            else:
+                dst_url = str(Path(tp) / dest_name)
+
+            self.log_activity(f"Pasting {self.yanked_url} to {dst_url}")
+            self.run_worker(
+                lambda: self._do_copy(self.yanked_url, dst_url),
+                thread=True,
+                name="paste_worker",
+            )
+
+        self.push_screen(PasteModal(self.yanked_url, target_path), handle_paste)
 
     def action_focus_left(self) -> None:
         """Focus the left pane (local tree)."""
@@ -254,7 +379,7 @@ class GfalTui(App):
             pane = remote_tree.parent
             await remote_tree.remove()
 
-            new_tree = RemoteDirectoryTree(
+            new_tree = HighlightableRemoteDirectoryTree(
                 url, ssl_verify=self.ssl_verify, id="remote-tree"
             )
             await pane.mount(new_tree)
@@ -422,7 +547,7 @@ class GfalTui(App):
 
         # Only refresh if it's a directory (remote tree handles expansion)
         path = self._get_node_path(node)
-        if isinstance(tree, RemoteDirectoryTree):
+        if isinstance(tree, HighlightableRemoteDirectoryTree):
             self.log_activity(f"gfal-ls {path}", level="command")
             node.remove_children()
             tree.run_worker(lambda: tree.load_directory(node), thread=True)
@@ -452,7 +577,7 @@ class GfalTui(App):
         # If remote tree exists, we might want to refresh it or notify it.
         # For now, just log and it will apply to NEXT operations/loads.
         # To be thorough, we can trigger a refresh of the remote target.
-        remote_tree = self.query_one("#remote-tree", RemoteDirectoryTree)
+        remote_tree = self.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
         if remote_tree:
             self.run_worker(self.update_remote(remote_tree.url))
 
@@ -503,50 +628,85 @@ class GfalTui(App):
             return
 
         if is_src_local:
-            # Source is Local, Destination is Remote
+            # Source -> Remote (put)
             dest_dir = dest_tree.url
             self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
             self.run_worker(
                 self._do_copy(src_path, dest_dir, to_remote=True), thread=True
             )
         else:
-            # Source is Remote, Destination is Local
+            # Remote -> Local (get)
             dest_dir = str(dest_tree.path)
             self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
             self.run_worker(
                 self._do_copy(src_path, dest_dir, to_remote=False), thread=True
             )
 
-    async def _do_copy(self, src: str, dest_dir: str, to_remote: bool) -> None:
-        """Perform the copy operation in a background thread."""
+    async def _do_copy(
+        self, src: str, dest: str, to_remote: bool | None = None
+    ) -> None:
+        """Perform the copy operation in a background thread.
+
+        If to_remote is True/False, dest is assumed to be a directory base.
+        If to_remote is None, dest is assumed to be the full destination path.
+        """
         try:
             from pathlib import Path
 
-            src_name = Path(src).name
-            dest_path = f"{dest_dir.rstrip('/')}/{src_name}"
+            final_dest = dest
+            if to_remote is not None:
+                # Traditional Copy (F5/action_copy): dest is a directory, append src name
+                src_name = Path(src).name
+                if "://" in dest:
+                    final_dest = f"{dest.rstrip('/')}/{src_name}"
+                else:
+                    final_dest = str(Path(dest) / src_name)
+            else:
+                # Paste (p/action_paste): dest is already the full destination path
+                # Infer to_remote for internal logic
+                is_src_remote = "://" in src
+                is_dest_remote = "://" in final_dest
+                if not is_src_remote and is_dest_remote:
+                    to_remote = True
+                elif is_src_remote and not is_dest_remote:
+                    to_remote = False
+                elif is_src_remote and is_dest_remote:
+                    to_remote = True  # Remote to Remote (streaming fallback)
+                else:
+                    to_remote = False  # Local to Local
 
-            self.log_activity(f"Starting copy: {src} -> {dest_path}")
+            self.log_activity(f"Starting copy: {src} -> {final_dest}")
 
             if to_remote:
-                # Local -> Remote (put)
-                # We need the remote filesystem
-                fs, _ = url_to_fs(dest_dir, ssl_verify=self.ssl_verify)
-                # fsspec put() handles directories if recursive=True
-                fs.put(src, dest_path, recursive=True)
+                # Target is remote
+                fs, fs_path = url_to_fs(final_dest, ssl_verify=self.ssl_verify)
+                # put() handles local-to-remote and potentially remote-to-remote
+                fs.put(src, fs_path, recursive=True)
             else:
-                # Remote -> Local (get)
-                # We need the source remote filesystem
-                fs, _ = url_to_fs(src, ssl_verify=self.ssl_verify)
-                fs.get(src, dest_path, recursive=True)
+                # Target is local
+                if "://" in src:
+                    # Remote to Local
+                    fs, fs_path = url_to_fs(src, ssl_verify=self.ssl_verify)
+                    fs.get(fs_path, final_dest, recursive=True)
+                else:
+                    # Local to Local
+                    import shutil
 
-            self.log_activity(f"Successfully copied to {dest_path}", level="success")
+                    if Path(src).is_dir():
+                        shutil.copytree(src, final_dest, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, final_dest)
+
+            self.log_activity(f"Successfully copied to {final_dest}", level="success")
             self.call_from_thread(
                 lambda: self.push_screen(
                     MessageModal(
-                        f"Copied {src}\nto {dest_path}", title="Transfer Success"
+                        f"Copied {src}\nto {final_dest}", title="Transfer Success"
                     )
                 )
             )
+            # Refresh both trees to show the new content
+            self.call_from_thread(self.action_refresh)
         except Exception as e:
             error_msg = str(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
@@ -599,6 +759,46 @@ class MessageModal(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-btn":
             self.action_close()
+
+
+class PasteModal(ModalScreen[str]):
+    """A modal to confirm the destination name for a paste operation."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, src_url: str, dst_dir: str):
+        super().__init__()
+        self.src_url = src_url
+        self.dst_dir = dst_dir
+        self.suggested_name = Path(src_url).name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-content"):
+            yield Static("[bold]Paste[/bold]", classes="modal-title")
+            yield Label(f"Source: '{self.src_url}'")
+            yield Label(f"Destination Directory: '{self.dst_dir}'")
+            yield Label("Destination Name:")
+            yield Input(value=self.suggested_name, id="dest-name-input")
+            with Horizontal(id="modal-btn-row"):
+                yield Button("Cancel", id="cancel-btn")
+                yield Button("Paste", variant="primary", id="paste-btn")
+
+    def action_cancel(self) -> None:
+        """Dismiss the modal without performing any action."""
+        self.dismiss("")
+
+    @on(Button.Pressed, "#paste-btn")
+    @on(Input.Submitted, "#dest-name-input")
+    def on_paste(self) -> None:
+        name = self.query_one("#dest-name-input", Input).value
+        if not name:
+            self.app.notify("Destination name cannot be empty", severity="error")
+            return
+        self.dismiss(name)
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.action_cancel()
 
 
 class UrlInputModal(ModalScreen):
