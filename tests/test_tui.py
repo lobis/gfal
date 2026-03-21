@@ -132,10 +132,10 @@ async def test_tui_hotkeys():
             # Verify log toggle hotkey actually changes display
             log = app.query_one("#log-window", RichLog)
             assert log.display is True
-            await pilot.press("l")
+            await pilot.press("L")
             await pilot.pause()
             assert log.display is False
-            await pilot.press("l")
+            await pilot.press("L")
             await pilot.pause()
             assert log.display is True
 

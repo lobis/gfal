@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import tempfile
 import threading
 from contextlib import suppress
