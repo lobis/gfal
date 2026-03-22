@@ -78,7 +78,8 @@ class CommandRm(base.CommandBase):
     def _do_rm(self, url, client):
         try:
             if not self.params.just_delete:
-                st = client.stat(url)
+                with self.spinner(f"Statting {url}..."):
+                    st = client.stat(url)
                 if stat.S_ISDIR(st.st_mode):
                     self._do_rmdir(url, client)
                     return
@@ -87,7 +88,8 @@ class CommandRm(base.CommandBase):
                 print(f"{url}\tSKIP")
                 return
 
-            client.rm(url)
+            with self.spinner(f"Deleting {url}..."):
+                client.rm(url)
             print(f"{url}\tDELETED")
         except (IsADirectoryError, GfalIsADirectoryError) as e:
             sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
@@ -105,7 +107,8 @@ class CommandRm(base.CommandBase):
 
         # Remove contents first
         try:
-            entries = client.ls(url, detail=True)
+            with self.spinner(f"Listing directory {url}..."):
+                entries = client.ls(url, detail=True)
         except Exception:
             entries = []
 
@@ -122,7 +125,8 @@ class CommandRm(base.CommandBase):
                     print(f"{child_url}\tSKIP")
                 else:
                     try:
-                        client.rm(child_url)
+                        with self.spinner(f"Deleting {child_url}..."):
+                            client.rm(child_url)
                         print(f"{child_url}\tDELETED")
                     except GfalFileNotFoundError:
                         self._set_error(errno.ENOENT)
@@ -132,7 +136,8 @@ class CommandRm(base.CommandBase):
             print(f"{url}\tSKIP DIR")
         else:
             try:
-                client.rmdir(url)
+                with self.spinner(f"Deleting directory {url}..."):
+                    client.rmdir(url)
                 print(f"{url}\tRMDIR")
             except GfalFileNotFoundError:
                 self._set_error(errno.ENOENT)

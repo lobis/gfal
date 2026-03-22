@@ -54,7 +54,8 @@ class GfalCommands(base.CommandBase):
         rc = 0
         for d in self.params.directory:
             try:
-                client.mkdir(d, mode=mode_int, parents=self.params.parents)
+                with self.spinner(f"Creating directory {d}..."):
+                    client.mkdir(d, mode=mode_int, parents=self.params.parents)
             except Exception as e:
                 self._print_error(e)
                 rc = getattr(e, "errno", 1)
@@ -146,7 +147,8 @@ class GfalCommands(base.CommandBase):
         return rc
 
     def _stat_one(self, url, client):
-        st = client.stat(url)
+        with self.spinner(f"Statting {url}..."):
+            st = client.stat(url)
         if base.is_gfal2_compat():
             print(f"  File: '{url}'")
             print(f"  Size: {st.st_size}\t{file_type_str(stat.S_IFMT(st.st_mode))}")
@@ -217,7 +219,8 @@ class GfalCommands(base.CommandBase):
             timeout=self.params.timeout,
             ssl_verify=getattr(self.params, "ssl_verify", True),
         )
-        client.rename(self.params.source, self.params.destination)
+        with self.spinner(f"Renaming {self.params.source}..."):
+            client.rename(self.params.source, self.params.destination)
 
     # ------------------------------------------------------------------
     # chmod
@@ -243,7 +246,8 @@ class GfalCommands(base.CommandBase):
         rc = 0
         for url in self.params.file:
             try:
-                client.chmod(url, mode)
+                with self.spinner(f"Changing permissions of {url}..."):
+                    client.chmod(url, mode)
             except Exception as e:
                 self._print_error(e)
                 rc = getattr(e, "errno", 1)
@@ -270,7 +274,8 @@ class GfalCommands(base.CommandBase):
         alg = self.params.checksum_type.upper()
 
         try:
-            checksum = client.checksum(self.params.file, alg)
+            with self.spinner(f"Computing {alg} checksum..."):
+                checksum = client.checksum(self.params.file, alg)
             sys.stdout.write(f"{self.params.file} {checksum}\n")
         except Exception as e:
             self._print_error(e)
@@ -302,12 +307,15 @@ class GfalCommands(base.CommandBase):
                     i = self.params.attribute.index("=")
                     key = self.params.attribute[:i]
                     val = self.params.attribute[i + 1 :]
-                    client.setxattr(self.params.file, key, val)
+                    with self.spinner(f"Setting xattr {key}..."):
+                        client.setxattr(self.params.file, key, val)
                 else:
-                    val = client.getxattr(self.params.file, self.params.attribute)
+                    with self.spinner(f"Getting xattr {self.params.attribute}..."):
+                        val = client.getxattr(self.params.file, self.params.attribute)
                     sys.stdout.write(f"{val}\n")
             else:
-                attrs = client.listxattr(self.params.file)
+                with self.spinner("Listing xattrs..."):
+                    attrs = client.listxattr(self.params.file)
                 for attr in attrs:
                     try:
                         val = client.getxattr(self.params.file, attr)

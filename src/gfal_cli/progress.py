@@ -15,7 +15,78 @@ except ImportError:
     _HAS_FCNTL = False
 
 
-class Progress:
+from gfal_cli.base import get_console, is_gfal2_compat
+
+
+def Progress(label):
+    if is_gfal2_compat():
+        return LegacyProgress(label)
+    return RichProgress(label)
+
+
+class RichProgress:
+    def __init__(self, label):
+        self.label = label
+        self._started_flag = False
+        from rich.progress import (
+            BarColumn,
+            DownloadColumn,
+            SpinnerColumn,
+            TextColumn,
+            TimeRemainingColumn,
+            TransferSpeedColumn,
+        )
+        from rich.progress import (
+            Progress as _RichProgress,
+        )
+
+        self.rich_progress = _RichProgress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            console=get_console(stderr=False),
+        )
+        self.task_id = None
+
+    def start(self):
+        if self._started_flag:
+            return
+        self._started_flag = True
+        self.rich_progress.start()
+        self.task_id = self.rich_progress.add_task(self.label, total=None)
+
+    def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
+        if not self._started_flag:
+            return
+        kwargs = {}
+        if curr_size is not None:
+            kwargs["completed"] = curr_size
+        if total_size is not None:
+            kwargs["total"] = total_size
+        self.rich_progress.update(self.task_id, **kwargs)
+
+    def stop(self, success):
+        if not self._started_flag:
+            return
+        self._started_flag = False
+        try:
+            if success:
+                self.rich_progress.update(
+                    self.task_id, description=f"{self.label} [green]\\[DONE][/]"
+                )
+            else:
+                self.rich_progress.update(
+                    self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
+                )
+        except Exception:
+            pass
+        self.rich_progress.stop()
+
+
+class LegacyProgress:
     def __init__(self, label):
         self.label = label
         self.started = False
@@ -132,7 +203,7 @@ class Progress:
 
     @staticmethod
     def _size_str(size):
-        s = Progress._rate_str(size)
+        s = LegacyProgress._rate_str(size)
         # strip the "/s" suffix and ensure it ends with B
         s = s[:-2]
         if not s.endswith("B"):

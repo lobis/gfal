@@ -3,6 +3,7 @@ Base class and shared infrastructure for all gfal-cli commands.
 """
 
 import argparse
+import contextlib
 import errno
 import logging
 import os
@@ -105,6 +106,17 @@ class CommandBase:
         self.progress_bar = None
         self.console = get_console()
         self.err_console = get_console(stderr=True)
+
+    @contextlib.contextmanager
+    def spinner(self, message):
+        """Displays a rich status spinner for blocking operations.
+        Quiet in GFAL2 compat mode.
+        """
+        if is_gfal2_compat():
+            yield
+        else:
+            with self.err_console.status(message) as status:
+                yield status
 
     @staticmethod
     def get_subclasses():

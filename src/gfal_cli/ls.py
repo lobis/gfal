@@ -217,7 +217,8 @@ class CommandLs(base.CommandBase):
         return rc
 
     def _list_one(self, url, client, *, print_header, first):
-        st = client.stat(url)
+        with self.spinner(f"Statting {url}..."):
+            st = client.stat(url)
         if self.params.directory:
             if print_header:
                 if not first:
@@ -226,7 +227,8 @@ class CommandLs(base.CommandBase):
             self._print_entry(url, st, self._fetch_xattrs(client, url))
             return 0
 
-        entries_st = client.ls(url, detail=True)
+        with self.spinner(f"Listing directory {url}..."):
+            entries_st = client.ls(url, detail=True)
         # Convert StatInfo back to dict-like for _apply_sort (or refactor _apply_sort)
         # Actually _apply_sort uses e.get("name") and fs.StatInfo(e)
         # I'll update entries to be compatible with _apply_sort
@@ -302,7 +304,10 @@ class CommandLs(base.CommandBase):
         import contextlib
 
         for attr in self.params.xattr:
-            with contextlib.suppress(Exception):
+            with (
+                contextlib.suppress(Exception),
+                self.spinner(f"Fetching xattr {attr}..."),
+            ):
                 result[attr] = client.getxattr(url, attr)
         return result
 
