@@ -185,7 +185,7 @@ class CommandCopy(base.CommandBase):
         # Validate --scitag range [65, 65535] per WLCG spec
         if self.params.scitag is not None and not (65 <= self.params.scitag <= 65535):
             sys.stderr.write(
-                f"{self.progr}: invalid --scitag value {self.params.scitag}: "
+                f"{self.prog}: invalid --scitag value {self.params.scitag}: "
                 "must be in range [65, 65535]\n"
             )
             return 1
@@ -200,7 +200,7 @@ class CommandCopy(base.CommandBase):
         for flag, val in _ignored.items():
             if val is not None:
                 sys.stderr.write(
-                    f"{self.progr}: warning: {flag} is not supported in this "
+                    f"{self.prog}: warning: {flag} is not supported in this "
                     "implementation and will be ignored\n"
                 )
 

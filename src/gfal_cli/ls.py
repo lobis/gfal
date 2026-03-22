@@ -208,7 +208,7 @@ class CommandLs(base.CommandBase):
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
-                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
                 rc = 1
             else:
                 if r:

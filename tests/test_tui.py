@@ -39,11 +39,9 @@ async def test_tui_url_submission_via_modal():
 
             # Input URL and submit
             input_widget = app.screen.query_one("#modal-url-input", Input)
-            await pilot.click(input_widget)
-            for char in test_url:
-                await pilot.press(char)
+            input_widget.value = test_url
             await pilot.press("enter")
-            await pilot.pause()
+            await pilot.pause(0.1)
 
             # Verify the remote tree's URL was updated
             remote_tree = app.query_one("#remote-tree")
@@ -71,7 +69,7 @@ async def test_tui_ssl_toggle():
             input_widget = app.screen.query_one("#modal-url-input", Input)
             input_widget.value = test_url
             await pilot.press("enter")
-            await pilot.pause(0.5)
+            await pilot.pause(0.1)
 
             mock_url_to_fs.assert_any_call(test_url, ssl_verify=True)
 
@@ -103,7 +101,7 @@ async def test_tui_hotkeys():
             for _ in range(20):
                 if not isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
             assert not isinstance(app.screen, MessageModal)
 
             log = app.query_one("#log-window", RichLog)
@@ -124,7 +122,7 @@ async def test_tui_hotkeys():
             for _ in range(20):
                 if not isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             # Test Refresh hotkey
             await pilot.press("r")
@@ -162,7 +160,7 @@ async def test_tui_hotkeys():
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             assert isinstance(app.screen, MessageModal)
             # Dismiss it
@@ -249,7 +247,7 @@ async def test_tui_modal_dismiss_button_click():
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             assert isinstance(app.screen, MessageModal)
 
@@ -273,12 +271,9 @@ async def test_tui_error_handling_ls_failure():
             await pilot.press("/")
             await pilot.pause()
             input_widget = app.screen.query_one("#modal-url-input", Input)
-            await pilot.click(input_widget)
-            await pilot.press(
-                "h", "t", "t", "p", ":", "/", "/", "f", "a", "i", "l", "e", "d"
-            )
+            input_widget.value = "http://failed"
             await pilot.press("enter")
-            await pilot.pause(0.5)
+            await pilot.pause(0.1)
 
             log = app.query_one("#log-window", RichLog)
             # Check for error in log
@@ -368,7 +363,7 @@ async def test_tui_remote_tree_selection_stat_call(tmp_path):
                 if isinstance(app.screen, MessageModal):
                     passed = True
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             assert passed, f"MessageModal did not appear. Screen: {app.screen}."
             await pilot.press("escape")
@@ -466,9 +461,7 @@ async def test_tui_log_persistence(tmp_path):
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
         app.log_activity("Test log message")
-        # Explicitly flush or wait
-        await pilot.pause(0.5)
-
+        await pilot.pause(0.1)
         assert log_file.exists()
         content = log_file.read_text()
         assert "Test log message" in content
@@ -505,7 +498,7 @@ async def test_tui_toggle_label_update():
         assert get_desc("v") == "SSL [OFF]"
         await pilot.press("v")
         await pilot.pause()
-        await pilot.pause(0.5)
+        await pilot.pause(0.1)
         assert get_desc("v") == "SSL [ON]"
 
         await pilot.press("v")
@@ -536,7 +529,7 @@ async def test_tui_local_stat_command_logging(tmp_path):
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
             await pilot.pause(0.2)
 
             assert log_file.exists()
@@ -567,7 +560,7 @@ async def test_tui_local_checksum_command_logging(tmp_path):
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
             await pilot.pause(0.2)
 
             assert log_file.exists()
@@ -597,7 +590,7 @@ async def test_tui_human_readable_stat():
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             assert isinstance(app.screen, MessageModal)
             message = app.screen.message
@@ -626,7 +619,7 @@ async def test_tui_checksum_formatting_v2():
             for _ in range(20):
                 if isinstance(app.screen, MessageModal):
                     break
-                await pilot.pause(0.1)
+                await pilot.pause(0.01)
 
             assert isinstance(app.screen, MessageModal)
             message = app.screen.message

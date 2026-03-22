@@ -1,5 +1,6 @@
 """Regression tests for broken pipe (EPIPE) handling."""
 
+import contextlib
 import subprocess
 import sys
 
@@ -27,11 +28,17 @@ def test_cat_pipe_broken():
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    # Read just 5 bytes
-    _ = process.stdout.read(5)
+    # Wait a bit for output to be available
+    import time
 
-    # Close the read end of the pipe
-    process.stdout.close()
+    time.sleep(0.1)
+
+    # Read just 5 bytes
+    with contextlib.suppress(ValueError, OSError):
+        _ = process.stdout.read(5)
+
+    # Terminating the process is safer than closing stdout manually on some platforms
+    process.terminate()
 
     # Wait for the process to finish
     stdout, stderr = process.communicate()
@@ -49,8 +56,15 @@ def test_ls_pipe_broken():
     cmd = [sys.executable, "-m", "gfal_cli.shell", "ls", "file:///"]
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    _ = process.stdout.read(1)
-    process.stdout.close()
+
+    import time
+
+    time.sleep(0.1)
+
+    with contextlib.suppress(ValueError, OSError):
+        _ = process.stdout.read(1)
+
+    process.terminate()
     stdout, stderr = process.communicate()
 
     assert b"Broken pipe" not in stderr

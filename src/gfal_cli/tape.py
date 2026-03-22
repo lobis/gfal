@@ -61,7 +61,7 @@ class CommandTape(base.CommandBase):
     @base.arg("surl", nargs="?", type=base.surl, help="Site URL")
     def execute_bringonline(self):
         """Bring a file online from tape storage (not supported)."""
-        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.progr))
+        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 
     # ------------------------------------------------------------------
@@ -85,7 +85,7 @@ class CommandTape(base.CommandBase):
     @base.arg("surl", nargs="?", type=base.surl, help="Site URL")
     def execute_archivepoll(self):
         """Poll the status of an archive (bring-online) request (not supported)."""
-        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.progr))
+        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 
     # ------------------------------------------------------------------
@@ -101,7 +101,7 @@ class CommandTape(base.CommandBase):
     @base.arg("file", type=base.surl, help="URI of the file to evict")
     def execute_evict(self):
         """Evict a file from a disk buffer (not supported)."""
-        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.progr))
+        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 
     # ------------------------------------------------------------------
@@ -137,5 +137,5 @@ class CommandTape(base.CommandBase):
     @base.arg("path", type=base.surl, help="URI to request token for")
     def execute_token(self):
         """Retrieve a storage-element issued token (not supported)."""
-        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.progr))
+        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1

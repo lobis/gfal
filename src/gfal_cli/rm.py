@@ -90,7 +90,7 @@ class CommandRm(base.CommandBase):
             client.rm(url)
             print(f"{url}\tDELETED")
         except (IsADirectoryError, GfalIsADirectoryError) as e:
-            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
             self._set_error(1)
         except GfalFileNotFoundError:
             self._set_error(errno.ENOENT)

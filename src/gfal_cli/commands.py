@@ -38,7 +38,7 @@ class GfalCommands(base.CommandBase):
             mode_int = int(self.params.mode, 8)
         except ValueError:
             sys.stderr.write(
-                f"{self.progr}: invalid mode '{self.params.mode}': must be an octal number (e.g. 755, 0755)\n"
+                f"{self.prog}: invalid mode '{self.params.mode}': must be an octal number (e.g. 755, 0755)\n"
             )
             return 1
 
@@ -54,7 +54,7 @@ class GfalCommands(base.CommandBase):
             try:
                 client.mkdir(d, mode=mode_int, parents=self.params.parents)
             except Exception as e:
-                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
                 rc = getattr(e, "errno", 1)
         return rc
 
@@ -110,7 +110,7 @@ class GfalCommands(base.CommandBase):
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
-                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
                 rc = getattr(e, "errno", 1)
         return rc
 
@@ -138,7 +138,7 @@ class GfalCommands(base.CommandBase):
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
-                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
                 rc = getattr(e, "errno", 1)
                 first = False
         return rc
@@ -209,7 +209,7 @@ class GfalCommands(base.CommandBase):
             try:
                 client.chmod(url, mode)
             except Exception as e:
-                sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+                sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
                 rc = getattr(e, "errno", 1)
         return rc
 
@@ -237,7 +237,7 @@ class GfalCommands(base.CommandBase):
             checksum = client.checksum(self.params.file, alg)
             sys.stdout.write(f"{self.params.file} {checksum}\n")
         except Exception as e:
-            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
             return 1
 
     # ------------------------------------------------------------------
@@ -279,6 +279,6 @@ class GfalCommands(base.CommandBase):
                     except Exception as e:
                         sys.stdout.write(f"{attr} FAILED: {e}\n\n")
         except Exception as e:
-            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
             return getattr(e, "errno", 1)
         return 0

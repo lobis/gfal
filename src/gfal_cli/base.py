@@ -204,7 +204,7 @@ class CommandBase:
             self.parser.add_argument(*args, **kwargs)
 
         self.params = self.parser.parse_args(argv[1:])
-        self.progr = Path(argv[0]).name
+        self.prog = Path(argv[0]).name
 
     # ------------------------------------------------------------------
     # Execution
@@ -347,7 +347,7 @@ class CommandBase:
                 self.return_code = 0
                 return
             ecode = getattr(e, "errno", None)
-            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
             if ecode and 0 < ecode <= 255:
                 self.return_code = ecode
             else:
