@@ -5,6 +5,7 @@ from textual.containers import Vertical
 from textual.widgets import Button, DirectoryTree, Input, RichLog, Tree
 
 from gfal_cli.tui import (
+    ChecksumResultModal,
     GfalTui,
     HighlightableDirectoryTree,
     HighlightableRemoteDirectoryTree,
@@ -114,13 +115,22 @@ async def test_tui_hotkeys():
             # Test Checksum hotkey
             await pilot.press("c")
             for _ in range(20):
-                if isinstance(app.screen, MessageModal):
+                if isinstance(app.screen, ChecksumResultModal):
                     break
                 await pilot.pause(0.02)
+            assert isinstance(app.screen, ChecksumResultModal)
+
+            # Wait for calculation result
+            for _ in range(50):
+                if app.screen.result != "Calculating...":
+                    break
+                await pilot.pause(0.02)
+            assert app.screen.result != "Calculating..."
+
             await pilot.press("escape")
             await pilot.pause()
             for _ in range(20):
-                if not isinstance(app.screen, MessageModal):
+                if not isinstance(app.screen, ChecksumResultModal):
                     break
                 await pilot.pause(0.01)
 
@@ -556,11 +566,17 @@ async def test_tui_local_checksum_command_logging(tmp_path):
             mock_url_to_fs.return_value = (mock_fs, "/")
 
             await pilot.press("c")
-            # Wait for modal and log write
+            # Wait for ChecksumResultModal
             for _ in range(20):
-                if isinstance(app.screen, MessageModal):
+                if isinstance(app.screen, ChecksumResultModal):
                     break
                 await pilot.pause(0.01)
+
+            # Wait for calculation and log write
+            for _ in range(50):
+                if app.screen.result != "Calculating...":
+                    break
+                await pilot.pause(0.02)
             await pilot.pause(0.2)
 
             assert log_file.exists()
@@ -615,13 +631,17 @@ async def test_tui_checksum_formatting_v2():
             mock_url_to_fs.return_value = (mock_fs, "/")
 
             await pilot.press("c")
-            # Wait for modal
+            # Wait for ChecksumResultModal
             for _ in range(20):
-                if isinstance(app.screen, MessageModal):
+                if isinstance(app.screen, ChecksumResultModal):
                     break
                 await pilot.pause(0.01)
 
-            assert isinstance(app.screen, MessageModal)
-            message = app.screen.message
-            assert "Checksum (ADLER32)" in message
-            assert "abcdef" in message
+            # Wait for result
+            for _ in range(50):
+                if app.screen.result != "Calculating...":
+                    break
+                await pilot.pause(0.02)
+
+            assert isinstance(app.screen, ChecksumResultModal)
+            assert "abcdef" in app.screen.result

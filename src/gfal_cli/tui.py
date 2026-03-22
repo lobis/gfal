@@ -24,12 +24,13 @@ from textual.widgets import (
     Input,
     Label,
     RichLog,
+    Select,
     Static,
     Tree,
 )
 from textual.widgets._tree import TreeNode
 
-from gfal_cli.base import CommandBase, interactive
+from gfal_cli.base import CommandBase, arg, interactive
 from gfal_cli.fs import compute_checksum, url_to_fs
 from gfal_cli.utils import (
     human_readable_size,
@@ -129,10 +130,20 @@ class GfalTui(App):
     yanked_urls = reactive(set())
     log_file = reactive(str(Path(tempfile.gettempdir()) / "gfal-tui.log"))
 
-    def __init__(self, log_file: Optional[str] = None, *args, **kwargs):
+    def __init__(
+        self,
+        log_file: Optional[str] = None,
+        src: Optional[str] = None,
+        dst: Optional[str] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         if log_file:
             self.log_file = log_file
+        self.initial_src = src or "./"
+        self.initial_dst = dst or "https://eospublic.cern.ch:8444/eos/opendata/cms/"
+        self.last_checksum_algo = "ADLER32"
         self._thread_id = threading.get_ident()
 
     CSS = """
@@ -169,7 +180,7 @@ class GfalTui(App):
     }
 
     /* Modal styles */
-    MessageModal, UrlInputModal {
+    MessageModal, ChecksumResultModal, UrlInputModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.5);
     }
@@ -180,6 +191,13 @@ class GfalTui(App):
         border: thick $primary;
         background: $surface;
         padding: 1 2;
+    }
+
+    .modal-row {
+        height: auto;
+        align: center middle;
+        padding: 0 1;
+        margin: 1 0;
     }
 
     .modal-title {
@@ -204,22 +222,24 @@ class GfalTui(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("s", "stat", "Stat Info"),
-        ("c", "checksum", "Checksum"),
+        Binding("c", "checksum_request", "Checksum", show=True),
         ("r", "refresh", "Refresh"),
         ("f5", "copy", "Copy"),
         ("x", "swap", "Swap Panes"),
         ("/", "search", "Search"),
-        ("j", "cursor_down", "Down"),
-        ("k", "cursor_up", "Up"),
-        ("g", "cursor_top", "Top"),
-        ("G", "cursor_bottom", "Bottom"),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("g", "cursor_top", "Top", show=False),
+        Binding("G", "cursor_bottom", "Bottom", show=False),
         Binding("v", "toggle_ssl", "SSL [OFF]", show=True),
         Binding("t", "toggle_tpc", "TPC [ON]", show=True),
         Binding("y", "yank", "Yank", show=True),
         Binding("p", "paste", "Paste", show=True),
         Binding("L", "toggle_log", "Log", show=True),
-        ("left,h", "focus_left", "Focus Left"),
-        ("right,l", "focus_right", "Focus Right"),
+        ("left", "focus_left", "Focus Left"),
+        ("right", "focus_right", "Focus Right"),
+        Binding("h", "focus_left", "Focus Left", show=False),
+        Binding("l", "focus_right", "Focus Right", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -227,17 +247,30 @@ class GfalTui(App):
         with Horizontal():
             with Vertical(classes="pane", id="left-pane"):
                 yield Label("Source (Local)", classes="pane-header")
-                tree = HighlightableDirectoryTree("./", id="local-tree")
+                # Detect if initial_src is remote or local
+                if "://" in self.initial_src:
+                    tree = HighlightableRemoteDirectoryTree(
+                        self.initial_src,
+                        id="local-tree",
+                        ssl_verify=self.ssl_verify,
+                    )
+                else:
+                    tree = HighlightableDirectoryTree(self.initial_src, id="local-tree")
                 tree.show_root = False
                 tree.yanked_urls = self.yanked_urls
                 yield tree
             with Vertical(classes="pane", id="right-pane"):
                 yield Label("Destination (Remote)", classes="pane-header")
-                tree = HighlightableRemoteDirectoryTree(
-                    "https://eospublic.cern.ch:8444/eos/opendata/cms/",
-                    id="remote-tree",
-                    ssl_verify=self.ssl_verify,
-                )
+                if "://" in self.initial_dst:
+                    tree = HighlightableRemoteDirectoryTree(
+                        self.initial_dst,
+                        id="remote-tree",
+                        ssl_verify=self.ssl_verify,
+                    )
+                else:
+                    tree = HighlightableDirectoryTree(
+                        self.initial_dst, id="remote-tree"
+                    )
                 tree.show_root = False
                 tree.yanked_urls = self.yanked_urls
                 yield tree
@@ -570,8 +603,8 @@ class GfalTui(App):
 
         return self.query_one("#left-pane").query_one(Tree)
 
-    def action_checksum(self) -> None:
-        """Calculate and log checksum for the selected node."""
+    def action_checksum_request(self) -> None:
+        """Open a modal to select checksum algorithm and calculate."""
         tree = self._get_focused_tree()
         if not tree:
             return
@@ -580,39 +613,82 @@ class GfalTui(App):
         if not path:
             return
 
+        # Start initial calculation with last algo and show modal
+        self.action_checksum(path, self.last_checksum_algo)
+
+    def action_checksum(
+        self, path: str, algo: str, modal: Optional[ChecksumResultModal] = None
+    ) -> None:
+        """Calculate and log checksum for the selected node."""
+
         def get_checksum():
             try:
                 fs, fs_path = url_to_fs(path, ssl_verify=self.ssl_verify)
-                # Try common checksum algorithms
-                result = None
-                algo = "ADLER32"
-                for a in ["ADLER32", "MD5"]:
-                    try:
-                        result = compute_checksum(fs, fs_path, a)
-                        if result:
-                            algo = a
-                            break
-                    except Exception:
-                        continue
-
+                result = compute_checksum(fs, fs_path, algo)
                 if result:
+                    # Format as hex if it's bytes
+                    if isinstance(result, bytes):
+                        result = result.hex()
                     msg = f"Checksum ({algo}) for {path}:\n  {result}"
                     self.log_activity(f"gfal-sum {path} {algo}", level="command")
                     self.log_activity(msg, level="success")
-                    self.call_from_thread(
-                        lambda: self.push_screen(MessageModal(msg, title="Checksum"))
-                    )
+                    if modal:
+                        modal.result = str(result)
+                    else:
+                        # Initial calculation: result will be set when modal mounts or manually
+                        pass
                 else:
-                    self.log_activity(
-                        f"Checksum not supported for {path}", level="warning"
-                    )
+                    error_msg = f"Checksum not supported for {path} ({algo})"
+                    if modal:
+                        modal.result = error_msg
+                    self.log_activity(error_msg, level="warning")
             except Exception as e:
                 error_msg = CommandBase._format_error(e)
+                if modal:
+                    modal.result = f"Error: {error_msg}"
                 self.log_activity(
-                    f"Checksum failed for {path}: {error_msg}", level="error"
+                    f"Checksum failed for {path} ({algo}): {error_msg}",
+                    level="error",
                 )
 
-        self.run_worker(get_checksum, thread=True)
+        if not modal:
+            # First time: push the modal and start initial calc
+            new_modal = ChecksumResultModal(path, algo)
+            self.push_screen(new_modal)
+            self.run_worker(get_checksum, thread=True)
+
+            # We need to bridge the worker to the new modal
+            # Since worker started, it will update modal.result if it gets it later
+            # But the closure already has path and algo.
+            # actually, better to pass the modal to the worker if we have it
+            # But here we just created it.
+            # We'll use a trick: pass newly created modal to the worker's parent scope?
+            # Or just rely on handle_checksum to find the modal?
+            # Actually, I'll update get_checksum to take modal
+            def get_checksum_with_modal(m):
+                try:
+                    fs, fs_path = url_to_fs(path, ssl_verify=self.ssl_verify)
+                    result = compute_checksum(fs, fs_path, algo)
+                    # Format as hex if it's bytes
+                    if isinstance(result, bytes):
+                        result = result.hex()
+                    if result:
+                        m.result = str(result)
+                        self.log_activity(f"gfal-sum {path} {algo}", level="command")
+                        self.log_activity(
+                            f"Checksum ({algo}) for {path}:\n  {result}",
+                            level="success",
+                        )
+                    else:
+                        m.result = f"Not supported for {algo}"
+                except Exception as e:
+                    error_msg = CommandBase._format_error(e)
+                    m.result = f"Error: {error_msg}"
+
+            self.run_worker(lambda: get_checksum_with_modal(new_modal), thread=True)
+        else:
+            # Subsequent re-calc from Select.Changed
+            self.run_worker(get_checksum, thread=True)
 
     def action_refresh(self) -> None:
         """Refresh the selected directory node."""
@@ -813,6 +889,57 @@ def main():
         app.run()
 
 
+class ChecksumResultModal(ModalScreen):
+    """A centered modal screen for displaying and selecting checksums."""
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    result = reactive("Calculating...")
+
+    def __init__(self, path: str, algo: str):
+        super().__init__()
+        self.path = path
+        self.algo = algo
+
+    def on_mount(self) -> None:
+        """Set focus to the close button when the modal is pushed."""
+        self.query_one("#close-btn").focus()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-content"):
+            yield Static("[bold]Checksum[/bold]", classes="modal-title")
+            yield Label(f"File: {self.path}", classes="modal-body")
+            with Horizontal(classes="modal-row"):
+                yield Label("Algorithm: ")
+                yield Select(
+                    [(a, a) for a in ["ADLER32", "MD5", "SHA1", "CRC32"]],
+                    value=self.algo,
+                    id="algo-select",
+                )
+            yield Label("Value:", classes="modal-body")
+            yield Static(self.result, id="checksum-value")
+            with Horizontal(id="modal-btn-row"):
+                yield Button("Close", variant="primary", id="close-btn")
+
+    def watch_result(self, result: str) -> None:
+        """Update the value label when result changes."""
+        with suppress(Exception):
+            self.query_one("#checksum-value", Static).update(result)
+
+    @on(Select.Changed, "#algo-select")
+    def on_algo_changed(self, event: Select.Changed) -> None:
+        if event.value and event.value != Select.BLANK:
+            new_algo = str(event.value)
+            self.algo = new_algo
+            self.app.last_checksum_algo = new_algo
+            self.result = "Calculating..."
+            self.app.action_checksum(self.path, new_algo, modal=self)
+
+    @on(Button.Pressed, "#close-btn")
+    def on_close(self) -> None:
+        self.dismiss()
+
+
 class MessageModal(ModalScreen):
     """A centered modal screen for displaying messages."""
 
@@ -934,9 +1061,16 @@ class UrlInputModal(ModalScreen):
 
 class CommandTui(CommandBase):
     @interactive
+    @arg("src", nargs="?", help="source path")
+    @arg("dst", nargs="?", help="destination path")
     def execute_tui(self):
         """Launch the Text User Interface."""
-        GfalTui().run()
+        from gfal_cli.base import surl
+
+        src = surl(self.params.src) if self.params.src else None
+        dst = surl(self.params.dst) if self.params.dst else None
+
+        GfalTui(src=src, dst=dst).run()
         return 0
 
 
