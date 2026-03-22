@@ -233,11 +233,15 @@ class CommandLs(base.CommandBase):
         raw_entries = [st.info for st in entries_st]
         entries = _apply_sort(raw_entries, self.params.sort, self.params.reverse)
 
-        from urllib.parse import urlparse
+        # Normalize paths for comparison (especially for Windows)
+        _, norm_path = fs.url_to_fs(url)
+        norm_path = norm_path.rstrip("/")
 
-        path_norm = urlparse(url).path.rstrip("/")
+        def _get_norm_entry_path(e):
+            return e.get("name", "").replace("\\", "/").rstrip("/")
+
         is_self_only = entries and all(
-            e.get("name", "").rstrip("/") == path_norm for e in entries
+            _get_norm_entry_path(e) == norm_path for e in entries
         )
 
         if is_self_only:

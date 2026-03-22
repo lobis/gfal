@@ -301,7 +301,7 @@ async def test_tui_refresh_hotkey_logic():
         ) as mock_local_reload,
         patch(
             "gfal_cli.tui.HighlightableRemoteDirectoryTree.load_directory",
-            new_callable=AsyncMock,
+            new_callable=MagicMock,
         ) as mock_remote_load,
     ):
         async with app.run_test() as pilot:

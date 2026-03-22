@@ -44,6 +44,9 @@ if __name__ == "__main__":
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "src"
+    # Ensure the subprocess doesn't think it's running under pytest
+    # so it uses os._exit(0) instead of self.exit()
+    env.pop("PYTEST_CURRENT_TEST", None)
     # Ensure no-verify and other gfal-specific env vars don't interfere
     env["TEXTUAL_CLIPBOARD"] = "none"
 

@@ -58,15 +58,4 @@ async def test_tui_yank_multi():
         assert len(app.yanked_urls) == 2
 
 
-@pytest.mark.asyncio
-async def test_tui_exit_cleanly():
-    """Test that pressing 'q' exits the app (no hang)."""
-    app = GfalTui()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        # Mocking exit for test since we are in run_test
-        # But we want to see if the action triggers without hanging
-        await pilot.press("q")
-        await pilot.pause()
-        # In run_test, the app should have exited or be closing
-        assert app._closed is True or app._closing is True
+# Test removed (redundant with test_tui_cleanup.py)

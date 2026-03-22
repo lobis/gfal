@@ -220,9 +220,25 @@ class CommandBase:
         the POSIX description ourselves.
         """
         msg = str(e)
-        # On Windows, FileNotFoundError etc. carry winerror codes and use
-        # Windows-specific strerror text.  Normalise to POSIX descriptions so
-        # error messages are consistent across platforms.
+        if not msg:
+            msg = e.__class__.__name__
+
+        # Identify the relevant path/URL if possible.
+        path = getattr(e, "filename", None)
+        if not path and e.args:
+            # Handle standard OSError(errno, strerror, filename)
+            if len(e.args) >= 3 and e.args[2] and isinstance(e.args[2], (str, bytes)):
+                path = e.args[2]
+            # Handle fsspec FileNotFoundError("root://url")
+            elif isinstance(e.args[0], (str, bytes)) and (
+                "://" in str(e.args[0]) or "/" in str(e.args[0])
+            ):
+                path = e.args[0]
+
+        if isinstance(path, bytes):
+            path = path.decode("utf-8", "replace")
+
+        # 1. Handle Windows-specific error codes
         winerror = getattr(e, "winerror", None)
         if winerror is not None:
             _win_map = {
@@ -234,15 +250,9 @@ class CommandBase:
             }
             desc = _win_map.get(winerror)
             if desc:
-                filename = getattr(e, "filename", None)
-                return f"{filename}: {desc}" if filename else desc
-        strerror = getattr(e, "strerror", None)
-        if strerror:
-            # Real OS errors already include strerror in str(e); avoid doubling.
-            if strerror not in msg:
-                return f"{msg}: {strerror}"
-            return msg
-        # fsspec-style: no strerror, but the type carries the semantics.
+                return f"{path}: {desc}" if path else desc
+
+        # 2. Map common exception types to POSIX strings for consistency.
         _descriptions = {
             FileNotFoundError: "No such file or directory",
             PermissionError: "Permission denied",
@@ -253,7 +263,14 @@ class CommandBase:
         }
         for exc_type, description in _descriptions.items():
             if isinstance(e, exc_type):
-                return f"{msg}: {description}"
+                return f"{path}: {description}" if path else description
+
+        strerror = getattr(e, "strerror", None)
+        if strerror:
+            # Avoid doubling if path is already in the string.
+            if strerror not in msg:
+                return f"{msg}: {strerror}"
+            return msg
         # SSL / connection errors from requests: give a clear hint.
         try:
             import requests as _requests

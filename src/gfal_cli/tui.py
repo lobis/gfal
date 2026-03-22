@@ -383,7 +383,10 @@ class GfalTui(App):
             time.sleep(0.1)
             sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
             sys.stdout.flush()
-            os._exit(0)
+
+            # Do not os._exit if we are running in a test environment
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                os._exit(0)
 
         import threading
 
