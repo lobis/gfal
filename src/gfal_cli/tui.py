@@ -83,43 +83,38 @@ class HighlightableRemoteDirectoryTree(Tree):
             self.run_worker(lambda: self.load_directory(node), thread=True)
 
     async def reload(self) -> None:
-        """Reload expanded nodes while preserving tree state (expanded dirs, cursor)."""
-        if not self.root:
+        """Reload the currently-viewed directory without resetting tree state.
+
+        Only reloads the deepest expanded directory that contains the cursor,
+        preserving all other expanded nodes and the cursor position.
+        """
+        if not self.root or not self.root.children:
             return
 
-        # 1. Record expanded node URLs and cursor position
-        expanded_urls: set[str] = set()
-        cursor_url: str | None = None
-
-        def walk(node):
-            if node.allow_expand and node.is_expanded and node.data:
-                expanded_urls.add(node.data)
-            for child in node.children:
-                walk(child)
-
-        walk(self.root)
-
+        # Find the deepest expanded directory the cursor is in
+        target_node = self.root
         if self.cursor_line > -1:
             cursor_node = self.get_node_at_line(self.cursor_line)
-            if cursor_node is not None and cursor_node.data:
-                cursor_url = cursor_node.data
+            if cursor_node is not None:
+                # Walk up to find the nearest expanded directory parent
+                node = cursor_node
+                while node is not None:
+                    if node.allow_expand and node.is_expanded:
+                        target_node = node
+                        break
+                    node = node.parent
 
-        # 2. Reload only expanded directories (re-fetch children)
-        def reload_expanded(node):
-            if not node.data or not node.allow_expand or not node.is_expanded:
-                return
-            # Remove existing children and re-load
-            node.remove_children()
-            self.load_directory(node)
-            # After loading, re-expand children that were previously expanded
-            for child in node.children:
-                if child.data in expanded_urls and child.allow_expand:
-                    child.expand()
-                    reload_expanded(child)
+        cursor_url: str | None = None
+        if self.cursor_line > -1:
+            cn = self.get_node_at_line(self.cursor_line)
+            if cn is not None and cn.data:
+                cursor_url = cn.data
 
-        self.run_worker(lambda: reload_expanded(self.root), thread=True)
+        # Reload just that one directory
+        target_node.remove_children()
+        self.run_worker(lambda n=target_node: self.load_directory(n), thread=True)
 
-        # 3. Restore cursor (best-effort, done after a short delay)
+        # Restore cursor position after reload completes
         if cursor_url:
 
             def restore_cursor():
@@ -967,7 +962,6 @@ class GfalTui(App):
             self.log_activity(f"Successfully copied to {final_dest}", level="success")
             if modal:
                 self.call_from_thread(modal.mark_transfer, final_dest, success=True)
-            self.call_from_thread(lambda: self.set_timer(1.0, self.refresh_trees))
         except Exception as e:
             error_msg = CommandBase._format_error(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
@@ -1133,11 +1127,22 @@ class TransferSummaryModal(ModalScreen):
                 break
         self._refresh_display()
 
-        # Auto-dismiss when all transfers are finished
+        # When all transfers finish: stop polling, refresh trees once, auto-dismiss
         if all(t["status"] in ("done", "failed") for t in self._transfers):
             if self._poll_timer:
                 self._poll_timer.stop()
-            self.set_timer(2.0, self.dismiss)
+                self._poll_timer = None
+            # Single tree refresh after all copies are done
+            with suppress(AttributeError):
+                self.app.run_worker(self.app.refresh_trees())
+
+            # Auto-dismiss safely (only if we're still the active screen)
+            def _safe_dismiss():
+                with suppress(Exception):
+                    if self.app.screen is self:
+                        self.app.pop_screen()
+
+            self.set_timer(2.0, _safe_dismiss)
 
     def mark_copying(self, dst: str) -> None:
         """Mark a transfer as actively copying."""
