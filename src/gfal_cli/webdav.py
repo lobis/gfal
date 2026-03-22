@@ -16,11 +16,13 @@ import io
 import stat as stat_module
 import tempfile
 from email.utils import parsedate_to_datetime
+from typing import Optional
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import fsspec
 import requests as _requests
+from fsspec import AbstractFileSystem
 
 _DAV = "{DAV:}"
 
@@ -226,7 +228,7 @@ class _RequestsPutFile(io.RawIOBase):
 # ---------------------------------------------------------------------------
 
 
-class WebDAVFileSystem:
+class WebDAVFileSystem(AbstractFileSystem):
     """
     Filesystem adapter for HTTP/HTTPS/WebDAV endpoints.
 
@@ -240,7 +242,7 @@ class WebDAVFileSystem:
     - ``chmod``            — no-op (HTTP has no permission model)
     """
 
-    def __init__(self, storage_options: dict | None = None) -> None:
+    def __init__(self, storage_options: Optional[dict] = None) -> None:
         self._opts = dict(storage_options or {})
         self._verify = self._opts.get("ssl_verify", True)
         self._session = _make_session(self._opts)

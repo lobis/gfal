@@ -85,6 +85,7 @@ select = [
 ]
 ignore = [
     "E501",   # line too long – handled by the formatter
+    "UP045",  # use `X | None` for type annotations (wait: we need 3.9 support!)
 ]
 
 [tool.ruff.lint.isort]

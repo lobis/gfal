@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from gfal_cli import fs
 from gfal_cli.errors import (
@@ -19,8 +19,8 @@ class GfalClient:
 
     def __init__(
         self,
-        cert: str | None = None,
-        key: str | None = None,
+        cert: Optional[str] = None,
+        key: Optional[str] = None,
         timeout: int = 1800,
         ssl_verify: bool = True,
     ):

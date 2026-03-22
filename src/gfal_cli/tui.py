@@ -4,7 +4,7 @@ import tempfile
 import threading
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from rich.style import Style
@@ -128,7 +128,7 @@ class GfalTui(App):
     yanked_urls = reactive(set())
     log_file = reactive(str(Path(tempfile.gettempdir()) / "gfal-tui.log"))
 
-    def __init__(self, log_file: str | None = None, *args, **kwargs):
+    def __init__(self, log_file: Optional[str] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if log_file:
             self.log_file = log_file
@@ -324,7 +324,7 @@ class GfalTui(App):
                 return
             target_path = str(target_node.data.path)
 
-        def handle_paste(confirm_data: dict | None):
+        def handle_paste(confirm_data: Optional[dict]):
             if not confirm_data:
                 return
 
@@ -522,7 +522,7 @@ class GfalTui(App):
 
         self.run_worker(get_stat, thread=True)
 
-    def _get_focused_tree(self) -> Tree | None:
+    def _get_focused_tree(self) -> Optional[Tree]:
         """Helper to get the currently focused tree widget."""
         focused = self.focused
         if not focused:
@@ -689,7 +689,7 @@ class GfalTui(App):
                 lambda: self._do_copy(src_path, dest_dir, to_remote=False), thread=True
             )
 
-    def _do_copy(self, src: str, dest: str, to_remote: bool | None = None) -> None:
+    def _do_copy(self, src: str, dest: str, to_remote: Optional[bool] = None) -> None:
         """Perform the copy operation in a background thread.
 
         If to_remote is True/False, dest is assumed to be a directory base.
@@ -806,7 +806,7 @@ class MessageModal(ModalScreen):
             self.action_close()
 
 
-class PasteModal(ModalScreen[dict | None]):
+class PasteModal(ModalScreen[Optional[dict]]):
     """A modal to confirm the destination for a paste operation."""
 
     BINDINGS = [("escape", "cancel", "Cancel")]
