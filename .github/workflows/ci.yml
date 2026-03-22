@@ -193,9 +193,14 @@ jobs:
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
                    # Bundle fsspec-xrootd and textual (not in standard apt repos).
-                   # rich is available as python3-rich and listed in Depends above —
-                   # do NOT bundle it to avoid file conflicts on install.
-                   python3 -m pip install fsspec-xrootd textual dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   # gfal_cli and fsspec-xrootd are installed without deps (system packages
+                   # cover those). Textual is installed WITH its deps so transitive
+                   # requirements (typing_extensions, markdown-it-py, …) are satisfied.
+                   # rich is then removed from the bundle: the system python3-rich package
+                   # (declared in Depends) owns those files.
+                   python3 -m pip install fsspec-xrootd dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   python3 -m pip install textual --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/rich pkg/usr/lib/python3/dist-packages/rich-*.dist-info && \
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \

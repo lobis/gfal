@@ -2,6 +2,7 @@
 Entry point: maps gfal-<cmd> and `gfal <cmd>` to execute_<cmd> methods.
 """
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -13,8 +14,11 @@ from gfal_cli import (
     ls,  # noqa: F401  – registers CommandLs subclass
     rm,  # noqa: F401  – registers CommandRm subclass
     tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict/token)
-    tui,  # noqa: F401  – registers CommandTui subclass
 )
+
+with contextlib.suppress(ImportError):
+    from gfal_cli import tui  # noqa: F401  – registers CommandTui subclass
+    # textual not installed → gfal-tui unavailable but all other commands work fine
 
 
 def _ensure_xrootd_dylib_path():
