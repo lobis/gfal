@@ -189,11 +189,13 @@ jobs:
         Priority: optional
         Architecture: ${{ matrix.arch }}
         Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
-        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests
+        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
-                   # Bundle fsspec-xrootd, rich, and textual directly since they aren't always in apt repos
-                   python3 -m pip install fsspec-xrootd rich textual dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   # Bundle fsspec-xrootd and textual (not in standard apt repos).
+                   # rich is available as python3-rich and listed in Depends above —
+                   # do NOT bundle it to avoid file conflicts on install.
+                   python3 -m pip install fsspec-xrootd textual dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
