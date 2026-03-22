@@ -68,8 +68,7 @@ class HighlightableRemoteDirectoryTree(Tree):
         # Use call_after_refresh to ensure the tree is ready
         self.call_after_refresh(self.root.expand)
         if self.root:
-            prefix = self.id.split("-")[0].capitalize() if self.id else "Tree"
-            self.root.label = f"{prefix}: {self.url}"
+            self.root.label = self.url
 
     def _on_tree_node_expanded(self, event: Tree.NodeExpanded):
         node = event.node
@@ -146,8 +145,7 @@ class HighlightableDirectoryTree(DirectoryTree):
     def on_mount(self) -> None:
         # Update root label to be more descriptive
         if self.root:
-            prefix = self.id.split("-")[0].capitalize() if self.id else "Tree"
-            self.root.label = f"{prefix}: {self.path}"
+            self.root.label = str(self.path)
 
 
 class GfalTui(App):
@@ -281,7 +279,6 @@ class GfalTui(App):
         yield Header()
         with Horizontal():
             with Vertical(classes="pane", id="left-pane"):
-                yield Label("Left", classes="pane-header")
                 # Detect if initial_src is remote or local
                 if "://" in self.initial_src:
                     tree = HighlightableRemoteDirectoryTree(
@@ -295,7 +292,6 @@ class GfalTui(App):
                 tree.yanked_urls = self.yanked_urls
                 yield tree
             with Vertical(classes="pane", id="right-pane"):
-                yield Label("Right", classes="pane-header")
                 if "://" in self.initial_dst:
                     tree = HighlightableRemoteDirectoryTree(
                         self.initial_dst,
