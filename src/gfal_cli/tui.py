@@ -14,7 +14,7 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -24,6 +24,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    ProgressBar,
     RichLog,
     Select,
     Static,
@@ -158,6 +159,9 @@ class GfalTui(App):
     tpc_enabled = reactive(True)
     yanked_urls = reactive(set())
     log_file = reactive(str(Path(tempfile.gettempdir()) / "gfal-tui.log"))
+    progress_current = reactive(0)
+    progress_total = reactive(100)
+    copy_in_progress = reactive(False)
 
     def __init__(
         self,
@@ -248,8 +252,29 @@ class GfalTui(App):
 
     #modal-btn-row {
         align: center middle;
-        width: 100%;
+        height: auto;
         margin-top: 1;
+    }
+
+    #progress-window {
+        dock: bottom;
+        height: auto;
+        border: thick $success;
+        background: $surface;
+        display: none;
+        padding: 1;
+        margin: 0 2;
+    }
+
+    #progress-window.visible {
+        display: block;
+    }
+
+    #progress-label {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
     }
     """
 
@@ -307,6 +332,9 @@ class GfalTui(App):
         log_window = RichLog(id="log-window", auto_scroll=True, max_lines=1000)
         log_window.can_focus = False
         yield log_window
+        with Container(id="progress-window"):
+            yield Label("Transfer Progress", id="progress-label")
+            yield ProgressBar(id="progress-bar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -316,6 +344,41 @@ class GfalTui(App):
         # Set initial focus to Left tree
         with suppress(Exception):
             self.query_one("#left-tree").focus()
+
+    def watch_progress_current(self, value: int) -> None:
+        """Update progress bar when current value changes."""
+        with suppress(Exception):
+            self.query_one("#progress-bar", ProgressBar).progress = value
+
+    def watch_progress_total(self, value: int) -> None:
+        """Update progress bar total when total value changes."""
+        with suppress(Exception):
+            pb = self.query_one("#progress-bar", ProgressBar)
+            if value > 0:
+                pb.total = value
+            else:
+                pb.total = 100  # Default if unknown
+
+    def watch_copy_in_progress(self, value: bool) -> None:
+        """Show/hide progress window based on copy status."""
+        with suppress(Exception):
+            self.query_one("#progress-window").set_class(value, "visible")
+
+    def _update_progress(
+        self, current: int, total: int, finished: bool = False, success: bool = True
+    ) -> None:
+        """Update progress variables from worker thread."""
+        self.progress_current = current
+        if total > 0:
+            self.progress_total = total
+
+        if finished:
+            # Small delay before hiding progress window
+            self.set_timer(1.0, lambda: setattr(self, "copy_in_progress", False))
+            if not success:
+                self.log_activity("Transfer finished with errors", level="error")
+        else:
+            self.copy_in_progress = True
 
     def _update_toggle_labels(self) -> None:
         """Update the footer labels for SSL and TPC."""
@@ -427,6 +490,10 @@ class GfalTui(App):
                     thread=True,
                     name=f"paste_worker_{name}",
                 )
+
+            # Clear yanked URLs after triggering paste
+            self.yanked_urls = set()
+            self.log_activity("Yanked files cleared after paste")
 
         # Use PasteModal (will need update for multiple)
         # For multi-paste, we just confirm the target directory
@@ -816,26 +883,41 @@ class GfalTui(App):
                     to_remote = False  # Local to Local
 
             self.log_activity(f"Starting copy: {src} -> {final_dest}")
+            self.copy_in_progress = True
+            self.progress_current = 0
+            self.progress_total = 100  # Reset to default
+
+            from gfal_cli.progress import TuiProgress
+
+            def progress_callback(current, total, finished=False, success=True):
+                self.call_from_thread(
+                    self._update_progress, current, total, finished, success
+                )
+
+            prog = TuiProgress(progress_callback)
 
             if to_remote:
-                # Target is remote
                 fs, fs_path = url_to_fs(final_dest, ssl_verify=self.ssl_verify)
                 # put() handles local-to-remote and potentially remote-to-remote
-                fs.put(src, fs_path, recursive=True)
+                fs.put(src, fs_path, recursive=True, callback=prog)
             else:
                 # Target is local
                 if "://" in src:
                     # Remote to Local
                     fs, fs_path = url_to_fs(src, ssl_verify=self.ssl_verify)
-                    fs.get(fs_path, final_dest, recursive=True)
+                    fs.get(fs_path, final_dest, recursive=True, callback=prog)
                 else:
                     # Local to Local
                     import shutil
 
+                    # shutil doesn't take a callback easily, but we can mock it
+                    # (or just assume it's fast for local-to-local)
+                    prog.update(curr_size=0, total_size=100)
                     if Path(src).is_dir():
                         shutil.copytree(src, final_dest, dirs_exist_ok=True)
                     else:
                         shutil.copy2(src, final_dest)
+                    prog.stop(success=True)
 
             self.log_activity(f"Successfully copied to {final_dest}", level="success")
             self.call_from_thread(
@@ -845,8 +927,8 @@ class GfalTui(App):
                     )
                 )
             )
-            # Refresh both trees to show the new content
-            self.call_from_thread(self.action_refresh)
+            # Refresh trees to show the new content with a small delay
+            self.set_timer(1.0, self.action_refresh)
         except Exception as e:
             error_msg = CommandBase._format_error(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
