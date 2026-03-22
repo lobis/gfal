@@ -1,69 +1,45 @@
-%{!?__python3: %global __python3 /usr/bin/python3}
+Name:           python3-gfal-cli
+Version:        %{pkg_version}
+Release:        %{pkg_release}%{?dist}
+Summary:        GFAL2-compatible CLI tools based on fsspec
 
-%define base_name gfal-cli
-%define dist_name gfal_cli
-%define install_dir /opt/%{base_name}
+License:        BSD-3-Clause
+URL:            https://github.com/lobis/gfal-cli
+Source0:        https://github.com/lobis/gfal-cli/archive/v%{version}.tar.gz
 
-Name: python3-%{base_name}
-Version: %{pkg_version}
-Release: %{pkg_release}%{?dist}
-Summary: GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)
-License: BSD-3-Clause
-URL: https://github.com/lobis/gfal-cli
-Source0: %{dist_name}-%{version}-py3-none-any.whl
+BuildArch:      noarch
+BuildRequires:  python3-devel
+BuildRequires:  python3-pip
+BuildRequires:  python3-wheel
+BuildRequires:  python3-hatchling
+BuildRequires:  python3-hatch-vcs
 
-BuildRequires: python3-devel
-BuildRequires: python3-pip
-BuildRequires: python3-wheel
-
-Requires: python3-xrootd python3-rich
-
-# Stop RPM from auto-generating strict version requirements
-AutoReq: no
+Requires:       python3-fsspec
+Requires:       python3-fsspec-xrootd
+Requires:       python3-aiohttp
+Requires:       python3-requests
+Requires:       python3-rich
+Requires:       python3-textual
 
 %description
 A pip-installable Python rewrite of the gfal2-util CLI tools, built on fsspec.
-This package is bundled in an isolated environment in %{install_dir} to prevent system conflicts.
+This package provides a modern, Pythonic alternative to gfal2-util with
+support for HTTP/HTTPS and XRootD protocols.
 
 %prep
-# Nothing to prep for wheel
+%autosetup -n gfal-cli-%{version}
 
 %build
-# Nothing to build for wheel
+%pyproject_wheel
 
 %install
-# 1. Create the base directories
-mkdir -p %{buildroot}%{install_dir}
-mkdir -p %{buildroot}%{_bindir}
-
-# 2. Create a virtual environment inside the RPM buildroot
-# --system-site-packages is REQUIRED so it can still find python3-xrootd from the OS
-%{__python3} -m venv --system-site-packages %{buildroot}%{install_dir}
-
-# 3. Use the venv's isolated pip to install the app and all bundled dependencies
-%{buildroot}%{install_dir}/bin/python -m pip install --no-cache-dir fsspec-xrootd fsspec aiohttp requests rich %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
-
-# 4. Clean up hardcoded build paths
-# Pip hardcodes the temporary GitHub Actions build path into the script shebangs.
-# We use sed to strip %{buildroot} out, so the shebang correctly becomes: #!/opt/gfal-cli/bin/python
-find %{buildroot}%{install_dir}/bin -type f -exec sed -i "s|%{buildroot}||g" {} +
-sed -i "s|%{buildroot}||g" %{buildroot}%{install_dir}/pyvenv.cfg
-
-# 5. Symlink the executables to /usr/bin
-# This allows users to run `gfal-copy` from anywhere, but it routes traffic into the isolated /opt/ environment
-pushd %{buildroot}%{install_dir}/bin/
-for cmd in gfal*; do
-    if [ -x "$cmd" ]; then
-        ln -sf %{install_dir}/bin/$cmd %{buildroot}%{_bindir}/$cmd
-    fi
-done
-popd
+%pyproject_install
 
 %files
-%defattr(-,root,root,-)
-# Own the symlinks we created in /usr/bin/
-%{_bindir}/gfal*
-# Own the entire isolated directory in /opt/
-%{install_dir}/
+%license LICENSE
+%doc README.md
+%{_bindir}/gfal
+%{python3_sitelib}/gfal_cli/
+%{python3_sitelib}/gfal_cli-%{version}.dist-info/
 
 %changelog -f %{_sourcedir}/CHANGELOG
