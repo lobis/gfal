@@ -817,9 +817,11 @@ class GfalTui(App):
             f"SSL verification turned {'ON' if self.ssl_verify else 'OFF'}"
         )
         self._update_toggle_labels()
-        # Refresh any remote trees to apply the new SSL setting
+        # Update ssl_verify on existing trees — no rebuild needed.
+        # load_directory reads ssl_verify at request time, so future
+        # expansions automatically pick up the new setting.
         for tree in self.query(HighlightableRemoteDirectoryTree):
-            self.run_worker(self.update_focused_pane(tree.url, tree))
+            tree.ssl_verify = self.ssl_verify
 
     def action_toggle_tpc(self) -> None:
         """Toggle Third Party Copy."""

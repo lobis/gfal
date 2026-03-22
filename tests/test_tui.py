@@ -454,8 +454,7 @@ async def test_tui_toggle_label_update():
         # Check initial label for TPC
         def get_desc(key):
             try:
-                # Use [-1] to get the most recent binding for the key
-                return app._bindings.key_to_bindings[key][-1].description
+                return app._bindings.key_to_bindings[key][0].description
             except (KeyError, IndexError):
                 return None
 
@@ -479,6 +478,46 @@ async def test_tui_toggle_label_update():
         await pilot.press("v")
         await pilot.pause()
         assert get_desc("v") == "SSL [OFF]"
+
+
+@pytest.mark.asyncio
+async def test_tui_ssl_toggle_preserves_tree():
+    """Verify that toggling SSL does not rebuild (reset) the remote tree widget."""
+    app = GfalTui()
+    with patch("gfal_cli.tui.url_to_fs"):
+        async with app.run_test() as pilot:
+            initial_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
+            assert initial_tree.ssl_verify is False
+
+            # Toggle SSL on
+            await pilot.press("v")
+            await pilot.pause()
+
+            # Same widget instance — tree was NOT rebuilt
+            current_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
+            assert current_tree is initial_tree, "Tree widget was rebuilt on SSL toggle"
+            assert current_tree.ssl_verify is True
+
+            # Toggle SSL off
+            await pilot.press("v")
+            await pilot.pause()
+
+            current_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
+            assert current_tree is initial_tree, "Tree widget was rebuilt on SSL toggle"
+            assert current_tree.ssl_verify is False
+
+
+@pytest.mark.asyncio
+async def test_tui_ssl_toggle_binding_count():
+    """Verify that toggling SSL only keeps one binding per key (no duplicates)."""
+    app = GfalTui()
+    async with app.run_test() as pilot:
+        for _ in range(3):
+            await pilot.press("v")
+            await pilot.pause()
+        # Exactly one binding for "v" regardless of how many times toggled
+        assert len(app._bindings.key_to_bindings["v"]) == 1
+        assert len(app._bindings.key_to_bindings["t"]) == 1
 
 
 @pytest.mark.asyncio
