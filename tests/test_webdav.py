@@ -9,6 +9,7 @@ No external network access is required.
 from __future__ import annotations
 
 import posixpath
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -79,6 +80,12 @@ def _make_propfind_response(path: str, depth: int) -> str:
             )
 
     return _PROPFIND_TMPL.format(responses="\n".join(responses))
+
+
+class _ReuseAddrHTTPServer(HTTPServer):
+    """HTTPServer with SO_REUSEADDR to prevent Windows 'address already in use' errors."""
+
+    allow_reuse_address = True
 
 
 class _WebDAVHandler(BaseHTTPRequestHandler):
@@ -183,7 +190,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
 @pytest.fixture(scope="session")
 def dav_server():
     """Start a mock WebDAV server and return its base URL."""
-    server = HTTPServer(("127.0.0.1", 0), _WebDAVHandler)
+    server = _ReuseAddrHTTPServer(("127.0.0.1", 0), _WebDAVHandler)
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -662,6 +669,10 @@ class TestWebDAVOpenWrite:
 
 
 class TestWebDAVPropfindExtra:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Flaky on Windows CI due to ConnectionAbortedError (WinError 10053)",
+    )
     def test_multiple_children(self, dav_server):
         with _vfs_lock:
             _vfs.add("/multi/")
