@@ -19,7 +19,7 @@ jobs:
     name: Codespell spell-check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
     - uses: codespell-project/actions-codespell@v2
       with:
         ignore_words_list: cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag
@@ -28,8 +28,8 @@ jobs:
     name: Pre-commit checks
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: "3.12"
     - uses: pre-commit/action@v3.0.1
@@ -45,8 +45,8 @@ jobs:
     env:
       PYTEST_ADDOPTS: "--color=yes"
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install package and test dependencies
@@ -58,8 +58,8 @@ jobs:
     name: XRootD Server Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: "3.12"
     - name: Install system build dependencies
@@ -75,8 +75,8 @@ jobs:
     name: Integration Tests (EOS)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: "3.12"
     - name: Install system build dependencies
@@ -102,13 +102,13 @@ jobs:
 
   build:
     name: Build distribution 📦
-    needs: [codespell, pre-commit, tests, xrootd, integration]
+    needs: [ codespell, pre-commit, tests, xrootd, integration ]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - uses: actions/setup-python@v6
+    - uses: actions/setup-python@v5
       with:
         python-version: "3.x"
     - name: Install build dependencies
@@ -116,29 +116,29 @@ jobs:
     - name: Build sdist and wheel
       run: python -m build
     - name: Store distributions
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: python-package-distributions
         path: dist/
 
   build-rpm:
     name: Build RPM 📦 (${{ matrix.os.name }}) [${{ matrix.arch }}]
-    needs: [build]
+    needs: [ build ]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         os:
-          - image: almalinux:9
-            name: el9
-          - image: almalinux:10
-            name: el10
-        arch: [x86_64, aarch64]
+        - image: almalinux:9
+          name: el9
+        - image: almalinux:10
+          name: el10
+        arch: [ x86_64, aarch64 ]
     steps:
     - name: Set up QEMU
       if: matrix.arch == 'aarch64'
-      uses: docker/setup-qemu-action@v4
-    - uses: actions/checkout@v6
+      uses: docker/setup-qemu-action@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 0
     - name: Build RPM in Container
@@ -152,24 +152,24 @@ jobs:
                    python3 -m pip install build hatchling hatch-vcs && \
                    make rpm"
     - name: Store RPMs
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: rpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/RPMS/*/*.rpm
 
   build-deb:
     name: Build DEB 📦 [${{ matrix.arch }}]
-    needs: [build]
+    needs: [ build ]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        arch: [ amd64, arm64 ]
     steps:
     - name: Set up QEMU
       if: matrix.arch == 'arm64'
-      uses: docker/setup-qemu-action@v4
-    - uses: actions/checkout@v6
+      uses: docker/setup-qemu-action@v3
+    - uses: actions/checkout@v4
     - name: Build DEB (Native dpkg-deb)
       run: |
         docker run --rm \
@@ -192,13 +192,14 @@ jobs:
         Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
-                   python3 -m pip install fsspec-xrootd dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   # Bundle fsspec-xrootd, rich, and textual directly since they aren't always in apt repos
+                   python3 -m pip install fsspec-xrootd rich textual dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
                    dpkg-deb --build pkg python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb"
     - name: Store DEBs
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: deb-package-distributions-${{ matrix.arch }}
         path: "*.deb"
@@ -209,33 +210,33 @@ jobs:
 
   test-install:
     name: Test Install 🧪 (${{ matrix.target.name }})
-    needs: [build-rpm, build-deb]
+    needs: [ build-rpm, build-deb ]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target:
-          - name: AlmaLinux 9
-            container: almalinux:9
-            artifact: rpm-package-distributions-el9-x86_64
-            install_cmd: |
-              dnf install -y epel-release dnf-plugins-core
-              dnf config-manager --set-enabled crb
-              find . -name "*.rpm" -exec dnf install -y {} +
-          - name: AlmaLinux 10
-            container: almalinux:10
-            artifact: rpm-package-distributions-el10-x86_64
-            install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
-          - name: Ubuntu 24.04
-            container: ubuntu:24.04
-            artifact: deb-package-distributions-amd64
-            install_cmd: |
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y python3-fsspec python3-aiohttp python3-requests
-              DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
+        - name: AlmaLinux 9
+          container: almalinux:9
+          artifact: rpm-package-distributions-el9-x86_64
+          install_cmd: |
+            dnf install -y epel-release dnf-plugins-core
+            dnf config-manager --set-enabled crb
+            find . -name "*.rpm" -exec dnf install -y {} +
+        - name: AlmaLinux 10
+          container: almalinux:10
+          artifact: rpm-package-distributions-el10-x86_64
+          install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
+        - name: Ubuntu 24.04
+          container: ubuntu:24.04
+          artifact: deb-package-distributions-amd64
+          install_cmd: |
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-fsspec python3-aiohttp python3-requests python3-rich
+            DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
     container: ${{ matrix.target.container }}
     steps:
-    - uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v4
       with:
         name: ${{ matrix.target.artifact }}
     - name: Install package
@@ -247,7 +248,7 @@ jobs:
 
   update-repo:
     name: Update YUM/APT Repository 🌐
-    needs: [build-rpm, build-deb, test-install]
+    needs: [ build-rpm, build-deb, test-install ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -257,8 +258,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/download-artifact@v8
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
       with:
         path: artifacts/
         merge-multiple: true
@@ -304,7 +305,7 @@ jobs:
   publish-to-pypi:
     name: Publish to PyPI 🚀
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, build-rpm, build-deb, test-install]
+    needs: [ build, build-rpm, build-deb, test-install ]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -312,7 +313,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-    - uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v4
       with:
         name: python-package-distributions
         path: dist/
@@ -321,12 +322,12 @@ jobs:
   github-release:
     name: Create GitHub Release 🚀
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, build-rpm, build-deb, test-install]
+    needs: [ build, build-rpm, build-deb, test-install ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-    - uses: actions/download-artifact@v8
+    - uses: actions/download-artifact@v4
       with:
         path: artifacts/
         merge-multiple: true
@@ -346,35 +347,35 @@ jobs:
 
   verify-deployment:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
-    needs: [update-repo, publish-to-pypi, github-release]
+    needs: [ update-repo, publish-to-pypi, github-release ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target:
-          - name: AlmaLinux 9
-            container: almalinux:9
-            install_cmd: |
-              dnf install -y epel-release curl
-              curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-              for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
-          - name: AlmaLinux 10
-            container: almalinux:10
-            install_cmd: |
-              dnf install -y epel-release curl
-              curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-              for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
-          - name: Ubuntu 24.04
-            container: ubuntu:24.04
-            install_cmd: |
-              apt-get update && apt-get install -y curl
-              echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | tee /etc/apt/sources.list.d/gfal-cli.list
-              for i in {1..12}; do apt-get update && apt-get install -y python3-gfal-cli && break || sleep 10; done
-          - name: PyPI
-            container: python:3.9
-            install_cmd: |
-              for i in {1..12}; do pip install --no-cache-dir gfal-cli && break || sleep 10; done
+        - name: AlmaLinux 9
+          container: almalinux:9
+          install_cmd: |
+            dnf install -y epel-release curl
+            curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
+            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
+        - name: AlmaLinux 10
+          container: almalinux:10
+          install_cmd: |
+            dnf install -y epel-release curl
+            curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
+            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
+        - name: Ubuntu 24.04
+          container: ubuntu:24.04
+          install_cmd: |
+            apt-get update && apt-get install -y curl
+            echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | tee /etc/apt/sources.list.d/gfal-cli.list
+            for i in {1..12}; do apt-get update && apt-get install -y python3-gfal-cli && break || sleep 10; done
+        - name: PyPI
+          container: python:3.9
+          install_cmd: |
+            for i in {1..12}; do pip install --no-cache-dir gfal-cli && break || sleep 10; done
     container: ${{ matrix.target.container }}
     steps:
     - name: Install and Verify
