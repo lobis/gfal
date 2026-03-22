@@ -1,5 +1,6 @@
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,7 @@ if __name__ == "__main__":
     print("EXIT_SUCCESS", file=sys.stderr)
     sys.exit(0)
 """
-    test_script_path = Path("/tmp/test_tui_hang.py")
+    test_script_path = Path(tempfile.gettempdir()) / "test_tui_hang.py"
     test_script_path.write_text(script)
 
     import sys
