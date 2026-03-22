@@ -45,6 +45,11 @@ class HighlightableRemoteDirectoryTree(Tree):
 
     yanked_urls: reactive[set[str]] = reactive(set())
 
+    def watch_yanked_urls(self, _value: set[str]) -> None:
+        """Clear the line cache so node labels re-render with updated yank marks."""
+        if self.is_attached:
+            self._invalidate()
+
     def __init__(self, url: str, ssl_verify: bool = False, **kwargs):
         self.url = url
         self.ssl_verify = ssl_verify
@@ -133,6 +138,11 @@ class HighlightableDirectoryTree(DirectoryTree):
     """A DirectoryTree that supports yank highlight."""
 
     yanked_urls: reactive[set[str]] = reactive(set())
+
+    def watch_yanked_urls(self, _value: set[str]) -> None:
+        """Clear the line cache so node labels re-render with updated yank marks."""
+        if self.is_attached:
+            self._invalidate()
 
     def render_label(
         self, node: TreeNode[Any], base_style: Style, control_style: Style
@@ -411,12 +421,11 @@ class GfalTui(App):
 
         self.yanked_urls = new_yanked
 
-        # Update trees to show highlights
+        # Update trees to show highlights — watch_yanked_urls triggers _invalidate()
         for tree_widget in self.query(
             "HighlightableDirectoryTree, HighlightableRemoteDirectoryTree"
         ):
             tree_widget.yanked_urls = self.yanked_urls
-            tree_widget.refresh()
 
     def action_paste(self) -> None:
         """Paste the yanked files/directories to the currently selected directory."""
