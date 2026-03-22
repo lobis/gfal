@@ -195,7 +195,7 @@ jobs:
                    # Bundle textual and its requirements.
                    # We prune rich, markdown_it, and pygments because they conflict with official ubuntu packages.
                    python3 -m pip install fsspec-xrootd dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
-                   python3 -m pip install textual --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
+                   python3 -m pip install textual rich-click --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    rm -rf pkg/usr/lib/python3/dist-packages/rich* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/markdown_it* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/mdurl* && \

@@ -2,7 +2,6 @@
 Base class and shared infrastructure for all gfal-cli commands.
 """
 
-import argparse
 import contextlib
 import errno
 import logging
@@ -13,8 +12,10 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from threading import Thread
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
+import rich_click as click
 from rich.console import Console
 
 try:
@@ -24,12 +25,25 @@ except PackageNotFoundError:
 
 
 # ---------------------------------------------------------------------------
+# rich-click configuration
+# ---------------------------------------------------------------------------
+
+click.rich_click.USE_RICH_MARKUP = True
+click.rich_click.USE_MARKDOWN = False
+click.rich_click.SHOW_ARGUMENTS = True
+click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
+click.rich_click.STYLE_ERRORS_SUGGESTION = "italic"
+click.rich_click.ERRORS_SUGGESTION = ""
+click.rich_click.MAX_WIDTH = 100
+
+
+# ---------------------------------------------------------------------------
 # @arg and @interactive decorators (mirrors gfal2-util API)
 # ---------------------------------------------------------------------------
 
 
 def arg(*args, **kwargs):
-    """Decorator that attaches argparse argument specs to an execute_* method."""
+    """Decorator that attaches argparse-style argument specs to an execute_* method."""
 
     def _decorator(func):
         if not hasattr(func, "arguments"):
@@ -48,13 +62,13 @@ def interactive(func):
 
 
 # ---------------------------------------------------------------------------
-# URL normalisation helper (used as argparse type=)
+# URL normalisation helper
 # ---------------------------------------------------------------------------
 
 
 def surl(value):
     """
-    Argparse type converter: turns bare paths into file:// URLs.
+    Argparse/Click type converter: turns bare paths into file:// URLs.
     Passes '-' (stdin/stdout sentinel) through unchanged.
     """
     if value == "-":
@@ -67,6 +81,20 @@ def surl(value):
             p = Path.cwd() / p
         return p.as_uri()
     return value
+
+
+class SurlParamType(click.ParamType):
+    """Click ParamType that converts bare paths to file:// URIs."""
+
+    name = "surl"
+
+    def convert(self, value, param, ctx):
+        if value is None:
+            return None
+        return surl(value)
+
+
+SURL = SurlParamType()
 
 
 def is_gfal2_compat():
@@ -96,6 +124,384 @@ def get_console(stderr=False):
 
 
 # ---------------------------------------------------------------------------
+# Argparse → Click translator
+# ---------------------------------------------------------------------------
+
+
+def _argparse_to_click_params(arguments):
+    """
+    Translate a list of (args, kwargs) argparse specs (from @arg decorators)
+    into intermediate spec dicts for building Click Param objects.
+
+    Returns a list of spec dicts with keys:
+      kind: "option" | "argument" | "const_option"
+      param_decls: list of flag strings (for options) or [NAME] for arguments
+      click_kw: kwargs for click.Option / click.Argument
+      dest: target attribute name in self.params (may differ from click param name)
+      orig_name: original positional name (for arguments)
+      const: value to set when flag is present (for const_option only)
+    """
+    specs = []
+    has_preceding_optional_positional = False
+
+    for args, kwargs in arguments:
+        is_option = args and args[0].startswith("-")
+        if is_option:
+            specs.append(_argspec_to_click_option(args, kwargs))
+        else:
+            spec = _argspec_to_click_argument(
+                args,
+                kwargs,
+                has_preceding_optional=has_preceding_optional_positional,
+            )
+            # Track whether this positional is optional (nargs="?")
+            if kwargs.get("nargs") == "?":
+                has_preceding_optional_positional = True
+            specs.append(spec)
+
+    return specs
+
+
+def _argspec_to_click_option(args, kwargs):
+    """Convert an argparse option spec to an intermediate Click spec dict."""
+    # Make a mutable copy so we don't alter the stored decorator data
+    kwargs = dict(kwargs)
+    action = kwargs.pop("action", None)
+    nargs = kwargs.pop("nargs", None)
+    arg_type = kwargs.pop("type", None)
+    dest = kwargs.pop("dest", None)
+    choices = kwargs.pop("choices", None)
+    default = kwargs.pop("default", None)
+    metavar = kwargs.pop("metavar", None)
+    help_text = kwargs.pop("help", None)
+    const = kwargs.pop("const", None)
+
+    option_names = list(args)
+    click_kw = {}
+
+    if metavar:
+        click_kw["metavar"] = metavar
+    if help_text:
+        click_kw["help"] = help_text
+
+    if action == "store_true":
+        click_kw["is_flag"] = True
+        click_kw["default"] = default if default is not None else False
+        return {
+            "kind": "option",
+            "param_decls": option_names,
+            "click_kw": click_kw,
+            "dest": dest,
+        }
+
+    if action == "store_false":
+        # When flag is present → False; absent → True (default)
+        click_kw["is_flag"] = True
+        click_kw["flag_value"] = False
+        click_kw["default"] = default if default is not None else True
+        return {
+            "kind": "option",
+            "param_decls": option_names,
+            "click_kw": click_kw,
+            "dest": dest,
+        }
+
+    if action == "store_const":
+        # store_const: flag sets dest to const value. We handle this specially:
+        # create a flag with a unique param name (derived from the flag letters),
+        # then in parse() post-processing we apply the const to dest.
+        # We use a flag that is True when present, then map True → const in parse().
+        click_kw["is_flag"] = True
+        click_kw["default"] = False
+        click_kw["hidden"] = True  # hide from help since it would duplicate
+        return {
+            "kind": "const_option",
+            "param_decls": option_names,
+            "click_kw": click_kw,
+            "dest": dest,
+            "const": const,
+        }
+
+    if action == "count":
+        click_kw["count"] = True
+        click_kw["default"] = default if default is not None else 0
+        return {
+            "kind": "option",
+            "param_decls": option_names,
+            "click_kw": click_kw,
+            "dest": dest,
+        }
+
+    if action == "append":
+        click_kw["multiple"] = True
+        # argparse returns None when no values given; click returns ()
+        # we'll convert in parse()
+        return {
+            "kind": "option",
+            "param_decls": option_names,
+            "click_kw": click_kw,
+            "dest": dest,
+        }
+
+    # Regular value option
+    if nargs and nargs != 1:
+        click_kw["nargs"] = nargs
+    if arg_type is not None:
+        if arg_type is surl:
+            click_kw["type"] = SURL
+        elif choices:
+            click_kw["type"] = click.Choice(choices)
+            choices = None
+        else:
+            click_kw["type"] = arg_type
+    elif choices:
+        click_kw["type"] = click.Choice(choices)
+        choices = None
+    if default is not None:
+        click_kw["default"] = default
+    else:
+        click_kw["default"] = None
+
+    if choices and "type" not in click_kw:
+        click_kw["type"] = click.Choice(choices)
+
+    return {
+        "kind": "option",
+        "param_decls": option_names,
+        "click_kw": click_kw,
+        "dest": dest,
+    }
+
+
+def _argspec_to_click_argument(args, kwargs, has_preceding_optional=False):
+    """Convert an argparse positional spec to an intermediate Click spec dict."""
+    kwargs = dict(kwargs)
+    arg_name = args[0]
+    nargs = kwargs.pop("nargs", None)
+    arg_type = kwargs.pop("type", None)
+    default = kwargs.pop("default", None)
+    kwargs.pop("help", None)
+    kwargs.pop("metavar", None)
+    kwargs.pop("dest", None)
+
+    click_kw = {}
+
+    if arg_type is not None:
+        if arg_type is surl:
+            click_kw["type"] = SURL
+        else:
+            click_kw["type"] = arg_type
+
+    if nargs == "+":
+        click_kw["nargs"] = -1
+        # When there is an optional positional before this one, Click will
+        # "steal" the last arg for the optional param, leaving this empty.
+        # In that case we make this non-required and let the command validate.
+        click_kw["required"] = not has_preceding_optional
+    elif nargs == "*":
+        click_kw["nargs"] = -1
+        click_kw["required"] = False
+    elif nargs == "?":
+        click_kw["required"] = False
+        click_kw["default"] = default
+    elif nargs is not None:
+        click_kw["nargs"] = nargs
+    elif has_preceding_optional:
+        # A required single-value argument after an optional positional: Click
+        # will assign the lone provided value to the earlier optional slot,
+        # leaving this argument empty. Make it non-required so parsing succeeds
+        # and the command body can validate or handle the situation.
+        click_kw["required"] = False
+        click_kw["default"] = default
+
+    return {
+        "kind": "argument",
+        "param_decls": [arg_name.upper()],
+        "click_kw": click_kw,
+        "orig_name": arg_name,
+        "dest": None,
+    }
+
+
+def _build_click_command(method, prog_name, help_text):
+    """
+    Build a Click Command from an execute_* method's @arg decorators.
+
+    Returns: (click_command, param_name_map, const_option_map)
+    - param_name_map: maps click param var name → desired self.params attr name
+    - const_option_map: maps click param var name → (dest, const) for store_const
+    """
+    arguments_specs = getattr(method, "arguments", [])
+    spec_list = _argparse_to_click_params(list(arguments_specs))
+
+    params = []
+    param_name_map = {}  # click_var → dest attr name
+    const_option_map = {}  # click_var → (dest, const)
+
+    # Common options (version, verbose, timeout, cert, etc.)
+    params.extend(_build_common_params())
+
+    # Track which dest names already have a primary param in this command
+    # (to handle store_const needing a unique hidden param name)
+    used_param_names = set()
+
+    for spec in spec_list:
+        kind = spec["kind"]
+        param_decls = spec["param_decls"]
+        click_kw = dict(spec["click_kw"])
+        dest = spec.get("dest")
+        orig_name = spec.get("orig_name")
+
+        if kind == "option":
+            # Derive Click's variable name from the longest --xxx-yyy flag
+            click_param = click.Option(param_decls, **click_kw)
+            click_var = click_param.name
+            if dest and click_var != dest:
+                param_name_map[click_var] = dest
+            params.append(click_param)
+            used_param_names.add(click_var)
+
+        elif kind == "const_option":
+            # Generate a unique param name for this hidden flag
+            # Use the flag letters (e.g. -S → _s_flag, -U → _u_flag)
+            flag_letters = "".join(
+                c for f in param_decls for c in f if c.isalnum()
+            ).lower()
+            unique_name = f"_const_{flag_letters}_flag"
+            # Add a hidden option with the unique name
+            # We add the unique_name as the last param decl so Click uses it
+            hidden_decls = param_decls + [f"--{unique_name.replace('_', '-')}"]
+            click_kw["hidden"] = True
+            click_param = click.Option(hidden_decls, **click_kw)
+            click_var = click_param.name  # will be unique_name
+            const_option_map[click_var] = (dest, spec["const"])
+            params.append(click_param)
+
+        else:  # argument
+            click_param = click.Argument(param_decls, **click_kw)
+            click_var = click_param.name
+            if orig_name and click_var.lower() != orig_name:
+                param_name_map[click_var.lower()] = orig_name
+            params.append(click_param)
+
+    cmd = click.Command(
+        name=prog_name,
+        params=params,
+        help=help_text,
+        callback=None,
+    )
+    return cmd, param_name_map, const_option_map
+
+
+def _build_common_params():
+    """Build the common Click params for all commands.
+
+    Returns a list of click.Option objects.
+
+    Note on naming: Click derives the Python variable name from the longest
+    --xxx-yyy flag (converting hyphens to underscores). For flags where the
+    desired attribute name differs from what Click would derive, we handle
+    renaming in parse() via the common_rename_map.
+    """
+    params = [
+        click.Option(
+            ["-V", "--version"],
+            is_flag=True,
+            is_eager=True,
+            expose_value=False,
+            callback=_version_callback,
+            help=f"Show the version and exit (gfal-cli {VERSION}).",
+        ),
+        click.Option(
+            ["-v", "--verbose"],
+            count=True,
+            default=0,
+            help="Enable verbose mode (-v warnings, -vv info, -vvv debug).",
+        ),
+        click.Option(
+            ["-t", "--timeout"],
+            type=int,
+            default=1800,
+            help="Maximum seconds for the operation (default: 1800).",
+        ),
+        click.Option(
+            ["-E", "--cert"],
+            type=str,
+            default=None,
+            help="User certificate (X.509 PEM or proxy).",
+        ),
+        click.Option(
+            ["--key"],
+            type=str,
+            default=None,
+            help="User private key (defaults to --cert if omitted).",
+        ),
+        click.Option(
+            ["--log-file"],
+            type=str,
+            default=None,
+            help="Write log output to this file instead of stderr.",
+        ),
+        # --no-verify: Click name will be 'no_verify'; we rename to 'ssl_verify' in parse()
+        click.Option(
+            ["--no-verify"],
+            is_flag=True,
+            flag_value=False,
+            default=True,
+            help="Skip SSL certificate verification (insecure; for self-signed certs).",
+        ),
+        click.Option(
+            ["-D", "--definition"],
+            type=str,
+            multiple=True,
+            metavar="DEFINITION",
+            help="Override a gfal2 parameter (accepted for compatibility; ignored).",
+        ),
+        # -C/--client-info: Click name is 'client_info' (correct already)
+        click.Option(
+            ["-C", "--client-info"],
+            type=str,
+            default=None,
+            metavar="CLIENT_INFO",
+            help="Provide custom client-side information (accepted for compatibility; ignored).",
+        ),
+        # -4/--ipv4: Click name is 'ipv4'; we rename to 'ipv4_only' in parse()
+        click.Option(
+            ["-4", "--ipv4"],
+            is_flag=True,
+            default=False,
+            help="Force IPv4 addresses only.",
+        ),
+        # -6/--ipv6: Click name is 'ipv6'; we rename to 'ipv6_only' in parse()
+        click.Option(
+            ["-6", "--ipv6"],
+            is_flag=True,
+            default=False,
+            help="Force IPv6 addresses only.",
+        ),
+    ]
+    return params
+
+
+# Renames applied to common options after parsing
+# (Click's derived name → desired self.params attribute name)
+_COMMON_RENAME_MAP = {
+    "no_verify": "ssl_verify",
+    "ipv4": "ipv4_only",
+    "ipv6": "ipv6_only",
+    "client_info": "client_info",  # already correct, kept for explicitness
+    "log_file": "log_file",  # already correct
+}
+
+
+def _version_callback(ctx, param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(f"gfal-cli {VERSION}")
+    ctx.exit()
+
+
+# ---------------------------------------------------------------------------
 # CommandBase
 # ---------------------------------------------------------------------------
 
@@ -106,6 +512,8 @@ class CommandBase:
         self.progress_bar = None
         self.console = get_console()
         self.err_console = get_console(stderr=True)
+        self.params = None
+        self.prog = None
 
     @contextlib.contextmanager
     def spinner(self, message):
@@ -144,109 +552,77 @@ class CommandBase:
         root.addHandler(handler)
 
     # ------------------------------------------------------------------
-    # Argument parsing
+    # Argument parsing (Click-based)
     # ------------------------------------------------------------------
 
     def parse(self, func, argv):
-        command = func.__name__[len("execute_") :]
+        """Parse argv using Click, populating self.params as a SimpleNamespace."""
+        prog = Path(argv[0]).name
+        self.prog = prog
+
         doc = (func.__doc__ or "").strip().split("\n")[0]
-        description = f"gfal-cli {command.upper()} command. {doc}"
-        if description[-1] != ".":
-            description += "."
+        help_text = f"{doc}"
 
-        self.parser = argparse.ArgumentParser(
-            prog=Path(argv[0]).name,
-            description=description,
-        )
-        self.parser.add_argument(
-            "-V",
-            "--version",
-            action="version",
-            version=f"gfal-cli {VERSION}",
-        )
-        self.parser.add_argument(
-            "-v",
-            "--verbose",
-            action="count",
-            default=0,
-            help="enable verbose mode (-v warnings, -vv info, -vvv debug)",
-        )
-        self.parser.add_argument(
-            "-t",
-            "--timeout",
-            type=int,
-            default=1800,
-            help="maximum seconds for the operation (default: 1800)",
-        )
-        self.parser.add_argument(
-            "-E",
-            "--cert",
-            type=str,
-            default=None,
-            help="user certificate (X.509 PEM or proxy)",
-        )
-        self.parser.add_argument(
-            "--key",
-            type=str,
-            default=None,
-            help="user private key (defaults to --cert if omitted)",
-        )
-        self.parser.add_argument(
-            "--log-file",
-            type=str,
-            default=None,
-            help="write log output to this file instead of stderr",
-        )
-        self.parser.add_argument(
-            "--no-verify",
-            dest="ssl_verify",
-            action="store_false",
-            default=True,
-            help="skip SSL certificate verification (insecure; for self-signed certs)",
-        )
-        # Flags accepted for backwards compatibility with gfal2-util but not used
-        # in this fsspec-based implementation.
-        self.parser.add_argument(
-            "-D",
-            "--definition",
-            type=str,
-            action="append",
-            default=None,
-            metavar="DEFINITION",
-            dest="definition",
-            help="override a gfal2 parameter (accepted for compatibility; ignored)",
-        )
-        self.parser.add_argument(
-            "-C",
-            "--client-info",
-            type=str,
-            default=None,
-            metavar="CLIENT_INFO",
-            dest="client_info",
-            help="provide custom client-side information (accepted for compatibility; ignored)",
-        )
-        self.parser.add_argument(
-            "-4",
-            "--ipv4",
-            action="store_true",
-            default=False,
-            dest="ipv4_only",
-            help="force IPv4 addresses only",
-        )
-        self.parser.add_argument(
-            "-6",
-            "--ipv6",
-            action="store_true",
-            default=False,
-            dest="ipv6_only",
-            help="force IPv6 addresses only",
+        # Build the Click command from @arg decorators
+        cmd, param_name_map, const_option_map = _build_click_command(
+            func, prog, help_text
         )
 
-        for args, kwargs in getattr(func, "arguments", []):
-            self.parser.add_argument(*args, **kwargs)
+        # Parse argv[1:] with Click; let SystemExit (from --help/--version) propagate.
+        # Convert Click user errors to argparse-style messages and exit.
+        try:
+            ctx = cmd.make_context(prog, list(argv[1:]))
+        except click.exceptions.Exit as e:
+            sys.exit(int(e.exit_code))
+        except click.exceptions.UsageError as e:
+            sys.stderr.write(f"{prog}: {e.format_message()}\n")
+            sys.exit(2)
 
-        self.params = self.parser.parse_args(argv[1:])
-        self.prog = Path(argv[0]).name
+        # Build self.params as SimpleNamespace from the Click params
+        params_dict = dict(ctx.params)
+
+        # Apply store_const overrides (e.g. -S → sort="size", -U → sort="none")
+        # These const flags set the dest to const when the flag is present.
+        # Last-set wins: process in order they appear in param list.
+        for click_var, (dest, const_val) in const_option_map.items():
+            flag_val = params_dict.pop(click_var, False)
+            if flag_val and dest:
+                params_dict[dest] = const_val
+
+        # Apply common option renames (e.g. no_verify → ssl_verify, ipv4 → ipv4_only)
+        for click_name, dest_name in _COMMON_RENAME_MAP.items():
+            if click_name in params_dict and click_name != dest_name:
+                params_dict[dest_name] = params_dict.pop(click_name)
+
+        # Apply command-specific param_name_map remapping
+        for click_name, dest_name in param_name_map.items():
+            if click_name in params_dict:
+                val = params_dict.pop(click_name)
+                params_dict[dest_name] = val
+
+        # Convert nargs=-1 tuples to lists for compatibility
+        # (argparse returns lists; click returns tuples)
+        for k in list(params_dict.keys()):
+            v = params_dict[k]
+            if isinstance(v, tuple):
+                params_dict[k] = list(v)
+
+        # Fix the src/dst interaction for gfal-cp when --from-file is used.
+        # Click assigns the single positional arg to the optional 'src',
+        # leaving 'dst' empty. When 'from_file' is set, we need to move
+        # 'src' → 'dst[0]' and set 'src' to None.
+        if (
+            "from_file" in params_dict
+            and params_dict.get("from_file")
+            and "src" in params_dict
+            and params_dict.get("src") is not None
+            and "dst" in params_dict
+            and not params_dict.get("dst")
+        ):
+            params_dict["dst"] = [params_dict["src"]]
+            params_dict["src"] = None
+
+        self.params = SimpleNamespace(**params_dict)
 
     # ------------------------------------------------------------------
     # Execution

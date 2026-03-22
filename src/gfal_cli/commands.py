@@ -233,7 +233,11 @@ class GfalCommands(base.CommandBase):
         try:
             mode = int(self.params.mode, base=8)
         except ValueError:
-            self.parser.error("Mode must be an octal number (e.g. 0755)")
+            msg = "mode must be an octal number (e.g. 0755)"
+            if base.is_gfal2_compat():
+                sys.stderr.write(f"{self.prog}: {msg}\n")
+            else:
+                self.err_console.print(f"[bold red]{self.prog}[/]: {msg}")
             return 1
 
         client = GfalClient(

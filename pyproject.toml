@@ -20,6 +20,7 @@ dependencies = [
     "truststore; python_version >= '3.10'",
     "textual>=0.50.0",
     "rich>=13.0.0",
+    "rich-click>=1.7.0",
 ]
 
 [project.scripts]
