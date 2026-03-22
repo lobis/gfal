@@ -352,8 +352,7 @@ class GfalTui(App):
     ) -> None:
         """Update progress variables from worker thread."""
         self.progress_current = current
-        if total > 0:
-            self.progress_total = total
+        self.progress_total = total if total > 0 else 0
 
         # Explicitly update the progress modal if visible
         with suppress(Exception):
@@ -840,7 +839,7 @@ class GfalTui(App):
         """
         self.copy_in_progress = True
         self.progress_current = 0
-        self.progress_total = 100  # Reset to default
+        self.progress_total = 0  # 0 means unknown size
 
         try:
             from pathlib import Path
@@ -1022,7 +1021,7 @@ class TransferProgressModal(ModalScreen):
             TransferSpeedColumn(),
             TimeRemainingColumn(),
         )
-        self.task_id = self.rich_progress.add_task("Copying...", total=100)
+        self.task_id = self.rich_progress.add_task("Copying...", total=None)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-content"):
@@ -1033,8 +1032,14 @@ class TransferProgressModal(ModalScreen):
             with Horizontal(id="modal-btn-row"):
                 yield Button("Close", id="close-btn")
 
+    def on_mount(self) -> None:
+        """Sync initial progress from app state to handle race conditions."""
+        self.update_progress(self.app.progress_current, self.app.progress_total)
+        self.query_one("#close-btn").focus()
+
     def update_progress(self, current: int, total: int):
-        self.rich_progress.update(self.task_id, completed=current, total=total or 100)
+        rich_total = total if total > 0 else None
+        self.rich_progress.update(self.task_id, completed=current, total=rich_total)
         with suppress(Exception):
             self.query_one("#progress-display", Static).update(self.rich_progress)
 

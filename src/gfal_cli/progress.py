@@ -32,24 +32,34 @@ class TuiProgress(Callback):
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
+        self.size = 0
+        self.value = 0
 
     def set_size(self, size):
-        self.size = size
-        self.callback(self.value, self.size or 0)
+        self.size = size or 0
+        self._trigger()
+
+    def update(self, n=1):
+        super().update(n)
+        self._trigger()
 
     def absolute_update(self, value):
-        self.value = value
-        self.callback(self.value, self.size or 0)
+        super().absolute_update(value)
+        self._trigger()
 
     def relative_update(self, inc=1):
-        self.value += inc
-        self.callback(self.value, self.size or 0)
+        self.update(inc)
+
+    def _trigger(self):
+        if self.callback:
+            self.callback(self.value, self.size)
 
     def branch_coro(self, coro):
         return coro
 
     def stop(self, success=True):
-        self.callback(self.value, self.size or 0, finished=True, success=success)
+        if self.callback:
+            self.callback(self.value, self.size, finished=True, success=success)
 
     @property
     def total(self):
