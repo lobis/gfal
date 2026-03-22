@@ -14,6 +14,8 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlparse
 
+from rich.console import Console
+
 try:
     VERSION = _pkg_version("gfal-cli")
 except PackageNotFoundError:
@@ -66,6 +68,32 @@ def surl(value):
     return value
 
 
+def is_gfal2_compat():
+    """
+    Check if we should be in strict gfal2 compatibility mode.
+    This disables modern output/colors and reverts to legacy formatting.
+    """
+    return os.getenv("GFAL_CLI_GFAL2") in ("1", "true", "TRUE", "yes")
+
+
+def get_console(stderr=False):
+    """
+    Returns a rich Console, but with formatting/color disabled
+    if the environment requests gfal2 compatibility.
+    """
+    if is_gfal2_compat():
+        # Disable markup, emoji, and colors
+        return Console(
+            force_terminal=False,
+            color_system=None,
+            highlight=False,
+            markup=False,
+            emoji=False,
+            stderr=stderr,
+        )
+    return Console(stderr=stderr)
+
+
 # ---------------------------------------------------------------------------
 # CommandBase
 # ---------------------------------------------------------------------------
@@ -75,6 +103,8 @@ class CommandBase:
     def __init__(self):
         self.return_code = -1
         self.progress_bar = None
+        self.console = get_console()
+        self.err_console = get_console(stderr=True)
 
     @staticmethod
     def get_subclasses():
@@ -345,6 +375,14 @@ class CommandBase:
             return f"({type(e).__name__})"
         return msg
 
+    def _print_error(self, e):
+        """Prints a formatted error message to stderr, respecting compatibility mode."""
+        msg = self._format_error(e)
+        if is_gfal2_compat():
+            sys.stderr.write(f"{self.prog}: {msg}\n")
+        else:
+            self.err_console.print(f"[bold red]{self.prog}[/]: {msg}")
+
     def _executor(self, func):
         """Runs func(self) inside the worker thread, captures exceptions."""
         try:
@@ -357,7 +395,7 @@ class CommandBase:
                 self.return_code = 0
                 return
             ecode = getattr(e, "errno", None)
-            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
+            self._print_error(e)
             if ecode and 0 < ecode <= 255:
                 self.return_code = ecode
             else:

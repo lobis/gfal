@@ -21,6 +21,7 @@ def _subprocess_env():
     fires and the env var is never set.  We set it here instead.
     """
     env = {**os.environ, "PYTHONUTF8": "1"}
+    env.setdefault("GFAL_CLI_GFAL2", "1")
 
     if sys.platform == "darwin":
         try:

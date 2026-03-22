@@ -16,8 +16,7 @@ BuildRequires: python3-devel
 BuildRequires: python3-pip
 BuildRequires: python3-wheel
 
-# Still require the OS to provide the heavy C++ XRootD bindings
-Requires: python3-xrootd
+Requires: python3-xrootd python3-rich
 
 # Stop RPM from auto-generating strict version requirements
 AutoReq: no
@@ -42,7 +41,7 @@ mkdir -p %{buildroot}%{_bindir}
 %{__python3} -m venv --system-site-packages %{buildroot}%{install_dir}
 
 # 3. Use the venv's isolated pip to install the app and all bundled dependencies
-%{buildroot}%{install_dir}/bin/python -m pip install --no-cache-dir fsspec-xrootd fsspec aiohttp requests %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
+%{buildroot}%{install_dir}/bin/python -m pip install --no-cache-dir fsspec-xrootd fsspec aiohttp requests rich %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
 
 # 4. Clean up hardcoded build paths
 # Pip hardcodes the temporary GitHub Actions build path into the script shebangs.

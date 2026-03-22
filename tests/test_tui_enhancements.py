@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from gfal_cli.tui import (
@@ -23,8 +25,8 @@ async def test_tui_positional_args():
         assert left_tree.url == src
 
         assert isinstance(right_tree, HighlightableDirectoryTree)
-        # DirectoryTree path is a Path object or similar
-        assert str(right_tree.path).rstrip("/") == dst.rstrip("/")
+        # Use Path for cross-platform comparison of path separators
+        assert Path(right_tree.path) == Path(dst)
 
 
 @pytest.mark.asyncio
