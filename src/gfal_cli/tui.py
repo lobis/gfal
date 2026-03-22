@@ -83,10 +83,60 @@ class HighlightableRemoteDirectoryTree(Tree):
             self.run_worker(lambda: self.load_directory(node), thread=True)
 
     async def reload(self) -> None:
-        """Reload the tree by clearing and re-expanding the root."""
-        if self.root:
-            self.root.remove_children()
-            self.run_worker(lambda: self.load_directory(self.root), thread=True)
+        """Reload expanded nodes while preserving tree state (expanded dirs, cursor)."""
+        if not self.root:
+            return
+
+        # 1. Record expanded node URLs and cursor position
+        expanded_urls: set[str] = set()
+        cursor_url: str | None = None
+
+        def walk(node):
+            if node.allow_expand and node.is_expanded and node.data:
+                expanded_urls.add(node.data)
+            for child in node.children:
+                walk(child)
+
+        walk(self.root)
+
+        if self.cursor_line > -1:
+            cursor_node = self.get_node_at_line(self.cursor_line)
+            if cursor_node is not None and cursor_node.data:
+                cursor_url = cursor_node.data
+
+        # 2. Reload only expanded directories (re-fetch children)
+        def reload_expanded(node):
+            if not node.data or not node.allow_expand or not node.is_expanded:
+                return
+            # Remove existing children and re-load
+            node.remove_children()
+            self.load_directory(node)
+            # After loading, re-expand children that were previously expanded
+            for child in node.children:
+                if child.data in expanded_urls and child.allow_expand:
+                    child.expand()
+                    reload_expanded(child)
+
+        self.run_worker(lambda: reload_expanded(self.root), thread=True)
+
+        # 3. Restore cursor (best-effort, done after a short delay)
+        if cursor_url:
+
+            def restore_cursor():
+                def find_node(node):
+                    if node.data == cursor_url:
+                        return node
+                    for child in node.children:
+                        found = find_node(child)
+                        if found:
+                            return found
+                    return None
+
+                target = find_node(self.root)
+                if target is not None:
+                    self.select_node(target)
+
+            self.set_timer(0.5, restore_cursor)
 
     def load_directory(self, node):
         path = node.data
@@ -231,7 +281,7 @@ class GfalTui(App):
     }
 
     /* Modal styles */
-    MessageModal, ChecksumResultModal, UrlInputModal, PasteModal, TransferProgressModal {
+    MessageModal, ChecksumResultModal, UrlInputModal, PasteModal, TransferSummaryModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.5);
     }
@@ -271,6 +321,13 @@ class GfalTui(App):
 
     #bytes-label {
         height: auto;
+        margin-top: 1;
+    }
+
+    #transfer-list {
+        height: auto;
+        max-height: 20;
+        overflow-y: auto;
         margin-top: 1;
     }
     """
@@ -326,7 +383,9 @@ class GfalTui(App):
                 tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
-        log_window = RichLog(id="log-window", auto_scroll=True, max_lines=1000)
+        log_window = RichLog(
+            id="log-window", auto_scroll=True, max_lines=1000, wrap=True
+        )
         log_window.can_focus = False
         yield log_window
         yield Footer()
@@ -430,12 +489,13 @@ class GfalTui(App):
             custom_name = confirm_data.get("name")
             self.log_activity(f"Pasting {len(self.yanked_urls)} items to {dest_dir}")
 
+            # Build transfer list: (src, dst, expected_size)
+            transfers: list[tuple[str, str, int]] = []
             for src_url in self.yanked_urls:
                 name = Path(urlparse(src_url).path).name
                 if not name:
                     name = Path(src_url).name
 
-                # If single file and custom name provided, use it
                 actual_name = (
                     custom_name
                     if (custom_name and len(self.yanked_urls) == 1)
@@ -447,10 +507,30 @@ class GfalTui(App):
                 else:
                     dst_url = str(Path(dest_dir) / actual_name)
 
+                # Try to get source size for progress tracking
+                expected = 0
+                with suppress(Exception):
+                    if "://" in src_url:
+                        fso, fpath = url_to_fs(src_url, ssl_verify=self.ssl_verify)
+                        info = fso.info(fpath)
+                        expected = info.get("size", 0) or 0
+                    else:
+                        p = Path(src_url)
+                        if p.is_file():
+                            expected = p.stat().st_size
+
+                transfers.append((src_url, dst_url, expected))
+
+            # Push a single summary modal for all transfers
+            modal = TransferSummaryModal(transfers)
+            self.push_screen(modal)
+
+            # Start a worker for each transfer
+            for src_url, dst_url, _ in transfers:
                 self.run_worker(
-                    lambda s=src_url, d=dst_url: self._do_copy(s, d),
+                    lambda s=src_url, d=dst_url, m=modal: self._do_copy(s, d, m),
                     thread=True,
-                    name=f"paste_worker_{name}",
+                    name=f"paste_worker_{Path(dst_url).name}",
                 )
 
             # Clear yanked URLs after triggering paste and update trees
@@ -828,14 +908,19 @@ class GfalTui(App):
 
         self.log_activity("Panes swapped: left and right trees exchanged")
 
-    def _do_copy(self, src: str, dest: str, to_remote: Optional[bool] = None) -> None:
+    def _do_copy(
+        self,
+        src: str,
+        dest: str,
+        modal: Optional[TransferSummaryModal] = None,
+        to_remote: Optional[bool] = None,
+    ) -> None:
         """Perform the copy operation in a background thread.
 
         If to_remote is True/False, dest is assumed to be a directory base.
         If to_remote is None, dest is assumed to be the full destination path.
+        If modal is provided, it is a shared TransferSummaryModal to update.
         """
-        from gfal_cli.progress import TuiProgress
-
         final_dest = dest
         if to_remote is not None:
             # Traditional Copy (F5/action_copy): dest is a directory, append src name
@@ -858,49 +943,38 @@ class GfalTui(App):
                 to_remote = False  # Local to Local
 
         self.log_activity(f"Starting copy: {src} -> {final_dest}")
-
-        # Create the modal before starting the copy so the progress callback
-        # can close over it directly. Each copy owns its own modal — no shared state.
-        modal = TransferProgressModal(src, final_dest)
-        self.call_from_thread(self.push_screen, modal)
-
-        def progress_callback(current, total, finished=False, success=True):
-            self.call_from_thread(modal.update_progress, current, total)
-            if finished and not success:
-                self.log_activity("Transfer finished with errors", level="error")
-
-        prog = TuiProgress(progress_callback)
+        if modal:
+            self.call_from_thread(modal.mark_copying, final_dest)
 
         try:
             if to_remote:
                 fs, fs_path = url_to_fs(final_dest, ssl_verify=self.ssl_verify)
-                fs.put(src, fs_path, recursive=True, callback=prog)
+                fs.put(src, fs_path, recursive=True)
             else:
                 if "://" in src:
                     # Remote to Local
                     fs, fs_path = url_to_fs(src, ssl_verify=self.ssl_verify)
-                    fs.get(fs_path, final_dest, recursive=True, callback=prog)
+                    fs.get(fs_path, final_dest, recursive=True)
                 else:
                     # Local to Local
                     import shutil
 
-                    prog.set_size(
-                        Path(src).stat().st_size if Path(src).is_file() else 0
-                    )
                     if Path(src).is_dir():
                         shutil.copytree(src, final_dest, dirs_exist_ok=True)
                     else:
                         shutil.copy2(src, final_dest)
 
-            prog.stop(success=True)
             self.log_activity(f"Successfully copied to {final_dest}", level="success")
-            self.call_from_thread(modal.mark_done, success=True)
+            if modal:
+                self.call_from_thread(modal.mark_transfer, final_dest, success=True)
             self.call_from_thread(lambda: self.set_timer(1.0, self.refresh_trees))
         except Exception as e:
-            prog.stop(success=False)
             error_msg = CommandBase._format_error(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
-            self.call_from_thread(modal.mark_done, success=False, error=error_msg)
+            if modal:
+                self.call_from_thread(
+                    modal.mark_transfer, final_dest, success=False, error=error_msg
+                )
 
     def on_unmount(self) -> None:
         """Cancel all workers on exit."""
@@ -971,89 +1045,170 @@ class ChecksumResultModal(ModalScreen):
         self.dismiss()
 
 
-class TransferProgressModal(ModalScreen):
-    """A centered modal screen for displaying transfer progress."""
+class TransferSummaryModal(ModalScreen):
+    """A single summary modal that tracks all ongoing transfers.
 
-    def __init__(self, src: str, dst: str):
+    Progress is tracked by periodically stat-polling each destination file
+    to read its current size, which works reliably across all backends.
+    """
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    POLL_INTERVAL = 0.5  # seconds between stat polls
+
+    def __init__(self, transfers: list[tuple[str, str, int]]):
+        """
+        Parameters
+        ----------
+        transfers : list of (src_uri, dst_uri, expected_size)
+            expected_size may be 0 if unknown.
+        """
         super().__init__()
-        self.src = src
-        self.dst = dst
-        # Store latest values so on_mount can apply them if updates
-        # arrive before the widget tree is ready.
-        self._current: int = 0
-        self._total: int = 0  # 0 = unknown size
-        self._done: bool = False
+        # Each transfer: {src, dst, expected, status, current, error}
+        self._transfers: list[dict] = []
+        for src, dst, expected in transfers:
+            self._transfers.append(
+                {
+                    "src": src,
+                    "dst": dst,
+                    "expected": expected,
+                    "status": "pending",  # pending | copying | done | failed
+                    "current": 0,
+                    "error": "",
+                }
+            )
+        self._poll_timer = None
+
+    @staticmethod
+    def _to_uri(path: str) -> str:
+        if "://" in path:
+            return path
+        return Path(path).as_uri()
 
     def compose(self) -> ComposeResult:
-        src_name = Path(self.src).name or self.src
-        dst_name = Path(self.dst).name or self.dst
+        n = len(self._transfers)
         with Vertical(id="modal-content"):
-            yield Static("[bold]Transfer Progress[/bold]", classes="modal-title")
-            yield Label(f"[dim]From:[/dim] {src_name}", classes="modal-body")
-            yield Label(f"[dim]  To:[/dim] {dst_name}", classes="modal-body")
-            yield ProgressBar(
-                total=None, show_percentage=False, show_eta=False, id="progress-bar"
+            yield Static(
+                f"[bold]Transfer Progress — {n} file{'s' if n != 1 else ''}[/bold]",
+                classes="modal-title",
             )
+            yield ProgressBar(total=n, show_percentage=True, id="progress-bar")
             yield Label("Starting…", id="bytes-label")
+            yield Static("", id="transfer-list")
             with Horizontal(id="modal-btn-row"):
                 yield Button("Close", id="close-btn")
 
     def on_mount(self) -> None:
-        self._apply(self._current, self._total)
+        self._refresh_display()
         self.query_one("#close-btn").focus()
+        self._poll_timer = self.set_interval(self.POLL_INTERVAL, self._poll_stat)
 
-    def update_progress(self, current: int, total: int) -> None:
-        """Called on the main thread for every progress tick."""
-        self._current = current
-        self._total = total if total > 0 else 0
-        self._apply(current, self._total)
+    def _poll_stat(self) -> None:
+        """Stat each destination to track bytes written."""
+        for t in self._transfers:
+            if t["status"] not in ("copying", "pending"):
+                continue
+            dst = t["dst"]
+            try:
+                if "://" in dst:
+                    fso, path = url_to_fs(dst)
+                    info = fso.info(path)
+                    t["current"] = info.get("size", 0) or 0
+                else:
+                    p = Path(dst)
+                    if p.is_file():
+                        t["current"] = p.stat().st_size
+            except Exception:
+                pass  # file may not exist yet
+        self._refresh_display()
 
-    def _apply(self, current: int, total: int) -> None:
-        """Push current state into widgets; silently skips if not yet mounted."""
+    def mark_transfer(self, dst: str, *, success: bool, error: str = "") -> None:
+        """Called from the main thread when a single transfer finishes."""
+        for t in self._transfers:
+            if t["dst"] == dst:
+                t["status"] = "done" if success else "failed"
+                t["error"] = error
+                if success and t["expected"] > 0:
+                    t["current"] = t["expected"]
+                break
+        self._refresh_display()
+
+        # Auto-dismiss when all transfers are finished
+        if all(t["status"] in ("done", "failed") for t in self._transfers):
+            if self._poll_timer:
+                self._poll_timer.stop()
+            self.set_timer(2.0, self.dismiss)
+
+    def mark_copying(self, dst: str) -> None:
+        """Mark a transfer as actively copying."""
+        for t in self._transfers:
+            if t["dst"] == dst:
+                t["status"] = "copying"
+                break
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        """Update all widgets from current state."""
+        done_count = sum(1 for t in self._transfers if t["status"] == "done")
+        failed_count = sum(1 for t in self._transfers if t["status"] == "failed")
+        total_count = len(self._transfers)
+        finished_count = done_count + failed_count
+
+        # Progress bar: files completed
         with suppress(Exception):
             pb = self.query_one("#progress-bar", ProgressBar)
-            if total > 0:
-                pb.update(total=total, progress=current)
-            # When total is unknown, leave the bar in indeterminate mode (spinner).
-        with suppress(Exception):
-            label = self.query_one("#bytes-label", Label)
-            if total > 0:
-                pct = current * 100 // total
-                label.update(
-                    f"{human_readable_size(current)} / {human_readable_size(total)}  ({pct}%)"
-                )
-            elif current > 0:
-                label.update(f"{human_readable_size(current)} transferred")
+            pb.update(total=total_count, progress=finished_count)
 
-    def mark_done(self, *, success: bool, error: str = "") -> None:
-        """Called on the main thread when the transfer finishes."""
-        self._done = True
-        with suppress(Exception):
-            pb = self.query_one("#progress-bar", ProgressBar)
-            if success:
-                if self._total > 0:
-                    pb.update(progress=self._total)
-            else:
-                # Show a full-red bar by jumping to 0/1 with a failed style
-                pb.update(total=1, progress=0)
+        # Summary label
         with suppress(Exception):
             label = self.query_one("#bytes-label", Label)
-            if success:
+            total_bytes = sum(t["current"] for t in self._transfers)
+            expected_bytes = sum(t["expected"] for t in self._transfers)
+
+            if finished_count == total_count:
+                parts = []
+                if done_count:
+                    parts.append(f"[green]{done_count} succeeded[/green]")
+                if failed_count:
+                    parts.append(f"[red]{failed_count} failed[/red]")
                 size_str = (
-                    human_readable_size(self._total)
-                    if self._total > 0
-                    else human_readable_size(self._current)
-                    if self._current > 0
-                    else ""
+                    f" ({human_readable_size(total_bytes)})" if total_bytes else ""
                 )
-                label.update(f"[green]Done[/green]  {size_str}")
+                label.update(f"{', '.join(parts)}{size_str}")
             else:
-                label.update(f"[red]Failed:[/red] {error}")
-        # Auto-dismiss after a short pause so the user sees the result
-        self.set_timer(1.5, self.dismiss)
+                status = f"{finished_count}/{total_count} complete"
+                if expected_bytes > 0:
+                    pct = total_bytes * 100 // expected_bytes
+                    status += f"  {human_readable_size(total_bytes)} / {human_readable_size(expected_bytes)} ({pct}%)"
+                elif total_bytes > 0:
+                    status += f"  {human_readable_size(total_bytes)} transferred"
+                label.update(status)
+
+        # Per-file list
+        with suppress(Exception):
+            list_widget = self.query_one("#transfer-list", Static)
+            lines = []
+            for t in self._transfers:
+                name = Path(urlparse(t["dst"]).path).name or Path(t["dst"]).name
+                if t["status"] == "done":
+                    icon = "[green]✓[/green]"
+                elif t["status"] == "failed":
+                    icon = f"[red]✗[/red] {t['error']}"
+                elif t["status"] == "copying":
+                    if t["expected"] > 0 and t["current"] > 0:
+                        pct = t["current"] * 100 // t["expected"]
+                        icon = f"[yellow]↓[/yellow] {pct}%"
+                    else:
+                        icon = "[yellow]↓[/yellow]"
+                else:
+                    icon = "[dim]…[/dim]"
+                lines.append(f"  {icon} {name}")
+            list_widget.update("\n".join(lines))
 
     @on(Button.Pressed, "#close-btn")
     def on_close(self) -> None:
+        if self._poll_timer:
+            self._poll_timer.stop()
         self.dismiss()
 
 

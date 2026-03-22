@@ -45,23 +45,17 @@ async def test_tui_remote_command_logging_includes_base_url():
             await pilot.press("s")
             await pilot.pause(0.1)
 
-            # Check the log for the command
+            # Check the log for the command (join all strips — wrapping may
+            # split a single log entry across multiple render lines)
             log = app.query_one("#log-window")
-            # We expect gfal-stat root://eospublic.cern.ch//eos/opendata/cms/file.txt
-            found = False
-            for strip in log.lines:
-                # Combine all segments into a single string for easy checking
-                line_text = "".join(segment.text for segment in strip._segments)
-                if (
-                    "gfal-stat root://eospublic.cern.ch" in line_text
-                    and "file.txt" in line_text
-                ):
-                    found = True
-                    break
-
-            assert found, (
-                f"Command with base URL not found in log. Log lines: {[(''.join(s.text for s in strip._segments)) for strip in log.lines]}"
+            all_log_text = "".join(
+                "".join(s.text for s in strip._segments) for strip in log.lines
             )
+            # We expect gfal-stat root://eospublic.cern.ch//eos/opendata/cms/file.txt
+            assert (
+                "gfal-stat root://eospublic.cern.ch" in all_log_text
+                and "file.txt" in all_log_text
+            ), f"Command with base URL not found in log. Log: {all_log_text}"
 
 
 @pytest.mark.asyncio

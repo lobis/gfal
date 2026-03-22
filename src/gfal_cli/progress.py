@@ -29,26 +29,51 @@ def Progress(label, tui_callback=None):
 
 
 class TuiProgress(Callback):
-    def __init__(self, callback):
+    """Callback that bridges fsspec's callback API to the TUI progress modal.
+
+    fsspec's ``get()``/``put()`` use the callback at **two levels**:
+
+    1. **Parent** (this instance): ``set_size(num_files)`` and
+       ``relative_update(1)`` per file — tracks *file count*.
+    2. **Child** (returned by ``branched()``): ``set_size(byte_total)`` and
+       ``relative_update(chunk_bytes)`` — tracks *bytes* for each file.
+
+    We only care about byte-level progress, so:
+    - ``branched()`` returns a child ``TuiProgress`` that shares the same
+      user-facing callback.
+    - The parent silently ignores the file-count updates.
+    """
+
+    def __init__(self, callback, *, _is_child=False):
         super().__init__()
         self.callback = callback
         self.size = 0
         self.value = 0
+        self._is_child = _is_child
+
+    # -- fsspec branching: create a child for per-file byte progress ----------
+
+    def branched(self, path_1, path_2, **kwargs):
+        """Return a child callback that tracks byte-level progress."""
+        return TuiProgress(self.callback, _is_child=True)
+
+    # -- progress updates -----------------------------------------------------
 
     def set_size(self, size):
+        if not self._is_child:
+            return  # ignore file-count size from get()/put()
         self.size = size or 0
         self._trigger()
 
-    def update(self, n=1):
-        super().update(n)
+    def relative_update(self, inc=1):
+        if not self._is_child:
+            return  # ignore file-count ticks from get()/put()
+        self.value += inc
         self._trigger()
 
     def absolute_update(self, value):
-        super().absolute_update(value)
+        self.value = value
         self._trigger()
-
-    def relative_update(self, inc=1):
-        self.update(inc)
 
     def _trigger(self):
         if self.callback:
