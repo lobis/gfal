@@ -11,7 +11,7 @@ async def test_tui_yank_toggle():
     app = GfalTui()
     async with app.run_test() as pilot:
         # Wait for DirectoryTree to load the current directory
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
 
         for _ in range(50):
             if tree.root.children:

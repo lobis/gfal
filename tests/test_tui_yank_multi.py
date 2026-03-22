@@ -10,7 +10,7 @@ async def test_tui_yank_multi():
     """Test that multiple items can be yanked and un-yanked independently."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
 
         # Wait for tree to load
         for _ in range(50):

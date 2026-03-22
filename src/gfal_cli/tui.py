@@ -67,6 +67,9 @@ class HighlightableRemoteDirectoryTree(Tree):
     def on_mount(self):
         # Use call_after_refresh to ensure the tree is ready
         self.call_after_refresh(self.root.expand)
+        if self.root:
+            prefix = self.id.split("-")[0].capitalize() if self.id else "Tree"
+            self.root.label = f"{prefix}: {self.url}"
 
     def _on_tree_node_expanded(self, event: Tree.NodeExpanded):
         node = event.node
@@ -143,7 +146,8 @@ class HighlightableDirectoryTree(DirectoryTree):
     def on_mount(self) -> None:
         # Update root label to be more descriptive
         if self.root:
-            self.root.label = f"Local: {self.path}"
+            prefix = self.id.split("-")[0].capitalize() if self.id else "Tree"
+            self.root.label = f"{prefix}: {self.path}"
 
 
 class GfalTui(App):
@@ -168,7 +172,12 @@ class GfalTui(App):
         if log_file:
             self.log_file = log_file
         self.initial_src = src or "root://eospublic.cern.ch//eos/opendata/cms/"
+        if "://" not in self.initial_src:
+            self.initial_src = str(Path(self.initial_src).absolute())
+
         self.initial_dst = dst or "./"
+        if "://" not in self.initial_dst:
+            self.initial_dst = str(Path(self.initial_dst).absolute())
         self.last_checksum_algo = "ADLER32"
         self._thread_id = threading.get_ident()
 
@@ -272,31 +281,29 @@ class GfalTui(App):
         yield Header()
         with Horizontal():
             with Vertical(classes="pane", id="left-pane"):
-                yield Label("Source", classes="pane-header")
+                yield Label("Left", classes="pane-header")
                 # Detect if initial_src is remote or local
                 if "://" in self.initial_src:
                     tree = HighlightableRemoteDirectoryTree(
                         self.initial_src,
-                        id="source-tree",
+                        id="left-tree",
                         ssl_verify=self.ssl_verify,
                     )
                 else:
-                    tree = HighlightableDirectoryTree(
-                        self.initial_src, id="source-tree"
-                    )
+                    tree = HighlightableDirectoryTree(self.initial_src, id="left-tree")
                 tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
             with Vertical(classes="pane", id="right-pane"):
-                yield Label("Destination", classes="pane-header")
+                yield Label("Right", classes="pane-header")
                 if "://" in self.initial_dst:
                     tree = HighlightableRemoteDirectoryTree(
                         self.initial_dst,
-                        id="dest-tree",
+                        id="right-tree",
                         ssl_verify=self.ssl_verify,
                     )
                 else:
-                    tree = HighlightableDirectoryTree(self.initial_dst, id="dest-tree")
+                    tree = HighlightableDirectoryTree(self.initial_dst, id="right-tree")
                 tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
@@ -307,9 +314,9 @@ class GfalTui(App):
         """Called when the app is mounted."""
         self.log_activity("Welcome to gfal-cli TUI", level="info")
         self._update_toggle_labels()
-        # Set initial focus to Source tree (Left)
+        # Set initial focus to Left tree
         with suppress(Exception):
-            self.query_one("#source-tree").focus()
+            self.query_one("#left-tree").focus()
 
     def _update_toggle_labels(self) -> None:
         """Update the footer labels for SSL and TPC."""
@@ -384,8 +391,8 @@ class GfalTui(App):
             else:
                 target_path = target_node.data
         else:
-            # For local tree, node.data is DirEntry (has .is_dir and .path)
-            if not target_node.data.is_dir and target_node.parent:
+            # For local tree, node.data is DirEntry (has .path)
+            if not target_node.data.path.is_dir() and target_node.parent:
                 # Use parent node's data (DirEntry) path
                 target_path = str(target_node.parent.data.path)
             else:

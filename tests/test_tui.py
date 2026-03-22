@@ -45,7 +45,7 @@ async def test_tui_url_submission_via_modal():
             await pilot.pause(0.1)
 
             # Verify the source tree's URL was updated (Source is focused by default)
-            source_tree = app.query_one("#source-tree")
+            source_tree = app.query_one("#left-tree")
             assert source_tree.url == test_url
             mock_url_to_fs.assert_any_call(test_url, ssl_verify=False)
 
@@ -85,7 +85,7 @@ async def test_tui_hotkeys():
 
         async with app.run_test() as pilot:
             # Focus a tree node
-            app.query_one("#source-tree").focus()
+            app.query_one("#left-tree").focus()
             await pilot.press("down")
             await pilot.pause()
 
@@ -139,7 +139,7 @@ async def test_tui_hotkeys():
             await pilot.pause()
 
             # Reset focus
-            tree = app.query_one("#source-tree")
+            tree = app.query_one("#left-tree")
             tree.focus()
             await pilot.pause()
 
@@ -163,7 +163,7 @@ async def test_tui_hotkeys():
         app = GfalTui()
         async with app.run_test() as pilot:
             # Trigger Stat
-            app.query_one("#source-tree").focus()
+            app.query_one("#left-tree").focus()
             await pilot.press("down")
             await pilot.press("s")
             # Give the worker a moment to push the screen
@@ -197,7 +197,7 @@ async def test_tui_vim_navigation():
     """Verify that g/G hotkeys move the cursor to top/bottom."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -248,7 +248,7 @@ async def test_tui_modal_dismiss_button_click():
         mock_fs.info.return_value = {"size": 100}
         with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, "/data")):
             # Trigger Stat to show a modal
-            app.query_one("#source-tree").focus()
+            app.query_one("#left-tree").focus()
             await pilot.press("down")
             await pilot.press("s")
 
@@ -308,7 +308,7 @@ async def test_tui_refresh_hotkey_logic():
         ) as mock_remote_load,
     ):
         async with app.run_test() as pilot:
-            app.query_one("#source-tree").focus()
+            app.query_one("#left-tree").focus()
             await pilot.press("down")
             await pilot.press("r")
             await pilot.pause()
@@ -342,9 +342,7 @@ async def test_tui_remote_tree_selection_stat_call(tmp_path):
             await app.update_focused_pane("root://localhost/remote_mock")
 
             # Focus source tree (which we just updated to be remote)
-            source_tree = app.query_one(
-                "#source-tree", HighlightableRemoteDirectoryTree
-            )
+            source_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             app.set_focus(source_tree)
 
             # Wait for nodes to load (file.txt should be under root)
@@ -475,7 +473,7 @@ async def test_tui_local_stat_command_logging(tmp_path):
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -506,7 +504,7 @@ async def test_tui_local_checksum_command_logging(tmp_path):
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -541,7 +539,7 @@ async def test_tui_human_readable_stat():
     app = GfalTui()
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -572,7 +570,7 @@ async def test_tui_checksum_formatting_v2():
     app = GfalTui()
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
-        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()

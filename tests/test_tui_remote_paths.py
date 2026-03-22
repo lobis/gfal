@@ -20,7 +20,7 @@ async def test_tui_remote_command_logging_includes_base_url():
 
         async with app.run_test() as pilot:
             # Source tree (left) is remote by default
-            tree = app.query_one("#source-tree", HighlightableRemoteDirectoryTree)
+            tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             app.set_focus(tree)
 
             # Wait for nodes to load
@@ -63,8 +63,8 @@ async def test_tui_root_label_is_descriptive():
     """Verify that the tree root labels clearly show the base path/URL."""
     app = GfalTui(src="root://eospublic.cern.ch/data/", dst="/tmp/local")
     async with app.run_test():
-        src_tree = app.query_one("#source-tree")
-        dst_tree = app.query_one("#dest-tree")
+        src_tree = app.query_one("#left-tree")
+        dst_tree = app.query_one("#right-tree")
 
         # Root should be visible
         assert src_tree.show_root is True

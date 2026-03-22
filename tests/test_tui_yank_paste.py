@@ -15,7 +15,7 @@ async def test_tui_yank_functionality():
     """Test that pressing 'y' yanks the selected item and highlights it."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        local_tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
+        local_tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         # Wait for trees to be ready and have nodes
         for _ in range(20):
             if local_tree.root and local_tree.root.children:
@@ -40,7 +40,7 @@ async def test_tui_yank_functionality():
         assert "[YANKED]" in str(label)
 
         # Verify other tree also has the yanked_url set
-        remote_tree = app.query_one("#source-tree", HighlightableRemoteDirectoryTree)
+        remote_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
         assert path in remote_tree.yanked_urls
 
 
@@ -59,9 +59,7 @@ async def test_tui_paste_modal_trigger():
             app.yanked_urls = {"/tmp/source.txt"}
 
             # Focus remote tree and select a directory (root is a directory)
-            remote_tree = app.query_one(
-                "#source-tree", HighlightableRemoteDirectoryTree
-            )
+            remote_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             app.set_focus(remote_tree)
 
             # Wait for nodes to be available
@@ -101,9 +99,7 @@ async def test_tui_paste_execution():
         async with app.run_test() as pilot:
             await pilot.pause()
             app.yanked_urls = {"/tmp/file.txt"}
-            remote_tree = app.query_one(
-                "#source-tree", HighlightableRemoteDirectoryTree
-            )
+            remote_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             app.set_focus(remote_tree)
 
             # Wait for nodes to be available
@@ -159,7 +155,7 @@ async def test_tui_paste_to_file_uses_parent():
             app.yanked_urls = {"/tmp/source.txt"}
 
             # Focus remote tree
-            tree = app.query_one("#source-tree", HighlightableRemoteDirectoryTree)
+            tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             app.set_focus(tree)
 
             # Wait for nodes and select the file (child of root)
@@ -192,3 +188,59 @@ async def test_tui_paste_to_file_uses_parent():
             # Expected destination: root_url + /source.txt
             expected_dst = tree.root.data.rstrip("/") + "/source.txt"
             assert args[1] == expected_dst
+
+
+@pytest.mark.asyncio
+async def test_tui_local_paste_to_file_uses_parent(tmp_path):
+    """Verify that pasting onto a local file uses the parent directory as destination."""
+    app = GfalTui()
+    # Mock _do_copy to verify it gets the right destination
+    with patch.object(GfalTui, "_do_copy") as mock_do_copy:
+        async with app.run_test() as pilot:
+            # Create a source file and a destination file
+            src_file = tmp_path / "src.txt"
+            src_file.write_text("source")
+            dst_dir = tmp_path / "subdir"
+            dst_dir.mkdir()
+            dst_file = dst_dir / "target.txt"
+            dst_file.write_text("target")
+
+            app.yanked_urls = {str(src_file)}
+
+            # Since DirectoryTree loads the FS, we need to wait or mock
+            # Faster to just set what we need
+            from types import SimpleNamespace
+
+            from textual.widgets._directory_tree import DirEntry
+
+            mock_target_node = SimpleNamespace(
+                data=DirEntry(path=dst_file, loaded=True),
+                parent=SimpleNamespace(data=DirEntry(path=dst_dir, loaded=True)),
+            )
+            mock_tree = SimpleNamespace(
+                cursor_node=mock_target_node,
+            )
+            # Ensure mock_tree is identified as local (not HighlightableRemoteDirectoryTree)
+            # Use isinstance check in the code: is_remote = isinstance(tree, HighlightableRemoteDirectoryTree)
+            # SimpleNamespace is NOT HighlightableRemoteDirectoryTree, so it's correct.
+
+            # Mock _get_focused_tree to return our mock_tree
+            with patch.object(GfalTui, "_get_focused_tree", return_value=mock_tree):
+                await pilot.press("p")
+                assert isinstance(app.screen, PasteModal)
+                # The destination directory in the modal should be the parent
+                assert app.screen.dst_dir == str(dst_dir)
+
+                # Submit
+                await pilot.press("enter")
+                await pilot.pause()
+
+                import asyncio
+
+                await asyncio.sleep(0.1)
+
+                mock_do_copy.assert_called_once()
+                args, _ = mock_do_copy.call_args
+                # Expected destination: dst_dir / src.txt
+                expected_dst = str(dst_dir / "src.txt")
+                assert args[1] == expected_dst

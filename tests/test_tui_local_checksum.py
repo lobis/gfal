@@ -12,8 +12,8 @@ async def test_tui_local_checksum_calls_fs():
     app = GfalTui()
     async with app.run_test() as pilot:
         # 1. Select a file in the local tree (left pane)
-        # By default, dest-tree is where local files are
-        app.query_one("#dest-tree", HighlightableDirectoryTree)
+        # By default, right-tree is where local files are
+        app.query_one("#right-tree", HighlightableDirectoryTree)
 
         # Create a dummy local file for testing
         test_file = Path("test_local_checksum.txt")
