@@ -32,9 +32,14 @@ async def test_tui_remote_command_logging_includes_base_url():
 
             assert tree.root.children, "Remote tree children did not load"
 
-            # Select the file node
+            # Move cursor from root to the first file node
+            await pilot.press("down")
+            await pilot.pause(0.1)
+
+            # Select the file node (though cursor_node is what action_stat uses)
             file_node = tree.root.children[0]
             tree.select_node(file_node)
+            await pilot.pause()
 
             # Trigger Stat
             await pilot.press("s")

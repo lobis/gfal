@@ -60,7 +60,20 @@ async def test_tui_checksum_modal_persistence(tmp_path):
         # Select the file
         tree = app.query_one("#left-tree")
         tree.focus()
-        tree.cursor_line = 0
+
+        # Wait for tree to load
+        for _ in range(50):
+            if tree.root.children:
+                break
+            await pilot.pause(0.02)
+
+        # Move down from root to the file
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Verify it's not the root
+        assert tree.cursor_node != tree.root
+        assert not tree.cursor_node.data.path.is_dir()
 
         # Trigger checksum request (immediately starts calc)
         await pilot.press("c")

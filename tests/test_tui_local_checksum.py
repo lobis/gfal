@@ -10,18 +10,37 @@ from gfal_cli.tui import GfalTui, HighlightableDirectoryTree
 async def test_tui_local_checksum_calls_fs():
     """Verify that TUI correctly identifies and computes local checksums."""
     app = GfalTui()
-    async with app.run_test() as pilot:
-        # 1. Select a file in the local tree (left pane)
-        # By default, right-tree is where local files are
-        app.query_one("#right-tree", HighlightableDirectoryTree)
+    # Create a dummy local file for testing
+    test_file = Path("test_local_checksum.txt")
+    test_file.write_text("hello world")
 
-        # Create a dummy local file for testing
-        test_file = Path("test_local_checksum.txt")
-        test_file.write_text("hello world")
+    try:
+        async with app.run_test() as pilot:
+            # 1. Select a file in the local tree (right pane)
+            tree = app.query_one("#right-tree", HighlightableDirectoryTree)
+            tree.focus()
 
-        try:
             # Refresh local tree to see the file
             await pilot.press("r")
+
+            # Wait for items to load
+            for _ in range(50):
+                if tree.root.children:
+                    break
+                await pilot.pause(0.02)
+
+            # Move down to select the file (root is dir)
+            await pilot.press("down")
+            await pilot.pause()
+
+            # Ensure we are on a file node
+            while (
+                tree.cursor_node
+                and tree.cursor_node.data.path.is_dir()
+                and tree.cursor_node != tree.root.children[-1]
+            ):
+                await pilot.press("down")
+                await pilot.pause(0.05)
 
             # Find the node for our test file
             # Since DirectoryTree might be large, we'll manually set the cursor
@@ -66,6 +85,6 @@ async def test_tui_local_checksum_calls_fs():
                         log_text = "\n".join(str(line.text) for line in log.lines)
                         assert "SUCCESS Checksum" in log_text
                         assert "5eb63bbbe01eeed093cb22bb8f5acdc3" in log_text
-        finally:
-            if test_file.exists():
-                test_file.unlink()
+    finally:
+        if test_file.exists():
+            test_file.unlink()

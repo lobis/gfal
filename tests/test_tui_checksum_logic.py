@@ -13,29 +13,41 @@ async def test_tui_checksum_calls_fs_with_algo():
     Verify that action_checksum calls fs.checksum(path, algo) and logs success.
     """
     app = GfalTui()
-    # Mock url_to_fs to return a mocked filesystem
+    # Mock url_to_fs and compute_checksum in tui.py
     mock_fs = MagicMock()
-    mock_fs.checksum.return_value = "abc12345"
     mock_fs.ls.return_value = []
 
-    async with app.run_test() as pilot:
-        await pilot.wait_for_scheduled_animations()
+    node_path = "https://example.com/test_file"
 
-        # We want to test the 'remote' tree
-        tree = app.query_one("#left-tree", Tree)
-        tree.focus()  # CRITICAL: ensure the tree is focused
+    with (
+        patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, node_path)),
+        patch("gfal_cli.tui.compute_checksum", return_value="abc12345") as mock_compute,
+        patch("gfal_cli.fs.compute_checksum", return_value="abc12345"),
+    ):
+        async with app.run_test() as pilot:
+            await pilot.wait_for_scheduled_animations()
 
-        node_path = "https://example.com/test_file"
-        if not tree.root.children:
-            tree.root.add("test_file", data=node_path)
+            # We want to test the 'remote' tree (left)
+            tree = app.query_one("#left-tree", Tree)
+            tree.focus()
 
-        node = tree.root.children[0]
-        tree.select_node(node)
+            if not tree.root.children:
+                tree.root.add("test_file", data=node_path, allow_expand=False)
+                # We need to wait for the UI to reflect the new node
+                await pilot.pause()
 
-        log = app.query_one("#log-window", RichLog)
-        log.clear()
+            # Move cursor from root to the first child
+            await pilot.press("down")
+            await pilot.pause()
 
-        with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, node_path)):
+            node = tree.cursor_node
+            assert node and node.data == node_path, (
+                f"Selected node {node} is not the expected file {node_path}"
+            )
+
+            log = app.query_one("#log-window", RichLog)
+            log.clear()
+
             # Trigger checksum action
             await pilot.press("c")
 
@@ -50,20 +62,48 @@ async def test_tui_checksum_calls_fs_with_algo():
                 if asyncio.get_event_loop().time() - start_time > timeout:
                     break
 
-            await pilot.pause(0.5)
+            await pilot.pause(1.0)
 
-            # Verify checksum was called with correct algorithm
-            # action_checksum in tui.py uses "ADLER32" as default first try
-            mock_fs.checksum.assert_any_call(node_path, "ADLER32")
+            # Verify compute_checksum was called with correct algorithm (uppercase)
+            mock_compute.assert_called_with(mock_fs, node_path, "ADLER32")
 
             # Verify success message in log window
-            log_content = "\n".join(str(line.text) for line in log.lines)
-            print(f"DEBUG: Log content: {log_content}")
+            log_content = "\n".join(str(line.text) for line in log.lines or [])
             assert "abc12345" in log_content
             assert "ADLER32" in log_content
 
 
-if __name__ == "__main__":
-    import sys
+@pytest.mark.asyncio
+async def test_tui_checksum_on_directory_shows_warning():
+    """
+    Verify that action_checksum_request notifies and returns if a directory is selected.
+    """
+    app = GfalTui()
+    mock_fs = MagicMock()
+    mock_fs.ls.return_value = []
 
-    sys.exit(pytest.main(["-s", "-n0", __file__]))
+    with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, "root://mock")):
+        async with app.run_test() as pilot:
+            await pilot.wait_for_scheduled_animations()
+
+            # Focus remote tree (left)
+            tree = app.query_one("#left-tree")
+            tree.focus()
+
+            # The root node itself is a directory (allow_expand=True)
+            tree.select_node(tree.root)
+
+            with patch.object(app, "notify") as mock_notify:
+                # Trigger checksum action
+                await pilot.press("c")
+                await pilot.pause()
+
+                # Verify notification was called with the correct message
+                mock_notify.assert_called_with(
+                    "Checksum calculation is not supported for directories.",
+                    severity="warning",
+                )
+
+                # Ensure no checksum worker was started
+                workers = [w for w in app.workers if w.name == "get_checksum"]
+                assert not workers

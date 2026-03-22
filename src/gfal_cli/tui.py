@@ -695,6 +695,25 @@ class GfalTui(App):
         if not tree:
             return
         node = tree.cursor_node
+        if not node or node.data is None:
+            return
+
+        # Check if it's a directory
+        is_dir = False
+        if isinstance(tree, HighlightableRemoteDirectoryTree):
+            # Remote tree relies on allow_expand for directories
+            is_dir = node.allow_expand
+        elif isinstance(tree, HighlightableDirectoryTree):
+            # node.data is DirEntry from DirectoryTree which has a path (Path)
+            is_dir = node.data.path.is_dir()
+
+        if is_dir:
+            self.notify(
+                "Checksum calculation is not supported for directories.",
+                severity="warning",
+            )
+            return
+
         path = self._get_node_path(node)
         if not path:
             return

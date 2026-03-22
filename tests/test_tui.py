@@ -76,16 +76,28 @@ async def test_tui_ssl_toggle():
 
 
 @pytest.mark.asyncio
-async def test_tui_hotkeys():
+async def test_tui_hotkeys(tmp_path):
     """Verify that hotkeys trigger activity logging."""
-    app = GfalTui()
+    # Using tmp_path to ensure a clean local tree too
+    app = GfalTui(dst=str(tmp_path))
+    (tmp_path / "local_file.txt").write_text("hello")
 
     with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
-        mock_url_to_fs.return_value = (MagicMock(), "/data")
+        mock_fs = MagicMock()
+        mock_fs.ls.return_value = [{"name": "/data/remote_file.txt", "type": "file"}]
+        mock_url_to_fs.return_value = (mock_fs, "/data")
 
         async with app.run_test() as pilot:
             # Focus a tree node
-            app.query_one("#left-tree").focus()
+            tree = app.query_one("#left-tree")
+            tree.focus()
+
+            # Wait for items to load
+            for _ in range(50):
+                if tree.root.children:
+                    break
+                await pilot.pause(0.02)
+
             await pilot.press("down")
             await pilot.pause()
 
@@ -113,6 +125,11 @@ async def test_tui_hotkeys():
                 await pilot.pause(0.02)
 
             # Test Checksum hotkey
+            # We must ensure we are on a file, not a directory
+            if tree.cursor_node and tree.cursor_node.allow_expand:
+                await pilot.press("down")
+                await pilot.pause(0.1)
+
             await pilot.press("c")
             for _ in range(20):
                 if isinstance(app.screen, ChecksumResultModal):
@@ -139,7 +156,6 @@ async def test_tui_hotkeys():
             await pilot.pause()
 
             # Reset focus
-            tree = app.query_one("#left-tree")
             tree.focus()
             await pilot.pause()
 
@@ -499,15 +515,33 @@ async def test_tui_local_stat_command_logging(tmp_path):
 @pytest.mark.asyncio
 async def test_tui_local_checksum_command_logging(tmp_path):
     """Verify that local checksum triggers command logging to file."""
+    # Create a test file to ensure we have something to checksum
+    (tmp_path / "test.txt").write_text("content")
     log_file = tmp_path / "sum.log"
-    app = GfalTui()
+    app = GfalTui(dst=str(tmp_path))
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
         tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
+
+        # Wait for items to load
+        for _ in range(50):
+            if tree.root.children:
+                break
+            await pilot.pause(0.02)
+
         await pilot.press("down")
         await pilot.pause()
+
+        # If still on a directory, move down again (root is dir, maybe first child is dir too)
+        while (
+            tree.cursor_node
+            and tree.cursor_node.data.path.is_dir()
+            and tree.cursor_node != tree.root.children[-1]
+        ):
+            await pilot.press("down")
+            await pilot.pause(0.05)
 
         with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
@@ -565,15 +599,34 @@ async def test_tui_human_readable_stat():
 
 
 @pytest.mark.asyncio
-async def test_tui_checksum_formatting_v2():
+async def test_tui_checksum_formatting_v2(tmp_path):
     """Verify that checksum modal contains algorithm name and hex value."""
-    app = GfalTui()
+    # Create a test file
+    (tmp_path / "test_formatting.txt").write_text("content")
+
+    app = GfalTui(dst=str(tmp_path))
     async with app.run_test() as pilot:
         # Focus local tree (Destination)
         tree = app.query_one("#right-tree", HighlightableDirectoryTree)
         tree.focus()
+
+        # Wait for items to load
+        for _ in range(50):
+            if tree.root.children:
+                break
+            await pilot.pause(0.02)
+
         await pilot.press("down")
         await pilot.pause()
+
+        # If still on a directory, move down again
+        while (
+            tree.cursor_node
+            and tree.cursor_node.data.path.is_dir()
+            and tree.cursor_node != tree.root.children[-1]
+        ):
+            await pilot.press("down")
+            await pilot.pause(0.05)
 
         with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
