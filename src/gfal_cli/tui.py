@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import threading
 from contextlib import suppress
@@ -364,10 +365,29 @@ class GfalTui(App):
 
     def action_quit(self) -> None:
         """Exit the application cleanly."""
-        self.log_activity("Shutting down workers...")
-        for worker in self.workers:
-            worker.cancel()
+        import os
+        import tempfile
+
+        # Inform the user about the log file before immediate exit
+        log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
+        # Since we are in the TUI, sys.stdout.write might not be visible
+        # until the terminal state is restored. textual.app.App.exit()
+        # handles terminal restoration.
         self.exit()
+
+        # Use a small delay to allow textual to restore the terminal state
+        # before we hammer it with os._exit(0).
+        def force_exit():
+            import time
+
+            time.sleep(0.1)
+            sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
+            sys.stdout.flush()
+            os._exit(0)
+
+        import threading
+
+        threading.Thread(target=force_exit, daemon=True).start()
 
     def action_focus_left(self) -> None:
         """Focus the left pane."""
@@ -913,11 +933,7 @@ class CommandTui(CommandBase):
     @interactive
     def execute_tui(self):
         """Launch the Text User Interface."""
-        import sys
-
         GfalTui().run()
-        log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
-        sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
         return 0
 
 
