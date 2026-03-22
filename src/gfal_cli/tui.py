@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import threading
@@ -433,32 +434,15 @@ class GfalTui(App):
 
     def action_quit(self) -> None:
         """Exit the application cleanly."""
-        import os
-        import tempfile
-
-        # Inform the user about the log file before immediate exit
-        log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
-        # Since we are in the TUI, sys.stdout.write might not be visible
-        # until the terminal state is restored. textual.app.App.exit()
-        # handles terminal restoration.
+        # Cancel all workers to prevent hangs
+        for worker in list(self.workers):
+            worker.cancel()
         self.exit()
 
-        # Use a small delay to allow textual to restore the terminal state
-        # before we hammer it with os._exit(0).
-        def force_exit():
-            import time
-
-            time.sleep(0.1)
-            sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
-            sys.stdout.flush()
-
-            # Do not os._exit if we are running in a test environment
-            if "PYTEST_CURRENT_TEST" not in os.environ:
-                os._exit(0)
-
-        import threading
-
-        threading.Thread(target=force_exit, daemon=True).start()
+        # Fallback to force exit in case workers are truly stuck
+        # We give Textual 2 seconds to restore the terminal state
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            threading.Timer(2.0, os._exit, args=[0]).start()
 
     def action_focus_left(self) -> None:
         """Focus the left pane."""
@@ -1075,7 +1059,9 @@ class CommandTui(CommandBase):
         src = surl(self.params.src) if self.params.src else None
         dst = surl(self.params.dst) if self.params.dst else None
 
-        GfalTui(src=src, dst=dst).run()
+        app = GfalTui(log_file=self.params.log_file, src=src, dst=dst)
+        app.run()
+        sys.stdout.write(f"\nTUI exited. Logs are available at: {app.log_file}\n")
         return 0
 
 
