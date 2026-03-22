@@ -251,6 +251,9 @@ class GfalTui(App):
         height: 100%;
         border: solid #333;
     }
+    Tree, DirectoryTree {
+        overflow-x: hidden;
+    }
     .pane-label {
         padding: 0 1;
         background: $primary;
@@ -853,9 +856,13 @@ class GfalTui(App):
     async def refresh_trees(self) -> None:
         """Refresh both panes by reloading their current directories."""
         self.log_activity("Refreshing file trees...")
-        with suppress(Exception):
-            await self.query_one("#left-tree").reload()
-            await self.query_one("#right-tree").reload()
+        for pane_id in ("#left-pane", "#right-pane"):
+            try:
+                pane = self.query_one(pane_id, Vertical)
+                tree = pane.query_one(Tree)
+                await tree.reload()
+            except Exception:
+                pass
 
     def action_toggle_log(self) -> None:
         """Toggle the visibility of the log window."""
@@ -894,12 +901,18 @@ class GfalTui(App):
         left_tree = left_pane.query_one(Tree)
         right_tree = right_pane.query_one(Tree)
 
-        # Explicitly await removal and mounting to ensure DOM is stable
+        # Capture focused tree before removal so we can restore focus after.
+        focused_tree = self.focused if isinstance(self.focused, Tree) else None
+
         await left_tree.remove()
         await right_tree.remove()
 
         await left_pane.mount(right_tree)
         await right_pane.mount(left_tree)
+
+        # Restore focus
+        if focused_tree is not None:
+            focused_tree.focus()
 
         self.log_activity("Panes swapped: left and right trees exchanged")
 
