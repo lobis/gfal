@@ -218,7 +218,10 @@ jobs:
           - name: AlmaLinux 9
             container: almalinux:9
             artifact: rpm-package-distributions-el9-x86_64
-            install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
+            install_cmd: |
+              dnf install -y epel-release dnf-plugins-core
+              dnf config-manager --set-enabled crb
+              find . -name "*.rpm" -exec dnf install -y {} +
           - name: AlmaLinux 10
             container: almalinux:10
             artifact: rpm-package-distributions-el10-x86_64
@@ -226,7 +229,10 @@ jobs:
           - name: Ubuntu 24.04
             container: ubuntu:24.04
             artifact: deb-package-distributions-amd64
-            install_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
+            install_cmd: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y python3-fsspec python3-aiohttp python3-requests
+              DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
     container: ${{ matrix.target.container }}
     steps:
     - uses: actions/download-artifact@v8
