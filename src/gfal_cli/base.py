@@ -240,17 +240,27 @@ class CommandBase:
 
         # 1. Handle Windows-specific error codes
         winerror = getattr(e, "winerror", None)
+        _win_map = {
+            2: "No such file or directory",  # ERROR_FILE_NOT_FOUND
+            3: "No such file or directory",  # ERROR_PATH_NOT_FOUND
+            5: "Permission denied",  # ERROR_ACCESS_DENIED
+            17: "File exists",  # ERROR_ALREADY_EXISTS
+            183: "File exists",  # ERROR_ALREADY_EXISTS (alt)
+        }
+        desc = None
         if winerror is not None:
-            _win_map = {
-                2: "No such file or directory",  # ERROR_FILE_NOT_FOUND
-                3: "No such file or directory",  # ERROR_PATH_NOT_FOUND
-                5: "Permission denied",  # ERROR_ACCESS_DENIED
-                17: "File exists",  # ERROR_ALREADY_EXISTS
-                183: "File exists",  # ERROR_ALREADY_EXISTS (alt)
-            }
             desc = _win_map.get(winerror)
-            if desc:
-                return f"{path}: {desc}" if path else desc
+        elif "[WinError 2]" in msg:
+            desc = _win_map[2]
+        elif "[WinError 3]" in msg:
+            desc = _win_map[3]
+        elif "[WinError 5]" in msg:
+            desc = _win_map[5]
+        elif "[WinError 17]" in msg or "[WinError 183]" in msg:
+            desc = _win_map[17]
+
+        if desc:
+            return f"{path}: {desc}" if path else desc
 
         # 2. Map common exception types to POSIX strings for consistency.
         _descriptions = {
