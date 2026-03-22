@@ -189,7 +189,7 @@ jobs:
         Priority: optional
         Architecture: ${{ matrix.arch }}
         Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
-        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-pygments
+        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
                    # Bundle textual and its requirements.
@@ -198,6 +198,7 @@ jobs:
                    python3 -m pip install textual --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    rm -rf pkg/usr/lib/python3/dist-packages/rich* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/markdown_it* && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/mdurl* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/mdit_py_plugins* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/pygments* && \
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ || true && \
