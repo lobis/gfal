@@ -315,14 +315,17 @@ class GfalTui(App):
         is_remote = isinstance(tree, HighlightableRemoteDirectoryTree)
 
         if is_remote:
-            # For remote tree, we need to know if it's a directory
-            # We assume it is if we are focusing it for paste, or we have better info
-            target_path = target_node.data
+            # For remote tree, if a file is selected, paste into its parent directory
+            if not target_node.allow_expand and target_node.parent:
+                target_path = target_node.parent.data
+            else:
+                target_path = target_node.data
         else:
+            # For local tree, if a file is selected, paste into its parent directory
             if not target_node.data.is_dir:
-                self.notify("Target must be a directory!", severity="warning")
-                return
-            target_path = str(target_node.data.path)
+                target_path = str(target_node.data.path.parent)
+            else:
+                target_path = str(target_node.data.path)
 
         def handle_paste(confirm_data: Optional[dict]):
             if not confirm_data:
@@ -338,10 +341,16 @@ class GfalTui(App):
                     name = Path(src_url).name
 
                 # If single file and custom name provided, use it
-                if custom_name and len(self.yanked_urls) == 1:
-                    dst_url = str(Path(dest_dir) / custom_name)
+                actual_name = (
+                    custom_name
+                    if (custom_name and len(self.yanked_urls) == 1)
+                    else name
+                )
+
+                if "://" in dest_dir:
+                    dst_url = f"{dest_dir.rstrip('/')}/{actual_name}"
                 else:
-                    dst_url = str(Path(dest_dir) / name)
+                    dst_url = str(Path(dest_dir) / actual_name)
 
                 self.run_worker(
                     lambda s=src_url, d=dst_url: self._do_copy(s, d),

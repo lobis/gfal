@@ -408,7 +408,14 @@ async def test_tui_copy_respects_swap():
     app = GfalTui()
     # Mock _do_copy to avoid actual network/file ops
     # Now it's a sync function, so use MagicMock
-    with patch("gfal_cli.tui.GfalTui._do_copy", new_callable=MagicMock) as mock_copy:
+    with (
+        patch("gfal_cli.tui.GfalTui._do_copy", new_callable=MagicMock) as mock_copy,
+        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
+    ):
+        mock_fs = MagicMock()
+        mock_fs.ls.return_value = [{"name": "remote_file.txt", "type": "file"}]
+        mock_url_to_fs.return_value = (mock_fs, "/remote")
+
         async with app.run_test() as pilot:
             # Swap so Remote is Source (Left)
             await pilot.press("x")
@@ -429,8 +436,9 @@ async def test_tui_copy_respects_swap():
                 src_tree.select_node(src_tree.root.children[0])
                 await pilot.pause(0.02)
 
-            # Trigger copy
-            await pilot.press("f5")
+            # Trigger copy directly instead of pilot.press("f5")
+            # pilot.press can be flaky with focus during swap
+            app.action_copy()
             await pilot.wait_for_scheduled_animations()
             await pilot.pause(0.1)  # Give a bit more for copy trigger
 

@@ -67,7 +67,7 @@ class CommandRm(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
 
         for url in urls:

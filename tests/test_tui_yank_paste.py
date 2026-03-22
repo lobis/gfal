@@ -22,7 +22,8 @@ async def test_tui_yank_functionality():
                 break
             await pilot.pause(0.01)
 
-        # Move cursor to first child
+        # Ensure tree is focused
+        app.set_focus(local_tree)
         await pilot.press("down")
         node = local_tree.cursor_node
         assert node is not None
@@ -47,25 +48,41 @@ async def test_tui_yank_functionality():
 async def test_tui_paste_modal_trigger():
     """Test that pressing 'p' on a directory opens the PasteModal."""
     app = GfalTui()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        # Yank something first
-        app.yanked_urls = ["/tmp/source.txt"]
+    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+        mock_fs = MagicMock()
+        mock_fs.ls.return_value = [{"name": "file.txt", "type": "file"}]
+        mock_url_to_fs.return_value = (mock_fs, "/remote")
 
-        # Focus remote tree and select a directory (root is a directory)
-        remote_tree = app.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
-        app.set_focus(remote_tree)
-        # root is selected by default usually, if not:
-        if not remote_tree.cursor_node:
-            await pilot.press("down")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Yank something first
+            app.yanked_urls = {"/tmp/source.txt"}
 
-        # Press 'p'
-        await pilot.press("p")
+            # Focus remote tree and select a directory (root is a directory)
+            remote_tree = app.query_one(
+                "#remote-tree", HighlightableRemoteDirectoryTree
+            )
+            app.set_focus(remote_tree)
 
-        # Check if PasteModal is active
-        assert isinstance(app.screen, PasteModal)
-        assert app.screen.src_url == "/tmp/source.txt"
-        assert app.screen.dst_dir == remote_tree.root.data
+            # Wait for nodes to be available
+            for _ in range(50):
+                if remote_tree.root and remote_tree.root.children:
+                    break
+                await pilot.pause(0.01)
+
+            # Ensure the root node is selected for pasting
+            if remote_tree.root:
+                remote_tree.select_node(remote_tree.root)
+            await pilot.pause()
+
+            # Press 'p'
+            await pilot.press("p")
+
+            # Check if PasteModal is active
+            assert isinstance(app.screen, PasteModal)
+            # PasteModal has src_urls (set), not src_url
+            assert "/tmp/source.txt" in app.screen.src_urls
+            assert app.screen.dst_dir == remote_tree.root.data
 
 
 @pytest.mark.asyncio
@@ -73,16 +90,32 @@ async def test_tui_paste_execution():
     """Test that submitting PasteModal triggers _do_copy."""
     app = GfalTui()
     # We patch _do_copy because it runs in a background thread and we just want to verify trigger
-    with patch.object(GfalTui, "_do_copy") as mock_do_copy:
+    with (
+        patch.object(GfalTui, "_do_copy") as mock_do_copy,
+        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
+    ):
+        mock_fs = MagicMock()
+        mock_fs.ls.return_value = [{"name": "file.txt", "type": "file"}]
+        mock_url_to_fs.return_value = (mock_fs, "/remote")
+
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.yanked_urls = ["/tmp/file.txt"]
+            app.yanked_urls = {"/tmp/file.txt"}
             remote_tree = app.query_one(
                 "#remote-tree", HighlightableRemoteDirectoryTree
             )
             app.set_focus(remote_tree)
-            if not remote_tree.cursor_node:
-                await pilot.press("down")
+
+            # Wait for nodes to be available
+            for _ in range(50):
+                if remote_tree.root and remote_tree.root.children:
+                    break
+                await pilot.pause(0.01)
+
+            # Ensure the root node is selected for pasting
+            if remote_tree.root:
+                remote_tree.select_node(remote_tree.root)
+            await pilot.pause()
 
             await pilot.press("p")
             assert isinstance(app.screen, PasteModal)

@@ -47,4 +47,4 @@ async def test_tui_yank_toggle():
         # Yank it again
         await pilot.press("y")
         await pilot.pause()
-        assert app.yanked_url == url
+        assert url in app.yanked_urls

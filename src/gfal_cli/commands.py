@@ -46,7 +46,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
 
         rc = 0
@@ -69,7 +69,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
         with client.open(self.params.file, "wb") as f:
             while True:
@@ -95,7 +95,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
         rc = 0
         for url in self.params.file:
@@ -125,7 +125,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
         rc = 0
         first = True
@@ -179,7 +179,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
         client.rename(self.params.source, self.params.destination)
 
@@ -201,7 +201,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
 
         rc = 0
@@ -229,7 +229,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
         alg = self.params.checksum_type.upper()
 
@@ -257,7 +257,7 @@ class GfalCommands(base.CommandBase):
             cert=self.params.cert,
             key=self.params.key,
             timeout=self.params.timeout,
-            ssl_verify=not getattr(self.params, "no_verify", False),
+            ssl_verify=getattr(self.params, "ssl_verify", True),
         )
 
         try:
