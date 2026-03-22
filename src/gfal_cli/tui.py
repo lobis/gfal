@@ -9,15 +9,6 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from rich.progress import (
-    BarColumn,
-    DownloadColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-    TransferSpeedColumn,
-)
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
@@ -33,6 +24,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    ProgressBar,
     RichLog,
     Select,
     Static,
@@ -374,11 +366,15 @@ class GfalTui(App):
         """Update the footer labels for SSL and TPC."""
         ssl_status = "ON" if self.ssl_verify else "OFF"
         tpc_status = "ON" if self.tpc_enabled else "OFF"
-        self.bind("v", "toggle_ssl", description=f"SSL [{ssl_status}]")
-        self.bind("t", "toggle_tpc", description=f"TPC [{tpc_status}]")
+        # Directly replace the binding list for each key so the old label is removed.
+        # Using self.bind() appends rather than replaces, leaving the stale label visible.
+        self._bindings.key_to_bindings["v"] = [
+            Binding("v", "toggle_ssl", f"SSL [{ssl_status}]", show=True)
+        ]
+        self._bindings.key_to_bindings["t"] = [
+            Binding("t", "toggle_tpc", f"TPC [{tpc_status}]", show=True)
+        ]
         self.refresh_bindings()
-        with suppress(Exception):
-            self.query_one(Footer).refresh()
 
     def action_search(self) -> None:
         """Open a modal to search/input a new URL for the focused pane."""
@@ -1026,41 +1022,57 @@ class ChecksumResultModal(ModalScreen):
 
 
 class TransferProgressModal(ModalScreen):
-    """A centered modal screen for displaying transfer progress using Rich."""
+    """A centered modal screen for displaying transfer progress."""
+
+    _progress_current: reactive[int] = reactive(0)
+    _progress_total: reactive[int] = reactive(0)
 
     def __init__(self, src: str, dst: str):
         super().__init__()
         self.src = src
         self.dst = dst
-        self.rich_progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-        )
-        self.task_id = self.rich_progress.add_task("Copying...", total=None)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-content"):
             yield Static("[bold]Transfer Progress[/bold]", classes="modal-title")
             yield Static(f"Source: {self.src}", classes="modal-body")
             yield Static(f"Destination: {self.dst}", classes="modal-body")
-            yield Static(self.rich_progress, id="progress-display")
+            yield ProgressBar(total=None, id="progress-bar")
+            yield Label("Starting...", id="progress-label")
             with Horizontal(id="modal-btn-row"):
                 yield Button("Close", id="close-btn")
 
     def on_mount(self) -> None:
-        """Sync initial progress from app state to handle race conditions."""
-        self.update_progress(self.app.progress_current, self.app.progress_total)
         self.query_one("#close-btn").focus()
 
-    def update_progress(self, current: int, total: int):
-        rich_total = total if total > 0 else None
-        self.rich_progress.update(self.task_id, completed=current, total=rich_total)
+    def watch__progress_total(self, value: int) -> None:
         with suppress(Exception):
-            self.query_one("#progress-display", Static).update(self.rich_progress)
+            self.query_one("#progress-bar", ProgressBar).update(
+                total=value if value > 0 else None
+            )
+        self._refresh_label()
+
+    def watch__progress_current(self, value: int) -> None:
+        with suppress(Exception):
+            self.query_one("#progress-bar", ProgressBar).update(progress=value)
+        self._refresh_label()
+
+    def _refresh_label(self) -> None:
+        current = self._progress_current
+        total = self._progress_total
+        with suppress(Exception):
+            label = self.query_one("#progress-label", Label)
+            if total > 0:
+                pct = current * 100 // total
+                label.update(
+                    f"{human_readable_size(current)} / {human_readable_size(total)} ({pct}%)"
+                )
+            else:
+                label.update(f"{human_readable_size(current)} transferred")
+
+    def update_progress(self, current: int, total: int) -> None:
+        self._progress_total = total if total > 0 else 0
+        self._progress_current = current
 
     @on(Button.Pressed, "#close-btn")
     def on_close(self) -> None:
