@@ -35,6 +35,8 @@ click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
 click.rich_click.STYLE_ERRORS_SUGGESTION = "italic"
 click.rich_click.ERRORS_SUGGESTION = ""
 click.rich_click.MAX_WIDTH = 100
+click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
+click.rich_click.STYLE_HELPTEXT = ""
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +325,106 @@ def _argspec_to_click_argument(args, kwargs, has_preceding_optional=False):
     }
 
 
+_COMMON_GENERAL_OPTS = ["--help", "--version", "--verbose", "--timeout", "--log-file"]
+_COMMON_AUTH_OPTS = ["--cert", "--key", "--no-verify"]
+_COMMON_COMPAT_OPTS = ["--definition", "--client-info", "--ipv4", "--ipv6"]
+
+# Per-command option groups: maps a command suffix (e.g. "cp") to a list of
+# group-dicts as expected by rich_click.OPTION_GROUPS.  Options not listed in
+# any group end up in a catch-all group automatically.
+_COMMAND_OPTION_GROUPS: dict[str, list[dict]] = {
+    "cp": [
+        {
+            "name": "Copy Options",
+            "options": [
+                "--force",
+                "--parent",
+                "--recursive",
+                "--from-file",
+                "--dry-run",
+                "--abort-on-failure",
+                "--transfer-timeout",
+                "--just-copy",
+                "--checksum",
+                "--checksum-mode",
+            ],
+        },
+        {
+            "name": "Third-Party Copy (TPC)",
+            "options": [
+                "--tpc",
+                "--tpc-only",
+                "--tpc-mode",
+                "--copy-mode",
+                "--scitag",
+                "--no-delegation",
+                "--evict",
+                "--disable-cleanup",
+            ],
+        },
+        {
+            "name": "GridFTP / SRM Compatibility",
+            "options": [
+                "--nbstreams",
+                "--tcp-buffersize",
+                "--src-spacetoken",
+                "--dst-spacetoken",
+            ],
+        },
+    ],
+    "ls": [
+        {
+            "name": "Listing Options",
+            "options": [
+                "--all",
+                "--long",
+                "--directory",
+                "--human-readable",
+                "--time-style",
+                "--full-time",
+                "--color",
+                "--reverse",
+                "--sort",
+                "--xattr",
+            ],
+        },
+    ],
+    "rm": [
+        {
+            "name": "Removal Options",
+            "options": [
+                "--recursive",
+                "--dry-run",
+                "--just-delete",
+                "--from-file",
+                "--bulk",
+            ],
+        },
+    ],
+    "mkdir": [
+        {
+            "name": "Directory Options",
+            "options": ["--mode", "--parents"],
+        },
+    ],
+}
+
+
+def _configure_option_groups(prog_name: str, cmd_suffix: str) -> None:
+    """Populate rich_click.OPTION_GROUPS for *prog_name* (e.g. 'gfal-ls')."""
+    groups: list[dict] = []
+
+    # Command-specific groups (if defined)
+    for grp in _COMMAND_OPTION_GROUPS.get(cmd_suffix, []):
+        groups.append(grp)
+
+    groups.append({"name": "General", "options": _COMMON_GENERAL_OPTS})
+    groups.append({"name": "Authentication", "options": _COMMON_AUTH_OPTS})
+    groups.append({"name": "Compatibility", "options": _COMMON_COMPAT_OPTS})
+
+    click.rich_click.OPTION_GROUPS[prog_name] = groups
+
+
 def _build_click_command(method, prog_name, help_text):
     """
     Build a Click Command from an execute_* method's @arg decorators.
@@ -333,6 +435,10 @@ def _build_click_command(method, prog_name, help_text):
     """
     arguments_specs = getattr(method, "arguments", [])
     spec_list = _argparse_to_click_params(list(arguments_specs))
+
+    # Configure option panels for this command
+    cmd_suffix = prog_name.rsplit("-", 1)[-1] if "-" in prog_name else prog_name
+    _configure_option_groups(prog_name, cmd_suffix)
 
     params = []
     param_name_map = {}  # click_var → dest attr name
@@ -384,7 +490,7 @@ def _build_click_command(method, prog_name, help_text):
                 param_name_map[click_var.lower()] = orig_name
             params.append(click_param)
 
-    cmd = click.Command(
+    cmd = click.RichCommand(
         name=prog_name,
         params=params,
         help=help_text,

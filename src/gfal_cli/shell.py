@@ -113,23 +113,34 @@ def _all_commands():
 
 
 def _print_gfal_help(to=sys.stdout):
-    lines = [
-        f"gfal-cli {base.VERSION}",
-        "",
-        "Usage:  gfal <command> [options] [args...]",
-        "   or:  gfal-<command> [options] [args...]",
-        "",
-        "Commands:",
-    ]
-    for cmd, doc in _all_commands():
-        lines.append(f"  {cmd:<18} {doc}")
-    lines += [
-        "  version            Show the version and exit",
-        "",
-        "Run 'gfal <command> --help' for more information on a command.",
-        "",
-    ]
-    to.write("\n".join(lines) + "\n")
+    import rich_click as click
+
+    # Build a RichGroup populated with one sub-command stub per registered command
+    # so that rich-click renders the full panel-style help page.
+    epilog = "Run [bold]gfal <command> --help[/bold] for more information on a command."
+    grp = click.RichGroup(
+        name="gfal",
+        help=(
+            f"[bold]gfal-cli {base.VERSION}[/bold] — "
+            "GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)."
+        ),
+        epilog=epilog,
+    )
+    for cmd_name, doc in _all_commands():
+        grp.add_command(
+            click.RichCommand(name=cmd_name, help=doc, callback=lambda: None),
+        )
+    grp.add_command(
+        click.RichCommand(
+            name="version",
+            help="Show the version and exit.",
+            callback=lambda: None,
+        ),
+    )
+
+    with contextlib.suppress(SystemExit):
+        grp(["--help"], standalone_mode=True, prog_name="gfal")
+    to.write("\n")
 
 
 # ---------------------------------------------------------------------------
