@@ -9,24 +9,22 @@ async def test_tui_pane_navigation():
     app = GfalTui()
     async with app.run_test() as pilot:
         # Check initial focus (should be local tree by default or nothing)
-        # In our implementation of _get_focused_tree, it defaults to local-tree if nothing is focused.
-        # But here we want to check the actual focused widget.
-
-        # Focus remote tree first
+        # Default focus is the left pane (source-tree)
+        assert app.focused.id == "source-tree"
         await pilot.press("right")
-        assert app.focused.id == "remote-tree"
-
-        # Focus local tree with left arrow
-        await pilot.press("left")
-        assert app.focused.id == "local-tree"
+        assert app.focused.id == "dest-tree"
 
         # Focus remote tree with 'l'
         await pilot.press("l")
-        assert app.focused.id == "remote-tree"
+        assert app.focused.id == "dest-tree"
 
         # Focus local tree with 'h'
         await pilot.press("h")
-        assert app.focused.id == "local-tree"
+        assert app.focused.id == "source-tree"
+        await pilot.press("h")
+        assert app.focused.id == "source-tree"
+        await pilot.press("l")
+        assert app.focused.id == "dest-tree"
 
         # Verify 'L' (shift-l) still works for log toggle (indirectly by checking binding)
         # We can't easily check if log is toggled without checking styles,

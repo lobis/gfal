@@ -11,7 +11,7 @@ async def test_tui_movement_vim_keys():
     app = GfalTui()
     async with app.run_test() as pilot:
         # Wait for DirectoryTree to load the current directory
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
 
         # We need to wait for children to populate
         for _ in range(50):
@@ -31,7 +31,8 @@ async def test_tui_movement_vim_keys():
         await pilot.pause()
         initial_node = tree.cursor_node
         assert initial_node is not None
-        assert initial_node == tree.root.children[0]
+        # With show_root=True, first entry is tree.root
+        assert initial_node == tree.root
 
         # Move down with 'j'
         await pilot.press("j")

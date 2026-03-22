@@ -15,7 +15,7 @@ async def test_tui_yank_functionality():
     """Test that pressing 'y' yanks the selected item and highlights it."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        local_tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        local_tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         # Wait for trees to be ready and have nodes
         for _ in range(20):
             if local_tree.root and local_tree.root.children:
@@ -40,7 +40,7 @@ async def test_tui_yank_functionality():
         assert "[YANKED]" in str(label)
 
         # Verify other tree also has the yanked_url set
-        remote_tree = app.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
+        remote_tree = app.query_one("#source-tree", HighlightableRemoteDirectoryTree)
         assert path in remote_tree.yanked_urls
 
 
@@ -60,7 +60,7 @@ async def test_tui_paste_modal_trigger():
 
             # Focus remote tree and select a directory (root is a directory)
             remote_tree = app.query_one(
-                "#remote-tree", HighlightableRemoteDirectoryTree
+                "#source-tree", HighlightableRemoteDirectoryTree
             )
             app.set_focus(remote_tree)
 
@@ -102,7 +102,7 @@ async def test_tui_paste_execution():
             await pilot.pause()
             app.yanked_urls = {"/tmp/file.txt"}
             remote_tree = app.query_one(
-                "#remote-tree", HighlightableRemoteDirectoryTree
+                "#source-tree", HighlightableRemoteDirectoryTree
             )
             app.set_focus(remote_tree)
 
@@ -138,4 +138,57 @@ async def test_tui_paste_execution():
             mock_do_copy.assert_called_once()
             args, _ = mock_do_copy.call_args
             assert args[0] == "/tmp/file.txt"
+            assert args[1] == expected_dst
+
+
+@pytest.mark.asyncio
+async def test_tui_paste_to_file_uses_parent():
+    """Verify that pasting onto a file uses the parent directory as destination."""
+    app = GfalTui()
+    with (
+        patch.object(GfalTui, "_do_copy") as mock_do_copy,
+        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
+    ):
+        mock_fs = MagicMock()
+        # Mock a file entry
+        mock_fs.ls.return_value = [{"name": "/remote/file.txt", "type": "file"}]
+        mock_url_to_fs.return_value = (mock_fs, "/remote")
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.yanked_urls = {"/tmp/source.txt"}
+
+            # Focus remote tree
+            tree = app.query_one("#source-tree", HighlightableRemoteDirectoryTree)
+            app.set_focus(tree)
+
+            # Wait for nodes and select the file (child of root)
+            for _ in range(50):
+                if tree.root and tree.root.children:
+                    break
+                await pilot.pause(0.01)
+
+            file_node = tree.root.children[0]
+            tree.select_node(file_node)
+            await pilot.pause()
+
+            # Trigger paste
+            await pilot.press("p")
+            assert isinstance(app.screen, PasteModal)
+
+            # The destination directory in the modal should be the parent (the root URL)
+            assert app.screen.dst_dir == tree.root.data
+
+            # Submit
+            await pilot.press("enter")
+            await pilot.pause()
+
+            import asyncio
+
+            await asyncio.sleep(0.1)
+
+            mock_do_copy.assert_called_once()
+            args, _ = mock_do_copy.call_args
+            # Expected destination: root_url + /source.txt
+            expected_dst = tree.root.data.rstrip("/") + "/source.txt"
             assert args[1] == expected_dst

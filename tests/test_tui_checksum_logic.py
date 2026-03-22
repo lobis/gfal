@@ -22,7 +22,7 @@ async def test_tui_checksum_calls_fs_with_algo():
         await pilot.wait_for_scheduled_animations()
 
         # We want to test the 'remote' tree
-        tree = app.query_one("#remote-tree", Tree)
+        tree = app.query_one("#source-tree", Tree)
         tree.focus()  # CRITICAL: ensure the tree is focused
 
         node_path = "https://example.com/test_file"

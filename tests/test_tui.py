@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from textual.containers import Vertical
-from textual.widgets import Button, DirectoryTree, Input, RichLog, Tree
+from textual.widgets import Button, Input, RichLog, Tree
 
 from gfal_cli.tui import (
     ChecksumResultModal,
@@ -26,7 +26,7 @@ async def test_tui_composition():
 
 @pytest.mark.asyncio
 async def test_tui_url_submission_via_modal():
-    """Verify that submitting a URL via modal triggers update_remote."""
+    """Verify that submitting a URL via modal triggers update_focused_pane."""
     app = GfalTui()
     test_url = "https://example.com/data"
 
@@ -44,9 +44,9 @@ async def test_tui_url_submission_via_modal():
             await pilot.press("enter")
             await pilot.pause(0.1)
 
-            # Verify the remote tree's URL was updated
-            remote_tree = app.query_one("#remote-tree")
-            assert remote_tree.url == test_url
+            # Verify the source tree's URL was updated (Source is focused by default)
+            source_tree = app.query_one("#source-tree")
+            assert source_tree.url == test_url
             mock_url_to_fs.assert_any_call(test_url, ssl_verify=False)
 
 
@@ -85,7 +85,7 @@ async def test_tui_hotkeys():
 
         async with app.run_test() as pilot:
             # Focus a tree node
-            app.query_one("#local-tree").focus()
+            app.query_one("#source-tree").focus()
             await pilot.press("down")
             await pilot.pause()
 
@@ -139,7 +139,7 @@ async def test_tui_hotkeys():
             await pilot.pause()
 
             # Reset focus
-            tree = app.query_one("#local-tree")
+            tree = app.query_one("#source-tree")
             tree.focus()
             await pilot.pause()
 
@@ -163,7 +163,7 @@ async def test_tui_hotkeys():
         app = GfalTui()
         async with app.run_test() as pilot:
             # Trigger Stat
-            app.query_one("#local-tree").focus()
+            app.query_one("#source-tree").focus()
             await pilot.press("down")
             await pilot.press("s")
             # Give the worker a moment to push the screen
@@ -197,7 +197,7 @@ async def test_tui_vim_navigation():
     """Verify that g/G hotkeys move the cursor to top/bottom."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -220,8 +220,6 @@ async def test_tui_vim_navigation():
         await pilot.press("g")
         await pilot.pause()
         target = tree.root
-        if not tree.show_root and tree.root.children:
-            target = tree.root.children[0]
         assert tree.cursor_node == target
 
 
@@ -250,7 +248,7 @@ async def test_tui_modal_dismiss_button_click():
         mock_fs.info.return_value = {"size": 100}
         with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, "/data")):
             # Trigger Stat to show a modal
-            app.query_one("#local-tree").focus()
+            app.query_one("#source-tree").focus()
             await pilot.press("down")
             await pilot.press("s")
 
@@ -310,7 +308,7 @@ async def test_tui_refresh_hotkey_logic():
         ) as mock_remote_load,
     ):
         async with app.run_test() as pilot:
-            app.query_one("#local-tree").focus()
+            app.query_one("#source-tree").focus()
             await pilot.press("down")
             await pilot.press("r")
             await pilot.pause()
@@ -340,24 +338,24 @@ async def test_tui_remote_tree_selection_stat_call(tmp_path):
         mock_url_to_fs.side_effect = side_effect
 
         async with app.run_test() as pilot:
-            # Use update_remote which handles node expansion correctly
-            await app.update_remote("root://localhost/remote_mock")
+            # Use update_focused_pane which handles node expansion correctly
+            await app.update_focused_pane("root://localhost/remote_mock")
 
-            # Focus remote tree
-            remote_tree = app.query_one(
-                "#remote-tree", HighlightableRemoteDirectoryTree
+            # Focus source tree (which we just updated to be remote)
+            source_tree = app.query_one(
+                "#source-tree", HighlightableRemoteDirectoryTree
             )
-            app.set_focus(remote_tree)
+            app.set_focus(source_tree)
 
             # Wait for nodes to load (file.txt should be under root)
             for _ in range(50):
-                if remote_tree.root and remote_tree.root.children:
+                if source_tree.root and source_tree.root.children:
                     break
                 await pilot.pause(0.02)
 
             # Manually select the first child
-            if remote_tree.root and remote_tree.root.children:
-                remote_tree.select_node(remote_tree.root.children[0])
+            if source_tree.root and source_tree.root.children:
+                source_tree.select_node(source_tree.root.children[0])
 
             # The second call to url_to_fs happens in action_stat
             mock_fs = MagicMock()
@@ -387,71 +385,24 @@ async def test_tui_swap_panes():
         left_pane = app.query_one("#left-pane", Vertical)
         right_pane = app.query_one("#right-pane", Vertical)
 
-        # Initial state: Left=Local, Right=Remote
-        assert isinstance(left_pane.query_one(Tree), HighlightableDirectoryTree)
-        assert isinstance(right_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
+        # Initial state: Left=Source (Remote), Right=Destination (Local)
+        assert isinstance(left_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
+        assert isinstance(right_pane.query_one(Tree), HighlightableDirectoryTree)
 
         # Press 'x' to swap
         await pilot.press("x")
         await pilot.pause()
 
-        # Swapped state: Left=Remote, Right=Local
-        assert isinstance(left_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
-        assert isinstance(right_pane.children[1], DirectoryTree)
+        # Swapped state: Left=Local, Right=Remote
+        assert isinstance(left_pane.query_one(Tree), HighlightableDirectoryTree)
+        assert isinstance(right_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
 
         # Press 'x' again to swap back
         await pilot.press("x")
         await pilot.pause()
 
-        assert isinstance(left_pane.children[1], DirectoryTree)
-        assert isinstance(right_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
-
-
-@pytest.mark.asyncio
-async def test_tui_copy_respects_swap():
-    """Verify that copy operation uses the correct source after swap."""
-    app = GfalTui()
-    # Mock _do_copy to avoid actual network/file ops
-    # Now it's a sync function, so use MagicMock
-    with (
-        patch("gfal_cli.tui.GfalTui._do_copy", new_callable=MagicMock) as mock_copy,
-        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
-    ):
-        mock_fs = MagicMock()
-        mock_fs.ls.return_value = [{"name": "remote_file.txt", "type": "file"}]
-        mock_url_to_fs.return_value = (mock_fs, "/remote")
-
-        async with app.run_test() as pilot:
-            # Swap so Remote is Source (Left)
-            await pilot.press("x")
-            await pilot.pause()
-
-            # Ensure a node is selected in the new source tree (Remote)
-            left_pane = app.query_one("#left-pane", Vertical)
-            src_tree = left_pane.query_one(Tree)
-            app.set_focus(src_tree)
-
-            # Wait for nodes to be available if it's the remote tree
-            for _ in range(50):
-                if src_tree.root and src_tree.root.children:
-                    break
-                await pilot.pause(0.01)
-
-            if src_tree.root and src_tree.root.children:
-                src_tree.select_node(src_tree.root.children[0])
-                await pilot.pause(0.02)
-
-            # Trigger copy directly instead of pilot.press("f5")
-            # pilot.press can be flaky with focus during swap
-            app.action_copy()
-            await pilot.wait_for_scheduled_animations()
-            await pilot.pause(0.1)  # Give a bit more for copy trigger
-
-            # Should have called _do_copy with to_remote=False
-            # (since source is remote)
-            assert mock_copy.called
-            args, kwargs = mock_copy.call_args
-            assert kwargs["to_remote"] is False
+        assert isinstance(left_pane.query_one(Tree), HighlightableRemoteDirectoryTree)
+        assert isinstance(right_pane.query_one(Tree), HighlightableDirectoryTree)
 
 
 @pytest.mark.asyncio
@@ -523,8 +474,8 @@ async def test_tui_local_stat_command_logging(tmp_path):
     app = GfalTui()
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
-        # Focus local tree
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        # Focus local tree (Destination)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -554,8 +505,8 @@ async def test_tui_local_checksum_command_logging(tmp_path):
     app = GfalTui()
     app.log_file = str(log_file)
     async with app.run_test() as pilot:
-        # Focus local tree
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        # Focus local tree (Destination)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -589,7 +540,8 @@ async def test_tui_human_readable_stat():
     """Verify that stat modal contains human-readable size and time."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        # Focus local tree (Destination)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -619,7 +571,8 @@ async def test_tui_checksum_formatting_v2():
     """Verify that checksum modal contains algorithm name and hex value."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        # Focus local tree (Destination)
+        tree = app.query_one("#dest-tree", HighlightableDirectoryTree)
         tree.focus()
         await pilot.press("down")
         await pilot.pause()

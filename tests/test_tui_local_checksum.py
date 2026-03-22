@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gfal_cli.tui import GfalTui
+from gfal_cli.tui import GfalTui, HighlightableDirectoryTree
 
 
 @pytest.mark.asyncio
@@ -12,8 +12,8 @@ async def test_tui_local_checksum_calls_fs():
     app = GfalTui()
     async with app.run_test() as pilot:
         # 1. Select a file in the local tree (left pane)
-        # By default, local-tree is already focused in our _get_focused_tree logic
-        # if nothing else is focused.
+        # By default, dest-tree is where local files are
+        app.query_one("#dest-tree", HighlightableDirectoryTree)
 
         # Create a dummy local file for testing
         test_file = Path("test_local_checksum.txt")

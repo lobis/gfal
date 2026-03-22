@@ -46,7 +46,12 @@ class HighlightableRemoteDirectoryTree(Tree):
     def __init__(self, url: str, ssl_verify: bool = False, **kwargs):
         self.url = url
         self.ssl_verify = ssl_verify
-        super().__init__(url, data=url, **kwargs)
+        # Show a shorter base URL in the root label if it's very long
+        label = url
+        if len(url) > 50:
+            parsed = urlparse(url)
+            label = f"{parsed.scheme}://{parsed.netloc}/.../{Path(url).name}"
+        super().__init__(label, data=url, **kwargs)
 
     def render_label(
         self, node: TreeNode[Any], base_style: Style, control_style: Style
@@ -76,6 +81,10 @@ class HighlightableRemoteDirectoryTree(Tree):
             # Use detail=True to distinguish files and directories
             entries = fs.ls(fs_path, detail=True)
 
+            # Get the base URL (protocol + host/authority)
+            parsed = urlparse(self.url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+
             def add_nodes():
                 for entry in sorted(
                     entries, key=lambda e: (e["type"] != "directory", e["name"])
@@ -84,7 +93,19 @@ class HighlightableRemoteDirectoryTree(Tree):
                     if not name:
                         continue
                     is_dir = entry["type"] == "directory"
-                    node.add(name, data=entry["name"], allow_expand=is_dir)
+                    # Ensure node data is a full SURL
+                    full_path = entry["name"]
+                    if not full_path.startswith((parsed.scheme, "http", "root")):
+                        # Handle absolute/relative paths from fsspec
+                        if not full_path.startswith("/"):
+                            full_path = f"/{full_path}"
+                        # Special case for XRootD double slash
+                        if parsed.scheme == "root" and not full_path.startswith("//"):
+                            full_path = f"/{full_path}"
+                        full_path = f"{base_url}{full_path}"
+
+                    node.add(name, data=full_path, allow_expand=is_dir)
+
                 self.app.log_activity(
                     f"Loaded {len(entries)} items from {path}", level="success"
                 )
@@ -118,6 +139,11 @@ class HighlightableDirectoryTree(DirectoryTree):
             else:
                 label = Text.assemble(label, " [YANKED]", style="bold yellow")
         return label
+
+    def on_mount(self) -> None:
+        # Update root label to be more descriptive
+        if self.root:
+            self.root.label = f"Local: {self.path}"
 
 
 class GfalTui(App):
@@ -224,7 +250,7 @@ class GfalTui(App):
         ("s", "stat", "Stat Info"),
         Binding("c", "checksum_request", "Checksum", show=True),
         ("r", "refresh", "Refresh"),
-        ("f5", "copy", "Copy"),
+        ("r", "refresh", "Refresh"),
         ("x", "swap", "Swap Panes"),
         ("/", "search", "Search"),
         Binding("j", "cursor_down", "Down", show=False),
@@ -258,7 +284,7 @@ class GfalTui(App):
                     tree = HighlightableDirectoryTree(
                         self.initial_src, id="source-tree"
                     )
-                tree.show_root = False
+                tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
             with Vertical(classes="pane", id="right-pane"):
@@ -271,7 +297,7 @@ class GfalTui(App):
                     )
                 else:
                     tree = HighlightableDirectoryTree(self.initial_dst, id="dest-tree")
-                tree.show_root = False
+                tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
         yield RichLog(id="log-window", auto_scroll=True, max_lines=1000)
@@ -281,6 +307,9 @@ class GfalTui(App):
         """Called when the app is mounted."""
         self.log_activity("Welcome to gfal-cli TUI", level="info")
         self._update_toggle_labels()
+        # Set initial focus to Source tree (Left)
+        with suppress(Exception):
+            self.query_one("#source-tree").focus()
 
     def _update_toggle_labels(self) -> None:
         """Update the footer labels for SSL and TPC."""
@@ -349,15 +378,16 @@ class GfalTui(App):
         is_remote = isinstance(tree, HighlightableRemoteDirectoryTree)
 
         if is_remote:
-            # For remote tree, if a file is selected, paste into its parent directory
+            # For remote tree, allow_expand=True for directories, False for files
             if not target_node.allow_expand and target_node.parent:
                 target_path = target_node.parent.data
             else:
                 target_path = target_node.data
         else:
-            # For local tree, if a file is selected, paste into its parent directory
-            if not target_node.data.is_dir:
-                target_path = str(target_node.data.path.parent)
+            # For local tree, node.data is DirEntry (has .is_dir and .path)
+            if not target_node.data.is_dir and target_node.parent:
+                # Use parent node's data (DirEntry) path
+                target_path = str(target_node.parent.data.path)
             else:
                 target_path = str(target_node.data.path)
 
@@ -476,11 +506,13 @@ class GfalTui(App):
                 tree.select_node(last_node)
                 tree.scroll_to_node(last_node)
 
-    async def update_focused_pane(self, url: str):
+    async def update_focused_pane(
+        self, url: str, tree_to_update: Optional[Tree] = None
+    ):
         self.log_activity(f"Updating pane to: {url} (verify={self.ssl_verify})")
         try:
-            # Update the currently focused tree
-            tree = self._get_focused_tree()
+            # Update the specified tree or the currently focused tree
+            tree = tree_to_update or self._get_focused_tree()
             if not tree:
                 return
             pane = tree.parent
@@ -493,7 +525,7 @@ class GfalTui(App):
                 )
             else:
                 new_tree = HighlightableDirectoryTree(url, id=tree_id)
-            new_tree.show_root = False
+            new_tree.show_root = True
             new_tree.yanked_urls = self.yanked_urls
             await pane.mount(new_tree)
         except Exception as e:
@@ -736,12 +768,9 @@ class GfalTui(App):
             f"SSL verification turned {'ON' if self.ssl_verify else 'OFF'}"
         )
         self._update_toggle_labels()
-        # If remote tree exists, we might want to refresh it or notify it.
-        # For now, just log and it will apply to NEXT operations/loads.
-        # To be thorough, we can trigger a refresh of the remote target.
-        remote_tree = self.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
-        if remote_tree:
-            self.run_worker(self.update_remote(remote_tree.url))
+        # Refresh any remote trees to apply the new SSL setting
+        for tree in self.query(HighlightableRemoteDirectoryTree):
+            self.run_worker(self.update_focused_pane(tree.url, tree))
 
     def action_toggle_tpc(self) -> None:
         """Toggle Third Party Copy."""
@@ -767,39 +796,6 @@ class GfalTui(App):
         await right_pane.mount(left_tree)
 
         self.log_activity("Panes swapped: left and right trees exchanged")
-
-    def action_copy(self) -> None:
-        """Copy the selected file from Source (Left) to Destination (Right)."""
-        with suppress(Exception):
-            left_pane = self.query_one("#left-pane", Vertical)
-            right_pane = self.query_one("#right-pane", Vertical)
-
-            src_tree = left_pane.query_one(Tree)
-            dest_tree = right_pane.query_one(Tree)
-
-        # Get the focused node from the Source pane
-        node = src_tree.cursor_node
-        if not node or not node.data:
-            self.log_activity(
-                "No file selected in Source pane for copy", level="warning"
-            )
-            return
-
-        src_path = self._get_node_path(node)
-        if not src_path:
-            return
-
-        if isinstance(dest_tree, HighlightableRemoteDirectoryTree):
-            dest_dir = dest_tree.url
-            to_remote = True
-        else:
-            dest_dir = str(dest_tree.path)
-            to_remote = False
-
-        self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
-        self.run_worker(
-            lambda: self._do_copy(src_path, dest_dir, to_remote=to_remote), thread=True
-        )
 
     def _do_copy(self, src: str, dest: str, to_remote: Optional[bool] = None) -> None:
         """Perform the copy operation in a background thread.

@@ -22,9 +22,9 @@ async def test_tui_swap_panes():
         initial_left_tree = left_pane.query_one(Tree)
         initial_right_tree = right_pane.query_one(Tree)
 
-        # Verify initial types (local on left, remote on right)
-        assert isinstance(initial_left_tree, HighlightableDirectoryTree)
-        assert isinstance(initial_right_tree, HighlightableRemoteDirectoryTree)
+        # Verify initial types (remote on left, local on right)
+        assert isinstance(initial_left_tree, HighlightableRemoteDirectoryTree)
+        assert isinstance(initial_right_tree, HighlightableDirectoryTree)
 
         # Press 'x' to swap
         await pilot.press("x")
@@ -38,8 +38,8 @@ async def test_tui_swap_panes():
         assert new_left_tree == initial_right_tree
         assert new_right_tree == initial_left_tree
 
-        assert isinstance(new_left_tree, HighlightableRemoteDirectoryTree)
-        assert isinstance(new_right_tree, HighlightableDirectoryTree)
+        assert isinstance(new_left_tree, HighlightableDirectoryTree)
+        assert isinstance(new_right_tree, HighlightableRemoteDirectoryTree)
 
         # Press 'x' again to swap back
         await pilot.press("x")
