@@ -253,13 +253,14 @@ async def test_do_copy_local_to_local_file(tmp_path):
             thread=True,
         )
 
-        # Wait for worker to complete
+        # Wait for worker to complete (file must exist AND have content)
+        dst_file = dst_dir / "source.txt"
         for _ in range(50):
-            if (dst_dir / "source.txt").exists():
+            if dst_file.exists() and dst_file.stat().st_size > 0:
                 break
             await pilot.pause(0.1)
 
-        assert (dst_dir / "source.txt").read_text() == "hello"
+        assert dst_file.read_text() == "hello"
 
 
 @pytest.mark.asyncio
@@ -282,8 +283,16 @@ async def test_do_copy_local_directory(tmp_path):
             thread=True,
         )
 
+        # Wait for both files to be fully written
         for _ in range(50):
-            if dst_dir.exists() and (dst_dir / "a.txt").exists():
+            a = dst_dir / "a.txt"
+            b = dst_dir / "b.txt"
+            if (
+                a.exists()
+                and a.stat().st_size > 0
+                and b.exists()
+                and b.stat().st_size > 0
+            ):
                 break
             await pilot.pause(0.1)
 
