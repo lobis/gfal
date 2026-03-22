@@ -214,7 +214,7 @@ class GfalTui(App):
     }
 
     /* Modal styles */
-    MessageModal, ChecksumResultModal, UrlInputModal {
+    MessageModal, ChecksumResultModal, UrlInputModal, PasteModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.5);
     }
@@ -736,11 +736,9 @@ class GfalTui(App):
             tree.run_worker(lambda: tree.load_directory(node), thread=True)
             self.log_activity(f"Refreshed remote: {path}")
         else:
-            # Local DirectoryTree doesn't expose easy child refresh, just reload the whole tree or wait for filesystem events
-            # For now, we just log info for local
-            self.log_activity(
-                f"Local refresh not implemented in UI, but selection is: {node.data}"
-            )
+            # For local, we just reload the whole tree starting at its current root
+            self.log_activity(f"Refreshing local: {tree.path}")
+            self.run_worker(self.update_focused_pane(str(tree.path), tree))
 
     def action_toggle_log(self) -> None:
         """Toggle the visibility of the log window."""

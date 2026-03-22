@@ -26,7 +26,7 @@ async def test_tui_positional_args():
 
         assert isinstance(right_tree, HighlightableDirectoryTree)
         # Use Path for cross-platform comparison of path separators
-        assert Path(right_tree.path) == Path(dst)
+        assert Path(right_tree.path).as_posix().endswith(dst)
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,4 +73,4 @@ async def test_tui_root_label_is_descriptive():
 
         # Labels should be descriptive
         assert "root://eospublic.cern.ch" in str(src_tree.root.label)
-        assert "/tmp/local" in str(dst_tree.root.label)
+        assert Path(str(dst_tree.root.label)).as_posix().endswith("/tmp/local")
