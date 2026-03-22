@@ -108,5 +108,8 @@ async def test_tui_checksum_modal_persistence(tmp_path):
         for _ in range(50):
             if modal.result != "Calculating...":
                 break
-            await pilot.pause(0.02)
+            await pilot.pause(0.05)
         assert modal.result != "Calculating..."
+
+        # Wait for any background workers to finish before teardown
+        await pilot.pause(0.5)

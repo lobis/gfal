@@ -287,6 +287,25 @@ compatibility.  Each stub prints a clear "not supported" message and exits 1.
 
 ## Testing
 
+### Cross-platform path handling
+
+CI runs on Linux, macOS, **and Windows**. Never hardcode forward-slash path
+comparisons (e.g. `assert "/tmp" in str(path)`) — on Windows `Path("/tmp")`
+becomes `D:\tmp`. Use `Path` objects or `PurePosixPath` for comparisons, or
+compare individual path components via `.parts` / `.name`. Common patterns:
+
+```python
+# BAD — breaks on Windows:
+assert "/tmp" in str(tree.path)
+
+# GOOD — platform-independent:
+assert Path(str(tree.path)).parts[-1] == "tmp"
+```
+
+Similarly, never use `str | None` type unions in test files — use
+`Optional[str]` from `typing` instead, since CI still tests Python 3.9
+where PEP 604 unions are not supported at runtime.
+
 pytest test suite lives in `tests/`. Run with:
 
 ```bash

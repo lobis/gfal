@@ -653,7 +653,8 @@ async def test_tui_custom_src_dst():
         assert isinstance(dst_tree, HighlightableDirectoryTree)
 
         assert "root://example.com" in src_tree.url
-        assert "/tmp" in str(dst_tree.path)
+        # Use Path comparison to handle Windows path separators
+        assert Path(str(dst_tree.path)).parts[-1] == "tmp"
 
 
 @pytest.mark.asyncio
