@@ -189,19 +189,18 @@ jobs:
         Priority: optional
         Architecture: ${{ matrix.arch }}
         Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
-        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich
+        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-pygments
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
-                   # Bundle fsspec-xrootd and textual (not in standard apt repos).
-                   # gfal_cli and fsspec-xrootd are installed without deps (system packages
-                   # cover those). Textual is installed WITH its deps so transitive
-                   # requirements (typing_extensions, markdown-it-py, …) are satisfied.
-                   # rich is then removed from the bundle: the system python3-rich package
-                   # (declared in Depends) owns those files.
+                   # Bundle textual and its requirements.
+                   # We prune rich, markdown_it, and pygments because they conflict with official ubuntu packages.
                    python3 -m pip install fsspec-xrootd dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    python3 -m pip install textual --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
-                   rm -rf pkg/usr/lib/python3/dist-packages/rich pkg/usr/lib/python3/dist-packages/rich-*.dist-info && \
-                   mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/rich* && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/markdown_it* && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/mdit_py_plugins* && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/pygments* && \
+                   mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ || true && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
                    dpkg-deb --build pkg python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb"
@@ -239,7 +238,7 @@ jobs:
           artifact: deb-package-distributions-amd64
           install_cmd: |
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-fsspec python3-aiohttp python3-requests python3-rich
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-fsspec python3-aiohttp python3-requests python3-rich python3-markdown-it python3-pygments
             DEBIAN_FRONTEND=noninteractive find . -name "*.deb" -exec apt-get install -y {} +
     container: ${{ matrix.target.container }}
     steps:
