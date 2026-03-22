@@ -32,33 +32,32 @@ class TuiProgress(Callback):
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
-        self.total = 0
-        self.current = 0
+
+    def set_size(self, size):
+        self.size = size
+        self.callback(self.value, self.size or 0)
+
+    def absolute_update(self, value):
+        self.value = value
+        self.callback(self.value, self.size or 0)
+
+    def relative_update(self, inc=1):
+        self.value += inc
+        self.callback(self.value, self.size or 0)
 
     def branch_coro(self, coro):
         return coro
 
-    def set_size(self, size):
-        self.total = size
-        self.callback(self.current, self.total)
-
-    def absolute_update(self, value):
-        self.current = value
-        self.callback(self.current, self.total)
-
-    def relative_update(self, inc=1):
-        self.current += inc
-        self.callback(self.current, self.total)
-
-    def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
-        if total_size is not None:
-            self.total = total_size
-        if curr_size is not None:
-            self.current = curr_size
-        self.callback(self.current, self.total)
-
     def stop(self, success=True):
-        self.callback(self.current, self.total, finished=True, success=success)
+        self.callback(self.value, self.size or 0, finished=True, success=success)
+
+    @property
+    def total(self):
+        return self.size or 0
+
+    @property
+    def current(self):
+        return self.value
 
 
 class RichProgress:

@@ -9,12 +9,21 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -24,7 +33,6 @@ from textual.widgets import (
     Header,
     Input,
     Label,
-    ProgressBar,
     RichLog,
     Select,
     Static,
@@ -76,6 +84,12 @@ class HighlightableRemoteDirectoryTree(Tree):
         node = event.node
         if not node.children:
             self.run_worker(lambda: self.load_directory(node), thread=True)
+
+    async def reload(self) -> None:
+        """Reload the tree by clearing and re-expanding the root."""
+        if self.root:
+            self.root.remove_children()
+            self.run_worker(lambda: self.load_directory(self.root), thread=True)
 
     def load_directory(self, node):
         path = node.data
@@ -218,7 +232,7 @@ class GfalTui(App):
     }
 
     /* Modal styles */
-    MessageModal, ChecksumResultModal, UrlInputModal, PasteModal {
+    MessageModal, ChecksumResultModal, UrlInputModal, PasteModal, TransferProgressModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.5);
     }
@@ -256,25 +270,11 @@ class GfalTui(App):
         margin-top: 1;
     }
 
-    #progress-window {
-        dock: bottom;
+    #progress-display {
         height: auto;
-        border: thick $success;
-        background: $surface;
-        display: none;
+        border: solid $primary;
         padding: 1;
-        margin: 0 2;
-    }
-
-    #progress-window.visible {
-        display: block;
-    }
-
-    #progress-label {
-        width: 100%;
-        text-align: center;
-        text-style: bold;
-        margin-bottom: 1;
+        margin: 1 0;
     }
     """
 
@@ -332,9 +332,6 @@ class GfalTui(App):
         log_window = RichLog(id="log-window", auto_scroll=True, max_lines=1000)
         log_window.can_focus = False
         yield log_window
-        with Container(id="progress-window"):
-            yield Label("Transfer Progress", id="progress-label")
-            yield ProgressBar(id="progress-bar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -345,24 +342,10 @@ class GfalTui(App):
         with suppress(Exception):
             self.query_one("#left-tree").focus()
 
-    def watch_progress_current(self, value: int) -> None:
-        """Update progress bar when current value changes."""
-        with suppress(Exception):
-            self.query_one("#progress-bar", ProgressBar).progress = value
-
-    def watch_progress_total(self, value: int) -> None:
-        """Update progress bar total when total value changes."""
-        with suppress(Exception):
-            pb = self.query_one("#progress-bar", ProgressBar)
-            if value > 0:
-                pb.total = value
-            else:
-                pb.total = 100  # Default if unknown
-
     def watch_copy_in_progress(self, value: bool) -> None:
-        """Show/hide progress window based on copy status."""
-        with suppress(Exception):
-            self.query_one("#progress-window").set_class(value, "visible")
+        """Show/hide progress screen based on copy status."""
+        # No-op since we use a modal now
+        pass
 
     def _update_progress(
         self, current: int, total: int, finished: bool = False, success: bool = True
@@ -372,7 +355,15 @@ class GfalTui(App):
         if total > 0:
             self.progress_total = total
 
+        # Explicitly update the progress modal if visible
+        with suppress(Exception):
+            if hasattr(self, "active_progress_modal") and self.active_progress_modal:
+                self.active_progress_modal.update_progress(
+                    self.progress_current, self.progress_total
+                )
+
         if finished:
+            self.active_progress_modal = None
             # Small delay before hiding progress window
             self.set_timer(1.0, lambda: setattr(self, "copy_in_progress", False))
             if not success:
@@ -787,25 +778,15 @@ class GfalTui(App):
             self.run_worker(get_checksum, thread=True)
 
     def action_refresh(self) -> None:
-        """Refresh the selected directory node."""
-        tree = self._get_focused_tree()
-        if not tree:
-            return
-        node = tree.cursor_node
-        if not node:
-            return
+        """Refresh both panes."""
+        self.run_worker(self.refresh_trees())
 
-        # Only refresh if it's a directory (remote tree handles expansion)
-        path = self._get_node_path(node)
-        if isinstance(tree, HighlightableRemoteDirectoryTree):
-            self.log_activity(f"gfal-ls {path}", level="command")
-            node.remove_children()
-            tree.run_worker(lambda: tree.load_directory(node), thread=True)
-            self.log_activity(f"Refreshed remote: {path}")
-        else:
-            # For local, we just reload the whole tree starting at its current root
-            self.log_activity(f"Refreshing local: {tree.path}")
-            self.run_worker(self.update_focused_pane(str(tree.path), tree))
+    async def refresh_trees(self) -> None:
+        """Refresh both panes by reloading their current directories."""
+        self.log_activity("Refreshing file trees...")
+        with suppress(Exception):
+            await self.query_one("#left-tree").reload()
+            await self.query_one("#right-tree").reload()
 
     def action_toggle_log(self) -> None:
         """Toggle the visibility of the log window."""
@@ -857,8 +838,14 @@ class GfalTui(App):
         If to_remote is True/False, dest is assumed to be a directory base.
         If to_remote is None, dest is assumed to be the full destination path.
         """
+        self.copy_in_progress = True
+        self.progress_current = 0
+        self.progress_total = 100  # Reset to default
+
         try:
             from pathlib import Path
+
+            from gfal_cli.progress import TuiProgress
 
             final_dest = dest
             if to_remote is not None:
@@ -883,11 +870,13 @@ class GfalTui(App):
                     to_remote = False  # Local to Local
 
             self.log_activity(f"Starting copy: {src} -> {final_dest}")
-            self.copy_in_progress = True
-            self.progress_current = 0
-            self.progress_total = 100  # Reset to default
 
-            from gfal_cli.progress import TuiProgress
+            # Push Rich Progress Modal
+            def push_modal():
+                self.active_progress_modal = TransferProgressModal(src, final_dest)
+                self.push_screen(self.active_progress_modal)
+
+            self.call_from_thread(push_modal)
 
             def progress_callback(current, total, finished=False, success=True):
                 self.call_from_thread(
@@ -910,9 +899,8 @@ class GfalTui(App):
                     # Local to Local
                     import shutil
 
-                    # shutil doesn't take a callback easily, but we can mock it
-                    # (or just assume it's fast for local-to-local)
-                    prog.update(curr_size=0, total_size=100)
+                    prog.set_size(100)
+                    prog.absolute_update(0)
                     if Path(src).is_dir():
                         shutil.copytree(src, final_dest, dirs_exist_ok=True)
                     else:
@@ -928,7 +916,7 @@ class GfalTui(App):
                 )
             )
             # Refresh trees to show the new content with a small delay
-            self.set_timer(1.0, self.action_refresh)
+            self.call_from_thread(lambda: self.set_timer(1.0, self.refresh_trees))
         except Exception as e:
             error_msg = CommandBase._format_error(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
@@ -939,6 +927,16 @@ class GfalTui(App):
                     )
                 )
             )
+        finally:
+            self.call_from_thread(self._finish_copy)
+
+    def _finish_copy(self) -> None:
+        """Helper to finish copy state from main thread."""
+        self.copy_in_progress = False
+        if hasattr(self, "active_progress_modal") and self.active_progress_modal:
+            # We don't necessarily want to pop it automatically,
+            # but we can set it to None to indicate it's finished.
+            pass
 
     def on_unmount(self) -> None:
         """Cancel all workers on exit."""
@@ -1003,6 +1001,42 @@ class ChecksumResultModal(ModalScreen):
             self.app.last_checksum_algo = new_algo
             self.result = "Calculating..."
             self.app.action_checksum(self.path, new_algo, modal=self)
+
+    @on(Button.Pressed, "#close-btn")
+    def on_close(self) -> None:
+        self.dismiss()
+
+
+class TransferProgressModal(ModalScreen):
+    """A centered modal screen for displaying transfer progress using Rich."""
+
+    def __init__(self, src: str, dst: str):
+        super().__init__()
+        self.src = src
+        self.dst = dst
+        self.rich_progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+        )
+        self.task_id = self.rich_progress.add_task("Copying...", total=100)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-content"):
+            yield Static("[bold]Transfer Progress[/bold]", classes="modal-title")
+            yield Static(f"Source: {self.src}", classes="modal-body")
+            yield Static(f"Destination: {self.dst}", classes="modal-body")
+            yield Static(self.rich_progress, id="progress-display")
+            with Horizontal(id="modal-btn-row"):
+                yield Button("Close", id="close-btn")
+
+    def update_progress(self, current: int, total: int):
+        self.rich_progress.update(self.task_id, completed=current, total=total or 100)
+        with suppress(Exception):
+            self.query_one("#progress-display", Static).update(self.rich_progress)
 
     @on(Button.Pressed, "#close-btn")
     def on_close(self) -> None:

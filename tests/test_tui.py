@@ -300,12 +300,12 @@ async def test_tui_refresh_hotkey_logic():
     # DirectoryTree.reload is async
     with (
         patch(
-            "textual.widgets.DirectoryTree.reload", new_callable=AsyncMock
+            "gfal_cli.tui.HighlightableDirectoryTree.reload", new_callable=AsyncMock
         ) as mock_local_reload,
         patch(
-            "gfal_cli.tui.HighlightableRemoteDirectoryTree.load_directory",
-            new_callable=MagicMock,
-        ) as mock_remote_load,
+            "gfal_cli.tui.HighlightableRemoteDirectoryTree.reload",
+            new_callable=AsyncMock,
+        ) as mock_remote_reload,
     ):
         async with app.run_test() as pilot:
             app.query_one("#left-tree").focus()
@@ -313,7 +313,7 @@ async def test_tui_refresh_hotkey_logic():
             await pilot.press("r")
             await pilot.pause()
             mock_local_reload.assert_called()
-            mock_remote_load.assert_called()
+            mock_remote_reload.assert_called()
 
 
 @pytest.mark.asyncio
