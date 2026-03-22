@@ -16,6 +16,8 @@ import sys
 
 import pytest
 
+from helpers import _subprocess_env
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -32,6 +34,7 @@ def run_bin(cmd, *args, input=None, check=False):
         text=True,
         encoding="utf-8",
         input=input,
+        env=_subprocess_env(),
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -45,6 +48,7 @@ def run_bin_binary(cmd, *args, input_bytes=None):
         [binary, *[str(a) for a in args]],
         capture_output=True,
         input=input_bytes,
+        env=_subprocess_env(),
     )
     return proc.returncode, proc.stdout, proc.stderr
 

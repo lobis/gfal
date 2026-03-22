@@ -141,8 +141,8 @@ class GfalTui(App):
         super().__init__(*args, **kwargs)
         if log_file:
             self.log_file = log_file
-        self.initial_src = src or "./"
-        self.initial_dst = dst or "https://eospublic.cern.ch:8444/eos/opendata/cms/"
+        self.initial_src = src or "root://eospublic.cern.ch//eos/opendata/cms/"
+        self.initial_dst = dst or "./"
         self.last_checksum_algo = "ADLER32"
         self._thread_id = threading.get_ident()
 
@@ -246,31 +246,31 @@ class GfalTui(App):
         yield Header()
         with Horizontal():
             with Vertical(classes="pane", id="left-pane"):
-                yield Label("Source (Local)", classes="pane-header")
+                yield Label("Source", classes="pane-header")
                 # Detect if initial_src is remote or local
                 if "://" in self.initial_src:
                     tree = HighlightableRemoteDirectoryTree(
                         self.initial_src,
-                        id="local-tree",
-                        ssl_verify=self.ssl_verify,
-                    )
-                else:
-                    tree = HighlightableDirectoryTree(self.initial_src, id="local-tree")
-                tree.show_root = False
-                tree.yanked_urls = self.yanked_urls
-                yield tree
-            with Vertical(classes="pane", id="right-pane"):
-                yield Label("Destination (Remote)", classes="pane-header")
-                if "://" in self.initial_dst:
-                    tree = HighlightableRemoteDirectoryTree(
-                        self.initial_dst,
-                        id="remote-tree",
+                        id="source-tree",
                         ssl_verify=self.ssl_verify,
                     )
                 else:
                     tree = HighlightableDirectoryTree(
-                        self.initial_dst, id="remote-tree"
+                        self.initial_src, id="source-tree"
                     )
+                tree.show_root = False
+                tree.yanked_urls = self.yanked_urls
+                yield tree
+            with Vertical(classes="pane", id="right-pane"):
+                yield Label("Destination", classes="pane-header")
+                if "://" in self.initial_dst:
+                    tree = HighlightableRemoteDirectoryTree(
+                        self.initial_dst,
+                        id="dest-tree",
+                        ssl_verify=self.ssl_verify,
+                    )
+                else:
+                    tree = HighlightableDirectoryTree(self.initial_dst, id="dest-tree")
                 tree.show_root = False
                 tree.yanked_urls = self.yanked_urls
                 yield tree
@@ -293,7 +293,7 @@ class GfalTui(App):
             self.query_one(Footer).refresh()
 
     def action_search(self) -> None:
-        """Open a modal to search/input a new remote URL."""
+        """Open a modal to search/input a new URL for the focused pane."""
         self.push_screen(UrlInputModal())
 
     def on_key(self, event: events.Key) -> None:
@@ -476,17 +476,25 @@ class GfalTui(App):
                 tree.select_node(last_node)
                 tree.scroll_to_node(last_node)
 
-    async def update_remote(self, url: str):
-        self.log_activity(f"Updating remote to: {url} (verify={self.ssl_verify})")
+    async def update_focused_pane(self, url: str):
+        self.log_activity(f"Updating pane to: {url} (verify={self.ssl_verify})")
         try:
-            # Find the tree wherever it is
-            remote_tree = self.query_one("#remote-tree")
-            pane = remote_tree.parent
-            await remote_tree.remove()
+            # Update the currently focused tree
+            tree = self._get_focused_tree()
+            if not tree:
+                return
+            pane = tree.parent
+            tree_id = tree.id
+            await tree.remove()
 
-            new_tree = HighlightableRemoteDirectoryTree(
-                url, ssl_verify=self.ssl_verify, id="remote-tree"
-            )
+            if "://" in url:
+                new_tree = HighlightableRemoteDirectoryTree(
+                    url, ssl_verify=self.ssl_verify, id=tree_id
+                )
+            else:
+                new_tree = HighlightableDirectoryTree(url, id=tree_id)
+            new_tree.show_root = False
+            new_tree.yanked_urls = self.yanked_urls
             await pane.mount(new_tree)
         except Exception as e:
             self.log_activity(f"Error updating remote: {e}", level="error")
@@ -777,25 +785,21 @@ class GfalTui(App):
             )
             return
 
-        is_src_local = isinstance(src_tree, DirectoryTree)
         src_path = self._get_node_path(node)
         if not src_path:
             return
 
-        if is_src_local:
-            # Source -> Remote (put)
+        if isinstance(dest_tree, HighlightableRemoteDirectoryTree):
             dest_dir = dest_tree.url
-            self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
-            self.run_worker(
-                lambda: self._do_copy(src_path, dest_dir, to_remote=True), thread=True
-            )
+            to_remote = True
         else:
-            # Remote -> Local (get)
             dest_dir = str(dest_tree.path)
-            self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
-            self.run_worker(
-                lambda: self._do_copy(src_path, dest_dir, to_remote=False), thread=True
-            )
+            to_remote = False
+
+        self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
+        self.run_worker(
+            lambda: self._do_copy(src_path, dest_dir, to_remote=to_remote), thread=True
+        )
 
     def _do_copy(self, src: str, dest: str, to_remote: Optional[bool] = None) -> None:
         """Perform the copy operation in a background thread.
@@ -1049,7 +1053,7 @@ class UrlInputModal(ModalScreen):
         url = self.query_one("#modal-url-input", Input).value
         if url:
             self.app.log_activity(f"gfal-ls {url}", level="command")
-            self.app.run_worker(self.app.update_remote(url))
+            self.app.run_worker(self.app.update_focused_pane(url))
         self.action_close()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

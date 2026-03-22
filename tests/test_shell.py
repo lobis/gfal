@@ -91,6 +91,8 @@ class TestMainEntrypoint:
         import subprocess
         import sys
 
+        from helpers import _subprocess_env
+
         script = (
             "import sys; sys.argv=['gfal-unknown_cmd_xyz']+sys.argv[1:];"
             "from gfal_cli.shell import main; main()"
@@ -99,6 +101,7 @@ class TestMainEntrypoint:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            env=_subprocess_env(),
         )
         assert proc.returncode != 0
         assert "Unknown command" in proc.stderr

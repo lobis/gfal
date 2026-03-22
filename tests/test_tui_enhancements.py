@@ -18,8 +18,8 @@ async def test_tui_positional_args():
 
     app = GfalTui(src=src, dst=dst)
     async with app.run_test():
-        left_tree = app.query_one("#local-tree")
-        right_tree = app.query_one("#remote-tree")
+        left_tree = app.query_one("#source-tree")
+        right_tree = app.query_one("#dest-tree")
 
         assert isinstance(left_tree, HighlightableRemoteDirectoryTree)
         assert left_tree.url == src
@@ -58,7 +58,7 @@ async def test_tui_checksum_modal_persistence(tmp_path):
         await pilot.pause(0.1)
 
         # Select the file
-        tree = app.query_one("#local-tree")
+        tree = app.query_one("#source-tree")
         tree.focus()
         tree.cursor_line = 0
 
