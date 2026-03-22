@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Label, ProgressBar
 
 from gfal_cli.tui import (
     GfalTui,
@@ -24,7 +24,7 @@ async def test_tui_progress_bar_updates(tmp_path):
     mock_url_to_fs = MagicMock()
     mock_fs = MagicMock()
 
-    def mock_put(lpath, rpath, callback=None, **kwargs):
+    def mock_transfer(lpath, rpath, callback=None, **kwargs):
         # 1. Set size
         callback.set_size(real_size)
         # 2. Update progress
@@ -33,7 +33,10 @@ async def test_tui_progress_bar_updates(tmp_path):
         # 3. Finish
         callback.stop(success=True)
 
-    mock_fs.put.side_effect = mock_put
+    # src is remote, dest is local → _do_copy calls fs.get (Remote→Local)
+    mock_fs.get.side_effect = mock_transfer
+    # Also handle put in case direction detection changes
+    mock_fs.put.side_effect = mock_transfer
     mock_url_to_fs.return_value = (
         mock_fs,
         "/eos/.../118EDE47-ED73-8E4E-9CEB-4C4BF9E01704.root",
@@ -107,9 +110,14 @@ async def test_tui_progress_bar_updates(tmp_path):
                 assert found_modal, "TransferProgressModal not found in screen stack"
                 assert modal.src == src_url
 
-                # The progress display should exist
-                display = modal.query_one("#progress-display", Static)
-                assert display is not None
+                # The progress bar and bytes label should exist and reflect final state
+                pb = modal.query_one("#progress-bar", ProgressBar)
+                assert pb is not None
+                bytes_label = modal.query_one("#bytes-label", Label)
+                assert bytes_label is not None
+                # The transfer completed fully — _current and _total should match
+                assert modal._total == real_size
+                assert modal._current == real_size
 
                 # Cleanup: pop modals to avoid interfering with other tests
                 while len(app.screen_stack) > 1:

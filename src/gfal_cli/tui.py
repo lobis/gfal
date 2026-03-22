@@ -175,9 +175,6 @@ class GfalTui(App):
     tpc_enabled = reactive(True)
     yanked_urls = reactive(set())
     log_file = reactive(str(Path(tempfile.gettempdir()) / "gfal-tui.log"))
-    progress_current = reactive(0)
-    progress_total = reactive(100)
-    copy_in_progress = reactive(False)
 
     def __init__(
         self,
@@ -272,11 +269,9 @@ class GfalTui(App):
         margin-top: 1;
     }
 
-    #progress-display {
+    #bytes-label {
         height: auto;
-        border: solid $primary;
-        padding: 1;
-        margin: 1 0;
+        margin-top: 1;
     }
     """
 
@@ -343,34 +338,6 @@ class GfalTui(App):
         # Set initial focus to Left tree
         with suppress(Exception):
             self.query_one("#left-tree").focus()
-
-    def watch_copy_in_progress(self, value: bool) -> None:
-        """Show/hide progress screen based on copy status."""
-        # No-op since we use a modal now
-        pass
-
-    def _update_progress(
-        self, current: int, total: int, finished: bool = False, success: bool = True
-    ) -> None:
-        """Update progress variables from worker thread."""
-        self.progress_current = current
-        self.progress_total = total if total > 0 else 0
-
-        # Explicitly update the progress modal if visible
-        with suppress(Exception):
-            if hasattr(self, "active_progress_modal") and self.active_progress_modal:
-                self.active_progress_modal.update_progress(
-                    self.progress_current, self.progress_total
-                )
-
-        if finished:
-            self.active_progress_modal = None
-            # Small delay before hiding progress window
-            self.set_timer(1.0, lambda: setattr(self, "copy_in_progress", False))
-            if not success:
-                self.log_activity("Transfer finished with errors", level="error")
-        else:
-            self.copy_in_progress = True
 
     def _update_toggle_labels(self) -> None:
         """Update the footer labels for SSL and TPC."""
@@ -486,8 +453,12 @@ class GfalTui(App):
                     name=f"paste_worker_{name}",
                 )
 
-            # Clear yanked URLs after triggering paste
+            # Clear yanked URLs after triggering paste and update trees
             self.yanked_urls = set()
+            for tree_widget in self.query(
+                "HighlightableDirectoryTree, HighlightableRemoteDirectoryTree"
+            ):
+                tree_widget.yanked_urls = self.yanked_urls
             self.log_activity("Yanked files cleared after paste")
 
         # Use PasteModal (will need update for multiple)
@@ -863,59 +834,48 @@ class GfalTui(App):
         If to_remote is True/False, dest is assumed to be a directory base.
         If to_remote is None, dest is assumed to be the full destination path.
         """
-        self.copy_in_progress = True
-        self.progress_current = 0
-        self.progress_total = 0  # 0 means unknown size
+        from gfal_cli.progress import TuiProgress
+
+        final_dest = dest
+        if to_remote is not None:
+            # Traditional Copy (F5/action_copy): dest is a directory, append src name
+            src_name = Path(src).name
+            if "://" in dest:
+                final_dest = f"{dest.rstrip('/')}/{src_name}"
+            else:
+                final_dest = str(Path(dest) / src_name)
+        else:
+            # Paste (p/action_paste): dest is already the full destination path
+            is_src_remote = "://" in src
+            is_dest_remote = "://" in final_dest
+            if not is_src_remote and is_dest_remote:
+                to_remote = True
+            elif is_src_remote and not is_dest_remote:
+                to_remote = False
+            elif is_src_remote and is_dest_remote:
+                to_remote = True  # Remote to Remote (streaming fallback)
+            else:
+                to_remote = False  # Local to Local
+
+        self.log_activity(f"Starting copy: {src} -> {final_dest}")
+
+        # Create the modal before starting the copy so the progress callback
+        # can close over it directly. Each copy owns its own modal — no shared state.
+        modal = TransferProgressModal(src, final_dest)
+        self.call_from_thread(self.push_screen, modal)
+
+        def progress_callback(current, total, finished=False, success=True):
+            self.call_from_thread(modal.update_progress, current, total)
+            if finished and not success:
+                self.log_activity("Transfer finished with errors", level="error")
+
+        prog = TuiProgress(progress_callback)
 
         try:
-            from pathlib import Path
-
-            from gfal_cli.progress import TuiProgress
-
-            final_dest = dest
-            if to_remote is not None:
-                # Traditional Copy (F5/action_copy): dest is a directory, append src name
-                src_name = Path(src).name
-                if "://" in dest:
-                    final_dest = f"{dest.rstrip('/')}/{src_name}"
-                else:
-                    final_dest = str(Path(dest) / src_name)
-            else:
-                # Paste (p/action_paste): dest is already the full destination path
-                # Infer to_remote for internal logic
-                is_src_remote = "://" in src
-                is_dest_remote = "://" in final_dest
-                if not is_src_remote and is_dest_remote:
-                    to_remote = True
-                elif is_src_remote and not is_dest_remote:
-                    to_remote = False
-                elif is_src_remote and is_dest_remote:
-                    to_remote = True  # Remote to Remote (streaming fallback)
-                else:
-                    to_remote = False  # Local to Local
-
-            self.log_activity(f"Starting copy: {src} -> {final_dest}")
-
-            # Push Rich Progress Modal
-            def push_modal():
-                self.active_progress_modal = TransferProgressModal(src, final_dest)
-                self.push_screen(self.active_progress_modal)
-
-            self.call_from_thread(push_modal)
-
-            def progress_callback(current, total, finished=False, success=True):
-                self.call_from_thread(
-                    self._update_progress, current, total, finished, success
-                )
-
-            prog = TuiProgress(progress_callback)
-
             if to_remote:
                 fs, fs_path = url_to_fs(final_dest, ssl_verify=self.ssl_verify)
-                # put() handles local-to-remote and potentially remote-to-remote
                 fs.put(src, fs_path, recursive=True, callback=prog)
             else:
-                # Target is local
                 if "://" in src:
                     # Remote to Local
                     fs, fs_path = url_to_fs(src, ssl_verify=self.ssl_verify)
@@ -924,44 +884,23 @@ class GfalTui(App):
                     # Local to Local
                     import shutil
 
-                    prog.set_size(100)
-                    prog.absolute_update(0)
+                    prog.set_size(
+                        Path(src).stat().st_size if Path(src).is_file() else 0
+                    )
                     if Path(src).is_dir():
                         shutil.copytree(src, final_dest, dirs_exist_ok=True)
                     else:
                         shutil.copy2(src, final_dest)
-                    prog.stop(success=True)
 
+            prog.stop(success=True)
             self.log_activity(f"Successfully copied to {final_dest}", level="success")
-            self.call_from_thread(
-                lambda: self.push_screen(
-                    MessageModal(
-                        f"Copied {src}\nto {final_dest}", title="Transfer Success"
-                    )
-                )
-            )
-            # Refresh trees to show the new content with a small delay
+            self.call_from_thread(modal.mark_done, success=True)
             self.call_from_thread(lambda: self.set_timer(1.0, self.refresh_trees))
         except Exception as e:
+            prog.stop(success=False)
             error_msg = CommandBase._format_error(e)
             self.log_activity(f"Copy failed: {error_msg}", level="error")
-            self.call_from_thread(
-                lambda: self.push_screen(
-                    MessageModal(
-                        f"Failed to copy {src}:\n{error_msg}", title="Transfer Error"
-                    )
-                )
-            )
-        finally:
-            self.call_from_thread(self._finish_copy)
-
-    def _finish_copy(self) -> None:
-        """Helper to finish copy state from main thread."""
-        self.copy_in_progress = False
-        if hasattr(self, "active_progress_modal") and self.active_progress_modal:
-            # We don't necessarily want to pop it automatically,
-            # but we can set it to None to indicate it's finished.
-            pass
+            self.call_from_thread(modal.mark_done, success=False, error=error_msg)
 
     def on_unmount(self) -> None:
         """Cancel all workers on exit."""
@@ -1035,55 +974,83 @@ class ChecksumResultModal(ModalScreen):
 class TransferProgressModal(ModalScreen):
     """A centered modal screen for displaying transfer progress."""
 
-    _progress_current: reactive[int] = reactive(0)
-    _progress_total: reactive[int] = reactive(0)
-
     def __init__(self, src: str, dst: str):
         super().__init__()
         self.src = src
         self.dst = dst
+        # Store latest values so on_mount can apply them if updates
+        # arrive before the widget tree is ready.
+        self._current: int = 0
+        self._total: int = 0  # 0 = unknown size
+        self._done: bool = False
 
     def compose(self) -> ComposeResult:
+        src_name = Path(self.src).name or self.src
+        dst_name = Path(self.dst).name or self.dst
         with Vertical(id="modal-content"):
             yield Static("[bold]Transfer Progress[/bold]", classes="modal-title")
-            yield Static(f"Source: {self.src}", classes="modal-body")
-            yield Static(f"Destination: {self.dst}", classes="modal-body")
-            yield ProgressBar(total=None, id="progress-bar")
-            yield Label("Starting...", id="progress-label")
+            yield Label(f"[dim]From:[/dim] {src_name}", classes="modal-body")
+            yield Label(f"[dim]  To:[/dim] {dst_name}", classes="modal-body")
+            yield ProgressBar(
+                total=None, show_percentage=False, show_eta=False, id="progress-bar"
+            )
+            yield Label("Starting…", id="bytes-label")
             with Horizontal(id="modal-btn-row"):
                 yield Button("Close", id="close-btn")
 
     def on_mount(self) -> None:
+        self._apply(self._current, self._total)
         self.query_one("#close-btn").focus()
 
-    def watch__progress_total(self, value: int) -> None:
-        with suppress(Exception):
-            self.query_one("#progress-bar", ProgressBar).update(
-                total=value if value > 0 else None
-            )
-        self._refresh_label()
+    def update_progress(self, current: int, total: int) -> None:
+        """Called on the main thread for every progress tick."""
+        self._current = current
+        self._total = total if total > 0 else 0
+        self._apply(current, self._total)
 
-    def watch__progress_current(self, value: int) -> None:
+    def _apply(self, current: int, total: int) -> None:
+        """Push current state into widgets; silently skips if not yet mounted."""
         with suppress(Exception):
-            self.query_one("#progress-bar", ProgressBar).update(progress=value)
-        self._refresh_label()
-
-    def _refresh_label(self) -> None:
-        current = self._progress_current
-        total = self._progress_total
+            pb = self.query_one("#progress-bar", ProgressBar)
+            if total > 0:
+                pb.update(total=total, progress=current)
+            # When total is unknown, leave the bar in indeterminate mode (spinner).
         with suppress(Exception):
-            label = self.query_one("#progress-label", Label)
+            label = self.query_one("#bytes-label", Label)
             if total > 0:
                 pct = current * 100 // total
                 label.update(
-                    f"{human_readable_size(current)} / {human_readable_size(total)} ({pct}%)"
+                    f"{human_readable_size(current)} / {human_readable_size(total)}  ({pct}%)"
                 )
-            else:
+            elif current > 0:
                 label.update(f"{human_readable_size(current)} transferred")
 
-    def update_progress(self, current: int, total: int) -> None:
-        self._progress_total = total if total > 0 else 0
-        self._progress_current = current
+    def mark_done(self, *, success: bool, error: str = "") -> None:
+        """Called on the main thread when the transfer finishes."""
+        self._done = True
+        with suppress(Exception):
+            pb = self.query_one("#progress-bar", ProgressBar)
+            if success:
+                if self._total > 0:
+                    pb.update(progress=self._total)
+            else:
+                # Show a full-red bar by jumping to 0/1 with a failed style
+                pb.update(total=1, progress=0)
+        with suppress(Exception):
+            label = self.query_one("#bytes-label", Label)
+            if success:
+                size_str = (
+                    human_readable_size(self._total)
+                    if self._total > 0
+                    else human_readable_size(self._current)
+                    if self._current > 0
+                    else ""
+                )
+                label.update(f"[green]Done[/green]  {size_str}")
+            else:
+                label.update(f"[red]Failed:[/red] {error}")
+        # Auto-dismiss after a short pause so the user sees the result
+        self.set_timer(1.5, self.dismiss)
 
     @on(Button.Pressed, "#close-btn")
     def on_close(self) -> None:

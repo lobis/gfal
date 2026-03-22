@@ -23,11 +23,26 @@ from helpers import _subprocess_env
 # ---------------------------------------------------------------------------
 
 
+def _find_binary(cmd: str) -> str | None:
+    """Locate a gfal-* binary, preferring the active venv over PATH.
+
+    Using shutil.which() alone can pick up a system-installed binary whose
+    shebang points at a Python that lacks this project's dependencies (e.g.
+    textual).  The venv that runs pytest always has the right packages.
+    """
+    from pathlib import Path
+
+    venv_bin = Path(sys.executable).parent / cmd
+    if venv_bin.is_file():
+        return str(venv_bin)
+    return shutil.which(cmd)
+
+
 def run_bin(cmd, *args, input=None, check=False):
     """Run an installed gfal-* binary directly."""
-    binary = shutil.which(cmd)
+    binary = _find_binary(cmd)
     if binary is None:
-        pytest.skip(f"{cmd!r} not found on PATH — run 'pip install -e .'")
+        pytest.skip(f"{cmd!r} not found — run 'pip install -e .'")
     proc = subprocess.run(
         [binary, *[str(a) for a in args]],
         capture_output=True,
@@ -41,9 +56,9 @@ def run_bin(cmd, *args, input=None, check=False):
 
 def run_bin_binary(cmd, *args, input_bytes=None):
     """Like run_bin but captures stdout as raw bytes."""
-    binary = shutil.which(cmd)
+    binary = _find_binary(cmd)
     if binary is None:
-        pytest.skip(f"{cmd!r} not found on PATH — run 'pip install -e .'")
+        pytest.skip(f"{cmd!r} not found — run 'pip install -e .'")
     proc = subprocess.run(
         [binary, *[str(a) for a in args]],
         capture_output=True,
