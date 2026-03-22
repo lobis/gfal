@@ -303,7 +303,9 @@ class GfalTui(App):
                 tree.show_root = True
                 tree.yanked_urls = self.yanked_urls
                 yield tree
-        yield RichLog(id="log-window", auto_scroll=True, max_lines=1000)
+        log_window = RichLog(id="log-window", auto_scroll=True, max_lines=1000)
+        log_window.can_focus = False
+        yield log_window
         yield Footer()
 
     def on_mount(self) -> None:
