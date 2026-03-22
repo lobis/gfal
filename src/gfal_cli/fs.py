@@ -10,6 +10,7 @@ import stat as stat_module
 import sys
 import zlib
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import fsspec
@@ -232,6 +233,11 @@ class StatInfo:
         self.st_atime = float(info.get("atime") or self.st_mtime)
         self.st_ctime = float(info.get("ctime") or self.st_mtime)
 
+    @property
+    def info(self) -> dict[str, Any]:
+        """Return the raw fsspec info dict."""
+        return self._info
+
 
 def _xrootd_flags_to_mode(flags):
     """Convert XRootD StatInfoFlags to a POSIX file mode integer."""
@@ -358,7 +364,17 @@ def compute_checksum(fso, path, alg):
             ):
                 result = fso.checksum(path, alg_upper)
                 if result:
-                    return _format_checksum_result(result)
+                    # If it returns (alg, value), verify it's what we asked for
+                    if isinstance(result, (list, tuple)) and len(result) == 2:
+                        raw_alg = str(result[0]).upper()
+                        if raw_alg != alg_upper:
+                            # Algorithm mismatch (e.g. server only does ADLER32)
+                            pass
+                        else:
+                            return _format_checksum_result(result)
+                    else:
+                        # Single value result — assume it's the requested algorithm
+                        return _format_checksum_result(result)
         except Exception:
             pass  # Fall back to client-side
 
@@ -407,8 +423,8 @@ def _format_checksum_result(result):
     """Ensure checksum result is a hex string."""
     if isinstance(result, bytes):
         return result.hex()
-    if isinstance(result, int):
-        return f"{result:x}"
+    if isinstance(result, (list, tuple)) and len(result) == 2:
+        return str(result[1])
     return str(result)
 
 

@@ -2,13 +2,13 @@
 Simple commands: mkdir, save, cat, stat, rename, chmod, sum, xattr.
 """
 
-import contextlib
 import errno
 import stat
 import sys
 from datetime import datetime
 
 from gfal_cli import base, fs
+from gfal_cli.api import GfalClient
 from gfal_cli.utils import file_mode_str, file_type_str
 
 
@@ -42,28 +42,20 @@ class GfalCommands(base.CommandBase):
             )
             return 1
 
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+
         rc = 0
         for d in self.params.directory:
             try:
-                fso, path = fs.url_to_fs(d, opts)
-                if self.params.parents:
-                    # makedirs is idempotent; fall back to mkdir if not available
-                    if hasattr(fso, "makedirs"):
-                        fso.makedirs(path, exist_ok=True)
-                    else:
-                        with contextlib.suppress(FileExistsError):
-                            fso.mkdir(path, create_parents=True)
-                else:
-                    fso.mkdir(path, create_parents=False)
-                # Apply mode if the filesystem supports chmod (best effort —
-                # not all backends honour permissions, e.g. HTTP/XRootD readonly)
-                with contextlib.suppress(Exception):
-                    fso.chmod(path, mode_int)
+                client.mkdir(d, mode=mode_int, parents=self.params.parents)
             except Exception as e:
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
-                ecode = getattr(e, "errno", None)
-                rc = ecode if ecode and 0 < ecode <= 255 else 1
+                rc = getattr(e, "errno", 1)
         return rc
 
     # ------------------------------------------------------------------
@@ -73,9 +65,13 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", type=base.surl, help="URI of the file to write")
     def execute_save(self):
         """Read from stdin and write to a remote file."""
-        opts = fs.build_storage_options(self.params)
-        fso, path = fs.url_to_fs(self.params.file, opts)
-        with fso.open(path, "wb") as f:
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+        with client.open(self.params.file, "wb") as f:
             while True:
                 chunk = sys.stdin.buffer.read(fs.CHUNK_SIZE)
                 if not chunk:
@@ -95,12 +91,16 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to display")
     def execute_cat(self):
         """Print file contents to stdout."""
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
         rc = 0
         for url in self.params.file:
             try:
-                fso, path = fs.url_to_fs(url, opts)
-                with fso.open(path, "rb") as f:
+                with client.open(url, "rb") as f:
                     while True:
                         chunk = f.read(fs.CHUNK_SIZE)
                         if not chunk:
@@ -111,8 +111,7 @@ class GfalCommands(base.CommandBase):
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
-                ecode = getattr(e, "errno", None)
-                rc = ecode if ecode and 0 < ecode <= 255 else 1
+                rc = getattr(e, "errno", 1)
         return rc
 
     # ------------------------------------------------------------------
@@ -122,29 +121,30 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to stat")
     def execute_stat(self):
         """Display file status."""
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
         rc = 0
         first = True
         for url in self.params.file:
             try:
                 if not first:
                     print()
-                self._stat_one(url, opts)
+                self._stat_one(url, client)
                 first = False
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
-                ecode = getattr(e, "errno", None)
-                rc = ecode if ecode and 0 < ecode <= 255 else 1
+                rc = getattr(e, "errno", 1)
                 first = False
         return rc
 
-    def _stat_one(self, url, opts):
-        fso, path = fs.url_to_fs(url, opts)
-        info = fso.info(path)
-        info = fs.xrootd_enrich(info, fso)
-        st = fs.StatInfo(info)
+    def _stat_one(self, url, client):
+        st = client.stat(url)
         print(f"  File: '{url}'")
         print(f"  Size: {st.st_size}\t{file_type_str(stat.S_IFMT(st.st_mode))}")
         print(
@@ -175,12 +175,13 @@ class GfalCommands(base.CommandBase):
     @base.arg("destination", type=base.surl, help="new URI")
     def execute_rename(self):
         """Rename a file or directory."""
-        opts = fs.build_storage_options(self.params)
-        src_fs, src_path = fs.url_to_fs(self.params.source, opts)
-        dst_fs, dst_path = fs.url_to_fs(self.params.destination, opts)
-        if type(src_fs) is not type(dst_fs):
-            raise OSError("rename across different filesystem types is not supported")
-        src_fs.mv(src_path, dst_path)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+        client.rename(self.params.source, self.params.destination)
 
     # ------------------------------------------------------------------
     # chmod
@@ -195,16 +196,21 @@ class GfalCommands(base.CommandBase):
         except ValueError:
             self.parser.error("Mode must be an octal number (e.g. 0755)")
             return 1
-        opts = fs.build_storage_options(self.params)
+
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+
         rc = 0
         for url in self.params.file:
             try:
-                fso, path = fs.url_to_fs(url, opts)
-                fso.chmod(path, mode)
+                client.chmod(url, mode)
             except Exception as e:
                 sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
-                ecode = getattr(e, "errno", None)
-                rc = ecode if ecode and 0 < ecode <= 255 else 1
+                rc = getattr(e, "errno", 1)
         return rc
 
     # ------------------------------------------------------------------
@@ -219,12 +225,16 @@ class GfalCommands(base.CommandBase):
     )
     def execute_sum(self):
         """Compute a file checksum."""
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
         alg = self.params.checksum_type.upper()
-        fso, path = fs.url_to_fs(self.params.file, opts)
 
         try:
-            checksum = fs.compute_checksum(fso, path, alg)
+            checksum = client.checksum(self.params.file, alg)
             sys.stdout.write(f"{self.params.file} {checksum}\n")
         except Exception as e:
             sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
@@ -243,27 +253,32 @@ class GfalCommands(base.CommandBase):
     )
     def execute_xattr(self):
         """Get or set extended attributes."""
-        opts = fs.build_storage_options(self.params)
-        fso, path = fs.url_to_fs(self.params.file, opts)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
 
-        if not hasattr(fso, "getxattr"):
-            sys.stderr.write("xattr is not supported by this filesystem\n")
-            return 1
-
-        if self.params.attribute is not None:
-            if "=" in self.params.attribute:
-                i = self.params.attribute.index("=")
-                key = self.params.attribute[:i]
-                val = self.params.attribute[i + 1 :]
-                fso.setxattr(path, key, val)
+        try:
+            if self.params.attribute is not None:
+                if "=" in self.params.attribute:
+                    i = self.params.attribute.index("=")
+                    key = self.params.attribute[:i]
+                    val = self.params.attribute[i + 1 :]
+                    client.setxattr(self.params.file, key, val)
+                else:
+                    val = client.getxattr(self.params.file, self.params.attribute)
+                    sys.stdout.write(f"{val}\n")
             else:
-                val = fso.getxattr(path, self.params.attribute)
-                sys.stdout.write(f"{val}\n")
-        else:
-            attrs = fso.listxattr(path)
-            for attr in attrs:
-                try:
-                    val = fso.getxattr(path, attr)
-                    sys.stdout.write(f"{attr} = {val}\n\n")
-                except Exception as e:
-                    sys.stdout.write(f"{attr} FAILED: {e}\n\n")
+                attrs = client.listxattr(self.params.file)
+                for attr in attrs:
+                    try:
+                        val = client.getxattr(self.params.file, attr)
+                        sys.stdout.write(f"{attr} = {val}\n\n")
+                    except Exception as e:
+                        sys.stdout.write(f"{attr} FAILED: {e}\n\n")
+        except Exception as e:
+            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            return getattr(e, "errno", 1)
+        return 0

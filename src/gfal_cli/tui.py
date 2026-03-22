@@ -679,19 +679,17 @@ class GfalTui(App):
             dest_dir = dest_tree.url
             self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
             self.run_worker(
-                self._do_copy(src_path, dest_dir, to_remote=True), thread=True
+                lambda: self._do_copy(src_path, dest_dir, to_remote=True), thread=True
             )
         else:
             # Remote -> Local (get)
             dest_dir = str(dest_tree.path)
             self.log_activity(f"gfal-copy {src_path} {dest_dir}", level="command")
             self.run_worker(
-                self._do_copy(src_path, dest_dir, to_remote=False), thread=True
+                lambda: self._do_copy(src_path, dest_dir, to_remote=False), thread=True
             )
 
-    async def _do_copy(
-        self, src: str, dest: str, to_remote: bool | None = None
-    ) -> None:
+    def _do_copy(self, src: str, dest: str, to_remote: bool | None = None) -> None:
         """Perform the copy operation in a background thread.
 
         If to_remote is True/False, dest is assumed to be a directory base.

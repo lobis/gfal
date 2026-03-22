@@ -328,8 +328,11 @@ def test_xattr_binary_no_attrs(tmp_path):
 
     rc, out, err = run_bin("gfal-xattr", f.as_uri())
 
-    # May succeed (empty output) or fail if xattr not supported; must not crash
-    assert rc in (0, 1)
+    # May succeed (empty output) or fail if xattr not supported; must not crash.
+    # We allow 0, 1, or platform-specific EOPNOTSUPP (95 on Linux, 102 on macOS).
+    import errno
+
+    assert rc in (0, 1, getattr(errno, "EOPNOTSUPP", 95), getattr(errno, "ENOTSUP", 95))
 
 
 # ---------------------------------------------------------------------------

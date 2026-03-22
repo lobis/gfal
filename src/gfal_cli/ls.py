@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from gfal_cli import base, fs
+from gfal_cli.api import GfalClient
 from gfal_cli.utils import file_mode_str
 
 # ---------------------------------------------------------------------------
@@ -191,13 +192,19 @@ class CommandLs(base.CommandBase):
         if self.params.full_time:
             self.params.time_style = "long-iso"
 
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+
         multi = len(self.params.file) > 1
         rc = 0
         first = True
         for url in self.params.file:
             try:
-                r = self._list_one(url, opts, print_header=multi, first=first)
+                r = self._list_one(url, client, print_header=multi, first=first)
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
@@ -209,42 +216,26 @@ class CommandLs(base.CommandBase):
             first = False
         return rc
 
-    def _list_one(self, url, opts, *, print_header, first):
-        fso, path = fs.url_to_fs(url, opts)
-
-        info = fso.info(path)
-        st = fs.StatInfo(info)
-
+    def _list_one(self, url, client, *, print_header, first):
+        st = client.stat(url)
         if self.params.directory:
             if print_header:
                 if not first:
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{url}:\n")
-            self._print_entry(url, st, self._fetch_xattrs(fso, path))
+            self._print_entry(url, st, self._fetch_xattrs(client, url))
             return 0
 
-        # Always attempt ls() — errors (e.g. 403 on HTTP directories that don't
-        # support listing) propagate as real errors rather than silently showing
-        # just the URL.  This also handles HTTP where info() always returns
-        # type='file' even for directories.
-        try:
-            raw_entries = fso.ls(path, detail=True)
-        except OSError as _e:
-            # XRootD (and some other backends) raise OSError when ls() is called
-            # on a file path ("not a directory").  Fall back to a single-entry
-            # list so the file is displayed normally.
-            _msg = str(_e).lower()
-            if (
-                "not a directory" in _msg
-                or "unable to open directory" in _msg
-                or getattr(_e, "errno", None) == 20
-            ):
-                raw_entries = [info]
-            else:
-                raise
+        entries_st = client.ls(url, detail=True)
+        # Convert StatInfo back to dict-like for _apply_sort (or refactor _apply_sort)
+        # Actually _apply_sort uses e.get("name") and fs.StatInfo(e)
+        # I'll update entries to be compatible with _apply_sort
+        raw_entries = [st.info for st in entries_st]
         entries = _apply_sort(raw_entries, self.params.sort, self.params.reverse)
 
-        path_norm = path.rstrip("/")
+        from urllib.parse import urlparse
+
+        path_norm = urlparse(url).path.rstrip("/")
         is_self_only = entries and all(
             e.get("name", "").rstrip("/") == path_norm for e in entries
         )
@@ -255,7 +246,7 @@ class CommandLs(base.CommandBase):
                 if not first:
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{url}:\n")
-            self._print_entry(url, st, self._fetch_xattrs(fso, path))
+            self._print_entry(url, st, self._fetch_xattrs(client, url))
         elif not entries:
             if not stat.S_ISDIR(st.st_mode):
                 # HTTP file: ls() returned nothing; fall back to showing the entry
@@ -263,7 +254,7 @@ class CommandLs(base.CommandBase):
                     if not first:
                         sys.stdout.write("\n")
                     sys.stdout.write(f"{url}:\n")
-                self._print_entry(url, st, self._fetch_xattrs(fso, path))
+                self._print_entry(url, st, self._fetch_xattrs(client, url))
             # else: genuinely empty directory — print header only
             elif print_header:
                 if not first:
@@ -289,13 +280,13 @@ class CommandLs(base.CommandBase):
                 if not self.params.all and name.startswith("."):
                     continue
                 entry_st = fs.StatInfo(entry_info)
-                xattrs = self._fetch_xattrs(fso, entry_info["name"])
+                xattrs = self._fetch_xattrs(client, entry_info["name"])
                 self._print_entry(name, entry_st, xattrs, size_width=max_size_w)
 
         return 0
 
-    def _fetch_xattrs(self, fso, path):
-        """Fetch the extended attributes named by ``--xattr`` for *path*.
+    def _fetch_xattrs(self, client, url):
+        """Fetch the extended attributes named by ``--xattr`` for *url*.
 
         Returns a dict ``{attr_name: value_str_or_None}``.  An empty dict is
         returned when ``--xattr`` was not given, ``-l`` is not active, or the
@@ -303,14 +294,12 @@ class CommandLs(base.CommandBase):
         """
         if not self.params.long or not self.params.xattr:
             return {}
-        if not hasattr(fso, "getxattr"):
-            return {}
         result = {}
+        import contextlib
+
         for attr in self.params.xattr:
-            try:
-                result[attr] = str(fso.getxattr(path, attr))
-            except Exception:
-                result[attr] = None
+            with contextlib.suppress(Exception):
+                result[attr] = client.getxattr(url, attr)
         return result
 
     def _print_entry(self, name, st, xattrs=None, *, size_width=None):

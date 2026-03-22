@@ -15,9 +15,12 @@ async def test_tui_yank_functionality():
     """Test that pressing 'y' yanks the selected item and highlights it."""
     app = GfalTui()
     async with app.run_test() as pilot:
-        # Wait for trees to be ready
-        await pilot.pause()
         local_tree = app.query_one("#local-tree", HighlightableDirectoryTree)
+        # Wait for trees to be ready and have nodes
+        for _ in range(20):
+            if local_tree.root and local_tree.root.children:
+                break
+            await pilot.pause(0.01)
 
         # Move cursor to first child
         await pilot.press("down")
@@ -29,7 +32,7 @@ async def test_tui_yank_functionality():
         # Yank it
         await pilot.press("y")
 
-        assert app.yanked_url == path
+        assert path in app.yanked_urls
 
         # Verify highlight in label
         label = local_tree.render_label(node, MagicMock(), MagicMock())
@@ -37,7 +40,7 @@ async def test_tui_yank_functionality():
 
         # Verify other tree also has the yanked_url set
         remote_tree = app.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
-        assert remote_tree.yanked_url == path
+        assert path in remote_tree.yanked_urls
 
 
 @pytest.mark.asyncio
@@ -47,13 +50,14 @@ async def test_tui_paste_modal_trigger():
     async with app.run_test() as pilot:
         await pilot.pause()
         # Yank something first
-        app.yanked_url = "/tmp/source.txt"
+        app.yanked_urls = ["/tmp/source.txt"]
 
         # Focus remote tree and select a directory (root is a directory)
         remote_tree = app.query_one("#remote-tree", HighlightableRemoteDirectoryTree)
         app.set_focus(remote_tree)
         # root is selected by default usually, if not:
-        # remote_tree.select_node(remote_tree.root)
+        if not remote_tree.cursor_node:
+            await pilot.press("down")
 
         # Press 'p'
         await pilot.press("p")
@@ -72,11 +76,13 @@ async def test_tui_paste_execution():
     with patch.object(GfalTui, "_do_copy") as mock_do_copy:
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.yanked_url = "/tmp/file.txt"
+            app.yanked_urls = ["/tmp/file.txt"]
             remote_tree = app.query_one(
                 "#remote-tree", HighlightableRemoteDirectoryTree
             )
             app.set_focus(remote_tree)
+            if not remote_tree.cursor_node:
+                await pilot.press("down")
 
             await pilot.press("p")
             assert isinstance(app.screen, PasteModal)

@@ -30,19 +30,19 @@ async def test_tui_yank_toggle():
         url = str(node.data.path)
 
         # Initial state: nothing yanked
-        assert app.yanked_url is None
+        assert not app.yanked_urls
 
         # Yank it
         await pilot.press("y")
         await pilot.pause()
-        assert app.yanked_url == url
-        assert tree.yanked_url == url
+        assert url in app.yanked_urls
+        assert url in tree.yanked_urls
 
         # Un-yank it (press y again)
         await pilot.press("y")
         await pilot.pause()
-        assert app.yanked_url is None
-        assert tree.yanked_url is None
+        assert not app.yanked_urls
+        assert not tree.yanked_urls
 
         # Yank it again
         await pilot.press("y")

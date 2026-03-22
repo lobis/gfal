@@ -7,7 +7,9 @@ import stat
 import sys
 from pathlib import Path
 
-from gfal_cli import base, fs
+from gfal_cli import base
+from gfal_cli.api import GfalClient
+from gfal_cli.errors import GfalFileNotFoundError, GfalIsADirectoryError
 
 
 class CommandRm(base.CommandBase):
@@ -61,78 +63,68 @@ class CommandRm(base.CommandBase):
             sys.stderr.write("No URI specified\n")
             return errno.EINVAL
 
-        opts = fs.build_storage_options(self.params)
+        client = GfalClient(
+            cert=self.params.cert,
+            key=self.params.key,
+            timeout=self.params.timeout,
+            ssl_verify=not getattr(self.params, "no_verify", False),
+        )
+
         for url in urls:
-            self._do_rm(url, opts)
+            self._do_rm(url, client)
 
         return self.return_code
 
-    def _do_rm(self, url, opts):
-        fso, path = fs.url_to_fs(url, opts)
-
-        if not self.params.just_delete:
-            try:
-                info = fso.info(path)
-                st = fs.StatInfo(info)
-            except FileNotFoundError:
-                self._set_error(errno.ENOENT)
-                print(f"{url}\tMISSING")
-                return
-            except Exception as e:
-                self._set_error(1)
-                print(f"{url}\tFAILED: {e}")
-                raise
-
-            if stat.S_ISDIR(st.st_mode):
-                self._do_rmdir(url, fso, path, opts)
-                return
-
-        if self.params.dry_run:
-            print(f"{url}\tSKIP")
-            return
-
+    def _do_rm(self, url, client):
         try:
-            fso.rm(path, recursive=False)
+            if not self.params.just_delete:
+                st = client.stat(url)
+                if stat.S_ISDIR(st.st_mode):
+                    self._do_rmdir(url, client)
+                    return
+
+            if self.params.dry_run:
+                print(f"{url}\tSKIP")
+                return
+
+            client.rm(url)
             print(f"{url}\tDELETED")
-        except FileNotFoundError:
+        except (IsADirectoryError, GfalIsADirectoryError) as e:
+            sys.stderr.write(f"{self.progr}: {self._format_error(e)}\n")
+            self._set_error(1)
+        except GfalFileNotFoundError:
             self._set_error(errno.ENOENT)
             print(f"{url}\tMISSING")
         except Exception as e:
             self._set_error(1)
             print(f"{url}\tFAILED: {e}")
-            raise
 
-    def _do_rmdir(self, url, fso, path, opts):
+    def _do_rmdir(self, url, client):
         if not self.params.recursive:
             raise IsADirectoryError(f"Cannot remove '{url}': is a directory")
 
         # Remove contents first
         try:
-            entries = fso.ls(path, detail=False)
+            entries = client.ls(url, detail=True)
         except Exception:
             entries = []
 
         base_url = url.rstrip("/") + "/"
-        base_path = path.rstrip("/") + "/"
-        for entry in entries:
-            # entry is typically the full path
-            name = Path(entry.rstrip("/")).name
+        for entry_st in entries:
+            name = Path(entry_st.info["name"].rstrip("/")).name
             if name in (".", ".."):
                 continue
             child_url = base_url + name
-            child_path = base_path + name
-            child_info = fso.info(child_path)
-            child_st = fs.StatInfo(child_info)
-            if stat.S_ISDIR(child_st.st_mode):
-                self._do_rmdir(child_url, fso, child_path, opts)
+            if stat.S_ISDIR(entry_st.st_mode):
+                self._do_rmdir(child_url, client)
             else:
                 if self.params.dry_run:
                     print(f"{child_url}\tSKIP")
                 else:
                     try:
-                        fso.rm(child_path, recursive=False)
+                        client.rm(child_url)
                         print(f"{child_url}\tDELETED")
-                    except FileNotFoundError:
+                    except GfalFileNotFoundError:
                         self._set_error(errno.ENOENT)
                         print(f"{child_url}\tMISSING")
 
@@ -140,15 +132,14 @@ class CommandRm(base.CommandBase):
             print(f"{url}\tSKIP DIR")
         else:
             try:
-                fso.rmdir(path)
+                client.rmdir(url)
                 print(f"{url}\tRMDIR")
-            except FileNotFoundError:
+            except GfalFileNotFoundError:
                 self._set_error(errno.ENOENT)
                 print(f"{url}\tMISSING")
             except Exception as e:
                 self._set_error(1)
                 print(f"{url}\tFAILED: {e}")
-                raise
 
     def _set_error(self, code):
         if self.return_code == 0:

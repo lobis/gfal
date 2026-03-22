@@ -31,6 +31,15 @@ async def test_tui_pane_navigation():
         # Verify 'L' (shift-l) still works for log toggle (indirectly by checking binding)
         # We can't easily check if log is toggled without checking styles,
         # but we can check if the binding exists.
-        binding = next((b for b in app.BINDINGS if b[0] == "L"), None)
+        def get_key(b):
+            if hasattr(b, "key"):
+                return b.key
+            return b[0]
+
+        binding = next((b for b in app.BINDINGS if get_key(b) == "L"), None)
         assert binding is not None
-        assert binding[1] == "toggle_log"
+        # Check action, handling both Binding objects and older tuples
+        action = getattr(binding, "action", None)
+        if action is None and isinstance(binding, (list, tuple)):
+            action = binding[1]
+        assert action == "toggle_log"
