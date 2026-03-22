@@ -39,6 +39,7 @@ gfal-bringonline = "gfal_cli.shell:main"
 gfal-archivepoll = "gfal_cli.shell:main"
 gfal-evict = "gfal_cli.shell:main"
 gfal-token = "gfal_cli.shell:main"
+gfal-tui = "gfal_cli.shell:main"
 
 [project.optional-dependencies]
 dev = [

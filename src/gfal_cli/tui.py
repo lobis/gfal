@@ -28,7 +28,7 @@ from textual.widgets import (
 )
 from textual.widgets._tree import TreeNode
 
-from gfal_cli.base import CommandBase
+from gfal_cli.base import CommandBase, interactive
 from gfal_cli.fs import compute_checksum, url_to_fs
 from gfal_cli.utils import (
     human_readable_size,
@@ -907,6 +907,18 @@ class UrlInputModal(ModalScreen):
             self.action_close()
         elif event.button.id == "load-btn":
             self.handle_submit()
+
+
+class CommandTui(CommandBase):
+    @interactive
+    def execute_tui(self):
+        """Launch the Text User Interface."""
+        import sys
+
+        GfalTui().run()
+        log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
+        sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
+        return 0
 
 
 if __name__ == "__main__":

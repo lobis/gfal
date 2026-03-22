@@ -21,7 +21,7 @@ except PackageNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# @arg decorator (mirrors gfal2-util API)
+# @arg and @interactive decorators (mirrors gfal2-util API)
 # ---------------------------------------------------------------------------
 
 
@@ -36,6 +36,12 @@ def arg(*args, **kwargs):
         return func
 
     return _decorator
+
+
+def interactive(func):
+    """Decorator that marks an execute_* method as interactive (must run in main thread)."""
+    func.is_interactive = True
+    return func
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +363,12 @@ class CommandBase:
                 os.environ["X509_USER_PROXY"] = str(default_proxy)
 
         self._setup_logger(self.params.verbose, self.params.log_file)
+
+        # Interactive commands must run in the main thread (e.g. TUI signal handling).
+        # This bypasses the worker thread and timeout logic.
+        if getattr(func, "is_interactive", False):
+            self._executor(func)
+            return self.return_code
 
         t = Thread(target=self._executor, args=[func], daemon=True)
         t.start()

@@ -13,6 +13,7 @@ from gfal_cli import (
     ls,  # noqa: F401  – registers CommandLs subclass
     rm,  # noqa: F401  – registers CommandRm subclass
     tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict/token)
+    tui,  # noqa: F401  – registers CommandTui subclass
 )
 
 
@@ -152,15 +153,9 @@ def main(argv=None):
     # `gfal` (no hyphen) — top-level dispatcher
     # -----------------------------------------------------------------------
     if prog_stem == "gfal":
-        # No subcommand given -> launch TUI
+        # No subcommand given -> show help
         if len(argv) < 2:
-            import tempfile
-
-            from gfal_cli.tui import GfalTui
-
-            GfalTui().run()
-            log_path = Path(tempfile.gettempdir()) / "gfal-tui.log"
-            sys.stdout.write(f"\nTUI exited. Logs are available at: {log_path}\n")
+            _print_gfal_help()
             sys.exit(0)
 
         subcmd = argv[1]
