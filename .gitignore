@@ -220,5 +220,6 @@ gfal2-util/
 !gfal-cli.spec
 rpmbuild/
 pkg/
+*.deb
 
 *.root
