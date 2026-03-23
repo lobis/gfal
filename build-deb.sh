@@ -45,7 +45,7 @@ Section: utils
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
-Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments, python3-click
+Depends: python3, python3-fsspec, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments, python3-click
 Description: Grid File Access Library — Python rewrite of gfal2, based on fsspec
 EOF
 

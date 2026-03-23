@@ -269,11 +269,21 @@ jobs:
 
         cp artifacts/*.deb site/deb/pool/main/g/gfal/
         cd site/deb
+        # Create Packages files
         for arch in amd64 arm64; do
+          # Scanning the pool directory; we need the paths to be relative to site/deb
           apt-ftparchive packages pool/main/g/gfal --arch $arch > dists/stable/main/binary-$arch/Packages
           gzip -c dists/stable/main/binary-$arch/Packages > dists/stable/main/binary-$arch/Packages.gz
         done
-        apt-ftparchive release dists/stable > dists/stable/Release
+        apt-ftparchive \
+          -o "APT::FTPArchive::Release::Origin=gfal" \
+          -o "APT::FTPArchive::Release::Label=gfal" \
+          -o "APT::FTPArchive::Release::Suite=stable" \
+          -o "APT::FTPArchive::Release::Codename=stable" \
+          -o "APT::FTPArchive::Release::Architectures=amd64 arm64" \
+          -o "APT::FTPArchive::Release::Components=main" \
+          -o "APT::FTPArchive::Release::Description=Grid File Access Library" \
+          release dists/stable > dists/stable/Release
         cd ../..
 
         cat <<EOF > site/rpm/gfal.repo
@@ -344,19 +354,22 @@ jobs:
         - name: AlmaLinux 9
           container: almalinux:9
           install_cmd: |
-            dnf install -y epel-release curl
+            dnf install -y --allowerasing epel-release curl dnf-plugins-core
+            dnf config-manager --set-enabled crb
             curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal && break || sleep 10; done
+            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: AlmaLinux 10
           container: almalinux:10
           install_cmd: |
-            dnf install -y epel-release curl
+            dnf install -y --allowerasing epel-release curl dnf-plugins-core
+            # crb is enabled by default in AlmaLinux 10, but dnf-plugins-core is still good practice
             curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal && break || sleep 10; done
+            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: Ubuntu 24.04
           container: ubuntu:24.04
           install_cmd: |
-            apt-get update && apt-get install -y curl
+            apt-get update && apt-get install -y curl ca-certificates
+            # Add our repository
             echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | tee /etc/apt/sources.list.d/gfal.list
             for i in {1..12}; do apt-get update && apt-get install -y python3-gfal && break || sleep 10; done
         - name: PyPI
