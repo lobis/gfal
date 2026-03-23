@@ -52,7 +52,13 @@ jobs:
     - name: Install package and test dependencies
       run: pip install --no-cache-dir ".[dev]"
     - name: Run unit and functional tests
-      run: pytest tests/ -v -m "not integration and not xrootd"
+      run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
+    - name: Upload coverage
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: unittests
+        fail_ci_if_error: false
 
   xrootd:
     name: XRootD Server Tests
@@ -170,6 +176,8 @@ jobs:
       if: matrix.arch == 'arm64'
       uses: docker/setup-qemu-action@v4
     - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
     - name: Build DEB (Native dpkg-deb)
       run: |
         docker run --rm \
