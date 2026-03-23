@@ -1,5 +1,5 @@
 """
-gfal-cli: GFAL2-compatible CLI tools based on fsspec.
+gfal: GFAL2-compatible CLI tools based on fsspec.
 """
 
 from importlib.metadata import PackageNotFoundError

@@ -82,7 +82,7 @@ class TestMainEntrypoint:
         # --version exits with 0 and prints version info
         rc, out, err = run_gfal("ls", "--version")
         assert rc == 0
-        assert "gfal-cli" in out or "gfal-cli" in err
+        assert "gfal" in out or "gfal" in err
 
     def test_unknown_command(self):
         import subprocess

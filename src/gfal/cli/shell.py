@@ -117,7 +117,7 @@ def _print_gfal_help(to=sys.stdout):
     grp = click.RichGroup(
         name="gfal",
         help=(
-            f"[bold]gfal-cli {base.VERSION}[/bold] — "
+            f"[bold]gfal {base.VERSION}[/bold] — "
             "GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)."
         ),
         epilog=epilog,
@@ -178,12 +178,12 @@ def main(argv=None):
 
         # gfal --version / gfal -V
         if subcmd in ("-V", "--version"):
-            sys.stdout.write(f"gfal-cli {base.VERSION}\n")
+            sys.stdout.write(f"gfal {base.VERSION}\n")
             sys.exit(0)
 
         # gfal version  (subcommand form)
         if subcmd == "version":
-            sys.stdout.write(f"gfal-cli {base.VERSION}\n")
+            sys.stdout.write(f"gfal {base.VERSION}\n")
             sys.exit(0)
 
         # gfal help  (print help)

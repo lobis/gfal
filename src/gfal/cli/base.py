@@ -515,7 +515,7 @@ def _build_common_params():
             is_eager=True,
             expose_value=False,
             callback=_version_callback,
-            help=f"Show the version and exit (gfal-cli {VERSION}).",
+            help=f"Show the version and exit (gfal {VERSION}).",
         ),
         click.Option(
             ["-v", "--verbose"],
@@ -602,7 +602,7 @@ _COMMON_RENAME_MAP = {
 def _version_callback(ctx, param, value):
     if not value or ctx.resilient_parsing:
         return
-    click.echo(f"gfal-cli {VERSION}")
+    click.echo(f"gfal {VERSION}")
     ctx.exit()
 
 

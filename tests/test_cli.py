@@ -103,7 +103,7 @@ def test_version(subcmd):
     rc, out, err = run_bin(subcmd, "--version")
     assert rc == 0
     output = out + err
-    assert "gfal-cli" in output
+    assert "gfal" in output
 
 
 # ---------------------------------------------------------------------------
