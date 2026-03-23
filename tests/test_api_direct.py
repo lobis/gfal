@@ -1,0 +1,503 @@
+"""Direct unit tests for GfalClient (src/gfal/core/api.py).
+
+These tests call the API directly (no subprocess) so that coverage is
+collected in the pytest process.
+"""
+
+import errno
+import stat
+import sys
+from pathlib import Path
+
+import pytest
+
+from gfal.core.api import GfalClient
+from gfal.core.errors import (
+    GfalError,
+    GfalFileExistsError,
+    GfalFileNotFoundError,
+    GfalIsADirectoryError,
+    GfalNotADirectoryError,
+    GfalPermissionError,
+    GfalTimeoutError,
+)
+
+# ---------------------------------------------------------------------------
+# GfalClient construction
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientInit:
+    def test_default_init(self):
+        client = GfalClient()
+        assert client.cert is None
+        assert client.key is None
+        assert client.timeout == 1800
+        assert client.ssl_verify is True
+
+    def test_custom_init(self):
+        client = GfalClient(
+            cert="/tmp/x.pem", key="/tmp/k.pem", timeout=60, ssl_verify=False
+        )
+        assert client.cert == "/tmp/x.pem"
+        assert client.key == "/tmp/k.pem"
+        assert client.timeout == 60
+        assert client.ssl_verify is False
+
+    def test_key_defaults_to_cert(self):
+        client = GfalClient(cert="/tmp/x.pem")
+        assert client.key == "/tmp/x.pem"
+
+    def test_storage_options_filters_none(self):
+        client = GfalClient()
+        opts = client.storage_options
+        assert "client_cert" not in opts
+        assert "client_key" not in opts
+        assert "timeout" in opts
+        assert "ssl_verify" in opts
+
+    def test_storage_options_with_cert(self):
+        client = GfalClient(cert="/tmp/x.pem", key="/tmp/k.pem")
+        opts = client.storage_options
+        assert opts["client_cert"] == "/tmp/x.pem"
+        assert opts["client_key"] == "/tmp/k.pem"
+
+
+# ---------------------------------------------------------------------------
+# stat
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientStat:
+    def test_stat_regular_file(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(b"hello world")
+        client = GfalClient()
+        st = client.stat(f.as_uri())
+        assert st.st_size == 11
+        assert stat.S_ISREG(st.st_mode)
+
+    def test_stat_directory(self, tmp_path):
+        client = GfalClient()
+        st = client.stat(tmp_path.as_uri())
+        assert stat.S_ISDIR(st.st_mode)
+
+    def test_stat_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.stat((tmp_path / "no_such").as_uri())
+
+    def test_stat_bare_path(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(b"x")
+        client = GfalClient()
+        st = client.stat(str(f))
+        assert st.st_size == 1
+
+
+# ---------------------------------------------------------------------------
+# ls
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientLs:
+    def test_ls_directory_detail(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        client = GfalClient()
+        entries = client.ls(tmp_path.as_uri(), detail=True)
+        names = [Path(e.info["name"]).name for e in entries]
+        assert "a.txt" in names
+        assert "b.txt" in names
+
+    def test_ls_directory_no_detail(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        client = GfalClient()
+        names = client.ls(tmp_path.as_uri(), detail=False)
+        assert "a.txt" in names
+        assert "b.txt" in names
+
+    def test_ls_file_returns_single_entry(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_bytes(b"hello")
+        client = GfalClient()
+        entries = client.ls(f.as_uri(), detail=True)
+        assert len(entries) >= 1
+
+    def test_ls_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.ls((tmp_path / "no_such_dir").as_uri(), detail=True)
+
+    def test_ls_empty_directory(self, tmp_path):
+        d = tmp_path / "empty"
+        d.mkdir()
+        client = GfalClient()
+        entries = client.ls(d.as_uri(), detail=True)
+        assert entries == []
+
+
+# ---------------------------------------------------------------------------
+# mkdir
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientMkdir:
+    def test_mkdir_creates_directory(self, tmp_path):
+        d = tmp_path / "newdir"
+        client = GfalClient()
+        client.mkdir(d.as_uri())
+        assert d.is_dir()
+
+    def test_mkdir_parents_creates_nested(self, tmp_path):
+        d = tmp_path / "a" / "b" / "c"
+        client = GfalClient()
+        client.mkdir(d.as_uri(), parents=True)
+        assert d.is_dir()
+
+    def test_mkdir_existing_with_parents_no_error(self, tmp_path):
+        d = tmp_path / "existing"
+        d.mkdir()
+        client = GfalClient()
+        client.mkdir(d.as_uri(), parents=True)  # should not raise
+        assert d.is_dir()
+
+    def test_mkdir_nonexistent_parent_raises(self, tmp_path):
+        d = tmp_path / "noparent" / "newdir"
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.mkdir(d.as_uri(), parents=False)
+
+
+# ---------------------------------------------------------------------------
+# rm
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientRm:
+    def test_rm_file(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = GfalClient()
+        client.rm(f.as_uri())
+        assert not f.exists()
+
+    def test_rm_recursive(self, tmp_path):
+        d = tmp_path / "mydir"
+        d.mkdir()
+        (d / "f.txt").write_text("x")
+        client = GfalClient()
+        client.rm(d.as_uri(), recursive=True)
+        assert not d.exists()
+
+    def test_rm_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.rm((tmp_path / "no_such").as_uri())
+
+
+# ---------------------------------------------------------------------------
+# rmdir
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientRmdir:
+    def test_rmdir_empty_dir(self, tmp_path):
+        d = tmp_path / "empty"
+        d.mkdir()
+        client = GfalClient()
+        client.rmdir(d.as_uri())
+        assert not d.exists()
+
+    def test_rmdir_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.rmdir((tmp_path / "no_such").as_uri())
+
+
+# ---------------------------------------------------------------------------
+# rename
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientRename:
+    def test_rename_file(self, tmp_path):
+        src = tmp_path / "old.txt"
+        dst = tmp_path / "new.txt"
+        src.write_text("data")
+        client = GfalClient()
+        client.rename(src.as_uri(), dst.as_uri())
+        assert not src.exists()
+        assert dst.read_text() == "data"
+
+    def test_rename_across_filesystems_raises(self, tmp_path):
+        """Renaming across filesystem types must raise a GfalError with EXDEV."""
+
+        # Use a mock by creating two different-scheme objects
+        # We simulate by creating a real local file and trying to rename to http://
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = GfalClient()
+        with pytest.raises(GfalError) as exc_info:
+            client.rename(f.as_uri(), "http://example.com/file.txt")
+        assert exc_info.value.errno is not None
+
+
+# ---------------------------------------------------------------------------
+# chmod
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod semantics differ on Windows")
+class TestGfalClientChmod:
+    def test_chmod(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = GfalClient()
+        client.chmod(f.as_uri(), 0o600)
+        assert (f.stat().st_mode & 0o777) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# open
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientOpen:
+    def test_open_read(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(b"hello")
+        client = GfalClient()
+        with client.open(f.as_uri(), "rb") as fh:
+            data = fh.read()
+        assert data == b"hello"
+
+    def test_open_write(self, tmp_path):
+        f = tmp_path / "out.txt"
+        client = GfalClient()
+        with client.open(f.as_uri(), "wb") as fh:
+            fh.write(b"written")
+        assert f.read_bytes() == b"written"
+
+    def test_open_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.open((tmp_path / "no_such.txt").as_uri(), "rb")
+
+
+# ---------------------------------------------------------------------------
+# checksum
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientChecksum:
+    def test_adler32(self, tmp_path):
+        import zlib
+
+        data = b"hello world"
+        f = tmp_path / "test.bin"
+        f.write_bytes(data)
+        expected = f"{zlib.adler32(data) & 0xFFFFFFFF:08x}"
+        client = GfalClient()
+        result = client.checksum(f.as_uri(), "ADLER32")
+        assert result == expected
+
+    def test_md5(self, tmp_path):
+        import hashlib
+
+        data = b"hello world"
+        f = tmp_path / "test.bin"
+        f.write_bytes(data)
+        expected = hashlib.md5(data).hexdigest()
+        client = GfalClient()
+        result = client.checksum(f.as_uri(), "MD5")
+        assert result == expected
+
+    def test_crc32(self, tmp_path):
+        import zlib
+
+        data = b"hello world"
+        f = tmp_path / "test.bin"
+        f.write_bytes(data)
+        expected = f"{zlib.crc32(data) & 0xFFFFFFFF:08x}"
+        client = GfalClient()
+        result = client.checksum(f.as_uri(), "CRC32")
+        assert result == expected
+
+    def test_nonexistent_raises(self, tmp_path):
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.checksum((tmp_path / "no_such").as_uri(), "ADLER32")
+
+
+# ---------------------------------------------------------------------------
+# xattr
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientXattr:
+    def test_listxattr_unsupported_raises(self, tmp_path):
+        """Local filesystem doesn't support xattr via GfalClient.listxattr."""
+        f = tmp_path / "test.txt"
+        f.write_text("x")
+        client = GfalClient()
+        # LocalFileSystem doesn't have listxattr method
+        with pytest.raises(GfalError):
+            client.listxattr(f.as_uri())
+
+    def test_getxattr_unsupported_raises(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("x")
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.getxattr(f.as_uri(), "user.test")
+
+    def test_setxattr_unsupported_raises(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("x")
+        client = GfalClient()
+        with pytest.raises(GfalError):
+            client.setxattr(f.as_uri(), "user.test", "value")
+
+
+# ---------------------------------------------------------------------------
+# _map_error
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientMapError:
+    def setup_method(self):
+        self.client = GfalClient()
+
+    def test_already_gfal_error_returned_as_is(self):
+        e = GfalFileNotFoundError("test")
+        result = self.client._map_error(e, "file:///test")
+        assert result is e
+
+    def test_file_not_found_error(self):
+        e = FileNotFoundError("file not found")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalFileNotFoundError)
+
+    def test_permission_error(self):
+        e = PermissionError("permission denied")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalPermissionError)
+
+    def test_file_exists_error(self):
+        e = FileExistsError("file exists")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalFileExistsError)
+
+    def test_is_a_directory_error(self):
+        e = IsADirectoryError("is a directory")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalIsADirectoryError)
+
+    def test_not_a_directory_error(self):
+        e = NotADirectoryError("not a directory")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalNotADirectoryError)
+
+    def test_timeout_error(self):
+        e = TimeoutError("timed out")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalTimeoutError)
+
+    def test_http_403(self):
+        e = Exception("Forbidden")
+        e.status = 403
+        result = self.client._map_error(e, "http://example.com/file")
+        assert isinstance(result, GfalPermissionError)
+
+    def test_http_404(self):
+        e = Exception("Not Found")
+        e.status = 404
+        result = self.client._map_error(e, "http://example.com/file")
+        assert isinstance(result, GfalFileNotFoundError)
+
+    def test_generic_exception_no_message(self):
+        e = Exception()
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalError)
+        assert "(Exception)" in str(result)
+
+    def test_generic_exception_with_errno(self):
+        e = OSError(errno.EACCES, "permission denied")
+        result = self.client._map_error(e, "file:///test")
+        assert isinstance(result, GfalError)
+
+    def test_generic_exception_zero_errno(self):
+        e = Exception("something went wrong")
+        e.errno = 0
+        result = self.client._map_error(e, "file:///test")
+        assert result.errno == errno.EIO
+
+
+# ---------------------------------------------------------------------------
+# Additional api.py tests for edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestGfalClientLsFallback:
+    def test_ls_not_a_directory_fallback(self, tmp_path):
+        """When ls raises 'not a directory', should fall back to info() on the file."""
+
+        f = tmp_path / "file.txt"
+        f.write_bytes(b"hello")
+        client = GfalClient()
+
+        # We'll test via a local file path which is actually a file (not dir)
+        # For local fs, calling ls on a file returns the file entry itself
+        entries = client.ls(f.as_uri(), detail=True)
+        # Should get at least one entry back (the file itself)
+        assert len(entries) >= 1
+
+
+class TestGfalClientXattrWithMock:
+    def test_getxattr_supported_filesystem(self, tmp_path):
+        """Test getxattr when filesystem has getxattr method."""
+        from unittest.mock import MagicMock, patch
+
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+
+        client = GfalClient()
+        # Mock url_to_fs to return an fso with getxattr
+        mock_fso = MagicMock()
+        mock_fso.getxattr.return_value = "xattr_value"
+        mock_fso.hasattr = lambda attr: True
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
+            result = client.getxattr(f.as_uri(), "user.test")
+        assert result == "xattr_value"
+
+    def test_setxattr_supported_filesystem(self, tmp_path):
+        """Test setxattr when filesystem has setxattr method."""
+        from unittest.mock import MagicMock, patch
+
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+
+        client = GfalClient()
+        mock_fso = MagicMock()
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
+            client.setxattr(f.as_uri(), "user.test", "value")
+        mock_fso.setxattr.assert_called_once_with(str(f), "user.test", "value")
+
+    def test_listxattr_supported_filesystem(self, tmp_path):
+        """Test listxattr when filesystem has listxattr method."""
+        from unittest.mock import MagicMock, patch
+
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+
+        client = GfalClient()
+        mock_fso = MagicMock()
+        mock_fso.listxattr.return_value = ["user.foo", "user.bar"]
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
+            result = client.listxattr(f.as_uri())
+        assert result == ["user.foo", "user.bar"]

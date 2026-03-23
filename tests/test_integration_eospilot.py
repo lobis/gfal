@@ -30,7 +30,7 @@ import pytest
 
 from helpers import run_gfal
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 # ---------------------------------------------------------------------------
 # Constants

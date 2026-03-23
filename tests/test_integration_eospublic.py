@@ -68,7 +68,7 @@ requires_xrootd = pytest.mark.skipif(
     reason=f"XRootD not available (port {_XROOTD_PORT} unreachable or xrootd package not installed)",
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 # ---------------------------------------------------------------------------
 # Test constants

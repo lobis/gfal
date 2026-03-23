@@ -8,6 +8,26 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
+# Retry hook: automatically rerun any test tagged @pytest.mark.network
+# ---------------------------------------------------------------------------
+
+_NETWORK_RERUNS = 3
+_NETWORK_RERUNS_DELAY = 5  # seconds between retries
+
+
+def pytest_collection_modifyitems(items):
+    """Add rerun-failure markers to all tests tagged with ``network``."""
+    for item in items:
+        if item.get_closest_marker("network"):
+            item.add_marker(
+                pytest.mark.flaky(
+                    reruns=_NETWORK_RERUNS, reruns_delay=_NETWORK_RERUNS_DELAY
+                ),
+                append=False,
+            )
+
+
+# ---------------------------------------------------------------------------
 # CERN Root CA 2 — required to reach eospublic.cern.ch over HTTPS
 # ---------------------------------------------------------------------------
 
