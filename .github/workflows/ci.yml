@@ -328,15 +328,6 @@ jobs:
       with:
         path: artifacts/
         merge-multiple: true
-    - name: Create latest aliases
-      run: |
-        cd artifacts
-        find . -name "*el9*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el9.rpm \;
-        find . -name "*el10*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el10.rpm \;
-        find . -name "*el9*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el9-aarch64.rpm \;
-        find . -name "*el10*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el10-aarch64.rpm \;
-        find . -name "*amd64.deb" -exec cp {} python3-gfal-latest.deb \;
-        find . -name "*arm64.deb" -exec cp {} python3-gfal-latest-arm64.deb \;
     - uses: softprops/action-gh-release@v2
       with:
         files: artifacts/**/*
