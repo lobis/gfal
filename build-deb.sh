@@ -66,12 +66,17 @@ python3 -m pip install textual rich-click \
 # Failing to prune them causes dpkg errors about overwriting files.
 # Currently pruned (provided by system): rich, markdown_it, mdurl,
 # mdit_py_plugins, pygments, click.
-rm -rf pkg/usr/lib/python3/dist-packages/rich*
+# NOTE: use exact directory names to avoid removing rich_click (which we bundle).
+rm -rf pkg/usr/lib/python3/dist-packages/rich \
+       pkg/usr/lib/python3/dist-packages/rich-*.dist-info \
+       pkg/usr/lib/python3/dist-packages/Rich-*.dist-info
 rm -rf pkg/usr/lib/python3/dist-packages/markdown_it*
 rm -rf pkg/usr/lib/python3/dist-packages/mdurl*
 rm -rf pkg/usr/lib/python3/dist-packages/mdit_py_plugins*
 rm -rf pkg/usr/lib/python3/dist-packages/pygments*
-rm -rf pkg/usr/lib/python3/dist-packages/click*
+rm -rf pkg/usr/lib/python3/dist-packages/click \
+       pkg/usr/lib/python3/dist-packages/click-*.dist-info \
+       pkg/usr/lib/python3/dist-packages/Click-*.dist-info
 
 # Move console-script entry points to /usr/bin.
 if [ -d pkg/usr/lib/python3/dist-packages/bin ]; then

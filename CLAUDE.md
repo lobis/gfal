@@ -178,12 +178,12 @@ The DEB is built by `build-deb.sh`, called from the `build-deb` CI job in `.gith
 
 | Pruned path pattern | Ubuntu system package |
 |--------------------|-----------------------|
-| `rich*` | `python3-rich` |
+| `rich/` + `rich-*.dist-info` (exact, NOT `rich*` — would also remove `rich_click`) | `python3-rich` |
 | `markdown_it*` | `python3-markdown-it` |
 | `mdurl*` | `python3-mdurl` |
 | `mdit_py_plugins*` | (dep of markdown-it, no separate deb) |
 | `pygments*` | `python3-pygments` |
-| `click*` | `python3-click` |
+| `click/` + `click-*.dist-info` (exact, NOT `click*`) | `python3-click` |
 
 When adding a new Python dependency to `pyproject.toml`, check whether Ubuntu 24.04 already ships it as a `python3-<pkg>` package. If it does, add it to the prune list and `Depends` in `build-deb.sh`. To check:
 ```bash
