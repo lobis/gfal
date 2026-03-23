@@ -19,22 +19,13 @@ pip install gfal
 
 ### From Native Repository (Recommended for Updates)
 
-Enable the repository to receive automatic updates via `dnf update` or `apt upgrade`.
+Enable the repository to receive automatic updates via `dnf update`.
 
 #### YUM (AlmaLinux / RHEL)
 
 ```bash
 sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
 sudo dnf install -y python3-gfal
-```
-
-#### APT (Ubuntu / Debian)
-
-Add the repository:
-```bash
-echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal.list
-sudo apt-get update
-sudo apt-get install -y python3-gfal
 ```
 
 After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:

@@ -12,7 +12,7 @@ pip install gfal
 
 ## Native Repositories (Auto-updates)
 
-We provide native YUM and APT repositories hosted on GitHub Pages. This is the recommended way to stay updated on Linux systems.
+We provide a native YUM repository hosted on GitHub Pages. This is the recommended way to stay updated on Linux systems.
 
 ### YUM (AlmaLinux / RHEL / Fedora)
 
@@ -23,19 +23,9 @@ sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfa
 sudo dnf install -y python3-gfal
 ```
 
-### APT (Ubuntu / Debian)
-
-Add the repository:
-
-```bash
-echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal.list
-sudo apt-get update
-sudo apt-get install -y python3-gfal
-```
-
 ---
 
-## Direct Download (RPM / DEB)
+## Direct Download (RPM)
 
 You can also download individual packages from the [GitHub Releases](https://github.com/lobis/gfal/releases) page.
 
@@ -43,12 +33,6 @@ You can also download individual packages from the [GitHub Releases](https://git
 ```bash
 dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest-el9.rpm
 ```
-
-**Ubuntu**:
-```bash
-curl -L -O https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest.deb
-
----
 
 ## CERN CA Certificates
 
