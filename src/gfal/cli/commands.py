@@ -7,9 +7,10 @@ import stat
 import sys
 from datetime import datetime
 
-from gfal_cli import base, fs
-from gfal_cli.api import GfalClient
-from gfal_cli.utils import file_mode_str, file_type_str
+from gfal.cli import base
+from gfal.core import fs
+from gfal.core.api import GfalClient
+from gfal.core.utils import file_mode_str, file_type_str
 
 
 class GfalCommands(base.CommandBase):

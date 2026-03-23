@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # hatch-vcs auto-generated version file
-src/gfal_cli/_version.py
+src/gfal/_version.py
 
 # Reference implementation (not part of the project)
 gfal2-util/

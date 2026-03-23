@@ -11,9 +11,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from gfal_cli import base, fs
-from gfal_cli.api import GfalClient
-from gfal_cli.utils import file_mode_str
+from gfal.cli import base
+from gfal.core import fs
+from gfal.core.api import GfalClient
+from gfal.core.utils import file_mode_str
 
 # ---------------------------------------------------------------------------
 # Time formatters (same choices as gfal2-util)

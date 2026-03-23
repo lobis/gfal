@@ -7,9 +7,9 @@ import stat
 import sys
 from pathlib import Path
 
-from gfal_cli import base
-from gfal_cli.api import GfalClient
-from gfal_cli.errors import GfalFileNotFoundError, GfalIsADirectoryError
+from gfal.cli import base
+from gfal.core.api import GfalClient
+from gfal.core.errors import GfalFileNotFoundError, GfalIsADirectoryError
 
 
 class CommandRm(base.CommandBase):

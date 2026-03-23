@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from gfal_cli import (
+from gfal.cli import (
     base,
     commands,  # noqa: F401  – registers GfalCommands subclass
     copy,  # noqa: F401  – registers CommandCopy subclass
@@ -17,7 +17,7 @@ from gfal_cli import (
 )
 
 with contextlib.suppress(ImportError):
-    from gfal_cli import tui  # noqa: F401  – registers CommandTui subclass
+    import gfal.tui  # noqa: F401  – registers CommandTui subclass
     # textual not installed → gfal-tui unavailable but all other commands work fine
 
 

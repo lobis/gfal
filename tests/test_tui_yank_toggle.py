@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gfal_cli.tui import GfalTui, HighlightableDirectoryTree, PasteModal
+from gfal.tui import GfalTui, HighlightableDirectoryTree, PasteModal
 
 
 @pytest.mark.asyncio
@@ -110,8 +110,8 @@ async def test_tui_yank_cleared_after_paste(tmp_path):
     mock_url_to_fs = MagicMock(return_value=(mock_fs, str(src)))
 
     with (
-        patch("gfal_cli.fs.url_to_fs", mock_url_to_fs),
-        patch("gfal_cli.tui.url_to_fs", mock_url_to_fs),
+        patch("gfal.core.fs.url_to_fs", mock_url_to_fs),
+        patch("gfal.tui.url_to_fs", mock_url_to_fs),
     ):
         async with app.run_test() as pilot:
             tree = app.query_one("#right-tree", HighlightableDirectoryTree)

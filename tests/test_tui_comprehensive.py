@@ -7,7 +7,7 @@ import pytest
 from rich.style import Style
 from textual.widgets import Tree
 
-from gfal_cli.tui import (
+from gfal.tui import (
     GfalTui,
     HighlightableDirectoryTree,
     HighlightableRemoteDirectoryTree,
@@ -343,7 +343,7 @@ async def test_refresh_trees_no_crash(tmp_path):
     """refresh_trees doesn't crash even with default trees."""
     app = GfalTui(dst=str(tmp_path))
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         mock_fs.ls.return_value = []
         mock_url_to_fs.return_value = (mock_fs, "/remote")
@@ -364,7 +364,7 @@ async def test_refresh_after_swap(tmp_path):
     """refresh_trees works correctly after panes have been swapped."""
     app = GfalTui(dst=str(tmp_path))
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         mock_fs.ls.return_value = []
         mock_url_to_fs.return_value = (mock_fs, "/remote")
@@ -621,7 +621,7 @@ async def test_render_label_with_yank(tmp_path):
 async def test_remote_tree_render_label_yanked():
     """Remote tree render_label shows [YANKED] for yanked URLs."""
     app = GfalTui()
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         mock_fs.ls.return_value = [
             {"name": "/eos/data/file.root", "type": "file"},

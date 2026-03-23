@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from gfal_cli.tui import GfalTui, HighlightableDirectoryTree
+from gfal.tui import GfalTui, HighlightableDirectoryTree
 
 
 @pytest.mark.asyncio

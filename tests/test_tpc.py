@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gfal_cli import tpc as tpc_mod
-from gfal_cli.copy import _tpc_applicable
+from gfal.cli.copy import _tpc_applicable
+from gfal.core import tpc as tpc_mod
 from helpers import run_gfal
 
 # ---------------------------------------------------------------------------
@@ -515,7 +515,7 @@ class TestAutoTpc:
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"hello")
 
-        with patch("gfal_cli.tpc.do_tpc") as mock_tpc:
+        with patch("gfal.core.tpc.do_tpc") as mock_tpc:
             rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
         # TPC is not called for local copies

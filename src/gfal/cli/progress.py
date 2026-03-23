@@ -17,7 +17,7 @@ except ImportError:
 
 from fsspec.callbacks import Callback
 
-from gfal_cli.base import get_console, is_gfal2_compat
+from gfal.cli.base import get_console, is_gfal2_compat
 
 
 def Progress(label, tui_callback=None):

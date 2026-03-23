@@ -32,9 +32,9 @@ from textual.widgets import (
 )
 from textual.widgets._tree import TreeNode
 
-from gfal_cli.base import CommandBase, arg, interactive
-from gfal_cli.fs import compute_checksum, url_to_fs
-from gfal_cli.utils import (
+from gfal.cli.base import CommandBase, arg, interactive
+from gfal.core.fs import compute_checksum, url_to_fs
+from gfal.core.utils import (
     human_readable_size,
     human_readable_time,
 )
@@ -1355,7 +1355,7 @@ class CommandTui(CommandBase):
     @arg("dst", nargs="?", help="destination path")
     def execute_tui(self):
         """Launch the Text User Interface."""
-        from gfal_cli.base import surl
+        from gfal.cli.base import surl
 
         src = surl(self.params.src) if self.params.src else None
         dst = surl(self.params.dst) if self.params.dst else None

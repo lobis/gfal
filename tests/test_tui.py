@@ -4,7 +4,7 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Input, RichLog, Tree
 
-from gfal_cli.tui import (
+from gfal.tui import (
     ChecksumResultModal,
     GfalTui,
     HighlightableDirectoryTree,
@@ -30,7 +30,7 @@ async def test_tui_url_submission_via_modal():
     app = GfalTui()
     test_url = "https://example.com/data"
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_url_to_fs.return_value = (MagicMock(), "/data")
 
         async with app.run_test() as pilot:
@@ -56,7 +56,7 @@ async def test_tui_ssl_toggle():
     app = GfalTui()
     test_url = "https://example.com/data"
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_url_to_fs.return_value = (MagicMock(), "/data")
 
         async with app.run_test() as pilot:
@@ -82,7 +82,7 @@ async def test_tui_hotkeys(tmp_path):
     app = GfalTui(dst=str(tmp_path))
     (tmp_path / "local_file.txt").write_text("hello")
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         mock_fs.ls.return_value = [{"name": "/data/remote_file.txt", "type": "file"}]
         mock_url_to_fs.return_value = (mock_fs, "/data")
@@ -169,7 +169,7 @@ async def test_tui_hotkeys(tmp_path):
             await pilot.pause()
             assert log.display is True
 
-    @patch("gfal_cli.tui.url_to_fs")
+    @patch("gfal.tui.url_to_fs")
     async def test_tui_modal_behavior(self, mock_url_to_fs):
         """Check modal screen behavior."""
         mock_fs = MagicMock()
@@ -200,7 +200,7 @@ async def test_tui_copy_no_selection():
     """Verify that copy doesn't crash if nothing is selected."""
     app = GfalTui()
     # Mock to avoid real network calls if a worker starts
-    with patch("gfal_cli.tui.url_to_fs"):
+    with patch("gfal.tui.url_to_fs"):
         async with app.run_test() as pilot:
             # Both trees are empty/initializing
             await pilot.press("f5")
@@ -262,7 +262,7 @@ async def test_tui_modal_dismiss_button_click():
     async with app.run_test() as pilot:
         mock_fs = MagicMock()
         mock_fs.info.return_value = {"size": 100}
-        with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, "/data")):
+        with patch("gfal.tui.url_to_fs", return_value=(mock_fs, "/data")):
             # Trigger Stat to show a modal
             app.query_one("#left-tree").focus()
             await pilot.press("down")
@@ -288,7 +288,7 @@ async def test_tui_modal_dismiss_button_click():
 async def test_tui_error_handling_ls_failure():
     """Verify that remote tree errors are logged."""
     app = GfalTui()
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_url_to_fs.side_effect = Exception("Connection refused")
         async with app.run_test() as pilot:
             # Open modal and enter failing URL
@@ -316,10 +316,10 @@ async def test_tui_refresh_hotkey_logic():
     # DirectoryTree.reload is async
     with (
         patch(
-            "gfal_cli.tui.HighlightableDirectoryTree.reload", new_callable=AsyncMock
+            "gfal.tui.HighlightableDirectoryTree.reload", new_callable=AsyncMock
         ) as mock_local_reload,
         patch(
-            "gfal_cli.tui.HighlightableRemoteDirectoryTree.reload",
+            "gfal.tui.HighlightableRemoteDirectoryTree.reload",
             new_callable=AsyncMock,
         ) as mock_remote_reload,
     ):
@@ -342,8 +342,8 @@ async def test_tui_remote_tree_selection_stat_call(tmp_path):
 
     app = GfalTui()
     # Mock url_to_fs to point the remote tree to our local dummy dir
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
-        from gfal_cli.fs import url_to_fs as real_url_to_fs
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
+        from gfal.core.fs import url_to_fs as real_url_to_fs
 
         # For the remote path, return a local fs pointing to our dummy dir
         def side_effect(url, *args, **kwargs):
@@ -484,7 +484,7 @@ async def test_tui_toggle_label_update():
 async def test_tui_ssl_toggle_preserves_tree():
     """Verify that toggling SSL does not rebuild (reset) the remote tree widget."""
     app = GfalTui()
-    with patch("gfal_cli.tui.url_to_fs"):
+    with patch("gfal.tui.url_to_fs"):
         async with app.run_test() as pilot:
             initial_tree = app.query_one("#left-tree", HighlightableRemoteDirectoryTree)
             assert initial_tree.ssl_verify is False
@@ -533,7 +533,7 @@ async def test_tui_local_stat_command_logging(tmp_path):
         await pilot.press("down")
         await pilot.pause()
 
-        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+        with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
             mock_fs.info.return_value = {"size": 100}
             mock_url_to_fs.return_value = (mock_fs, "/")
@@ -582,7 +582,7 @@ async def test_tui_local_checksum_command_logging(tmp_path):
             await pilot.press("down")
             await pilot.pause(0.05)
 
-        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+        with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
             mock_fs.checksum.return_value = "ABCDEF"
             mock_url_to_fs.return_value = (mock_fs, "/")
@@ -617,7 +617,7 @@ async def test_tui_human_readable_stat():
         await pilot.press("down")
         await pilot.pause()
 
-        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+        with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
             # 10 MB = 10 * 1024 * 1024 = 10485760 bytes
             timestamp = 1710972000.0  # 2024-03-20 22:00:00 UTC
@@ -667,7 +667,7 @@ async def test_tui_checksum_formatting_v2(tmp_path):
             await pilot.press("down")
             await pilot.pause(0.05)
 
-        with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+        with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
             mock_fs = MagicMock()
             # Return bytes checksum
             mock_fs.checksum.return_value = b"\xab\xcd\xef"

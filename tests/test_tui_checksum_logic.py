@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.widgets import RichLog, Tree
 
-from gfal_cli.tui import GfalTui
+from gfal.tui import GfalTui
 
 
 @pytest.mark.asyncio
@@ -20,9 +20,9 @@ async def test_tui_checksum_calls_fs_with_algo():
     node_path = "https://example.com/test_file"
 
     with (
-        patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, node_path)),
-        patch("gfal_cli.tui.compute_checksum", return_value="abc12345") as mock_compute,
-        patch("gfal_cli.fs.compute_checksum", return_value="abc12345"),
+        patch("gfal.tui.url_to_fs", return_value=(mock_fs, node_path)),
+        patch("gfal.tui.compute_checksum", return_value="abc12345") as mock_compute,
+        patch("gfal.core.fs.compute_checksum", return_value="abc12345"),
     ):
         async with app.run_test() as pilot:
             await pilot.wait_for_scheduled_animations()
@@ -82,7 +82,7 @@ async def test_tui_checksum_on_directory_shows_warning():
     mock_fs = MagicMock()
     mock_fs.ls.return_value = []
 
-    with patch("gfal_cli.tui.url_to_fs", return_value=(mock_fs, "root://mock")):
+    with patch("gfal.tui.url_to_fs", return_value=(mock_fs, "root://mock")):
         async with app.run_test() as pilot:
             await pilot.wait_for_scheduled_animations()
 

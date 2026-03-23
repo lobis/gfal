@@ -5,8 +5,8 @@ gfal-cli: GFAL2-compatible CLI tools based on fsspec.
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
-from .api import GfalClient
-from .errors import (
+from .core.api import GfalClient
+from .core.errors import (
     GfalError,
     GfalFileExistsError,
     GfalFileNotFoundError,
@@ -17,7 +17,7 @@ from .errors import (
 )
 
 try:
-    __version__ = _pkg_version("gfal-cli")
+    __version__ = _pkg_version("gfal")
 except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 

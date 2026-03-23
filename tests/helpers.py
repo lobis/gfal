@@ -52,7 +52,7 @@ def run_gfal(cmd, *args, input=None, env=None):
     """
     script = (
         f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
-        "from gfal_cli.shell import main; main()"
+        "from gfal.cli.shell import main; main()"
     )
     subprocess_env = _subprocess_env()
     if env is not None:
@@ -74,7 +74,7 @@ def run_gfal_binary(cmd, *args, input_bytes=None):
     """
     script = (
         f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
-        "from gfal_cli.shell import main; main()"
+        "from gfal.cli.shell import main; main()"
     )
     proc = subprocess.run(
         [sys.executable, "-c", script, *[str(a) for a in args]],

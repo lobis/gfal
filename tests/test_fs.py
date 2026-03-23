@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gfal_cli.fs import StatInfo, isdir, normalize_url, stat, url_to_fs
+from gfal.core.fs import StatInfo, isdir, normalize_url, stat, url_to_fs
 
 # ---------------------------------------------------------------------------
 # normalize_url
@@ -192,27 +192,27 @@ class TestUrlToFs:
             assert fh.read() == b"data"
 
     def test_http_returns_webdav_fs(self):
-        from gfal_cli.webdav import WebDAVFileSystem
+        from gfal.core.webdav import WebDAVFileSystem
 
         fso, path = url_to_fs("http://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
         assert path == "http://example.com/file"
 
     def test_https_returns_webdav_fs(self):
-        from gfal_cli.webdav import WebDAVFileSystem
+        from gfal.core.webdav import WebDAVFileSystem
 
         fso, path = url_to_fs("https://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
 
     def test_dav_normalized_to_http(self):
-        from gfal_cli.webdav import WebDAVFileSystem
+        from gfal.core.webdav import WebDAVFileSystem
 
         fso, path = url_to_fs("dav://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
         assert path == "http://example.com/file"
 
     def test_davs_normalized_to_https(self):
-        from gfal_cli.webdav import WebDAVFileSystem
+        from gfal.core.webdav import WebDAVFileSystem
 
         fso, path = url_to_fs("davs://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
@@ -290,7 +290,7 @@ class TestBuildStorageOptions:
     def test_no_cert(self):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
@@ -299,7 +299,7 @@ class TestBuildStorageOptions:
     def test_cert_and_key(self):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         params = SimpleNamespace(
             cert="/path/to/cert.pem", key="/path/to/key.pem", ssl_verify=True
@@ -311,7 +311,7 @@ class TestBuildStorageOptions:
     def test_cert_without_key_uses_cert_as_key(self):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         params = SimpleNamespace(cert="/path/to/proxy.pem", key=None, ssl_verify=True)
         opts = build_storage_options(params)
@@ -321,7 +321,7 @@ class TestBuildStorageOptions:
     def test_ssl_verify_false(self):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         params = SimpleNamespace(cert=None, key=None, ssl_verify=False)
         opts = build_storage_options(params)
@@ -331,7 +331,7 @@ class TestBuildStorageOptions:
         """X509_USER_PROXY env var is used as client cert when no --cert given."""
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         proxy = tmp_path / "proxy.pem"
         proxy.write_text("fake proxy")
@@ -346,7 +346,7 @@ class TestBuildStorageOptions:
         """An explicit --cert flag takes precedence over X509_USER_PROXY."""
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         proxy = tmp_path / "proxy.pem"
         proxy.write_text("fake proxy")
@@ -364,7 +364,7 @@ class TestBuildStorageOptions:
         """A non-existent path in X509_USER_PROXY is silently ignored."""
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         monkeypatch.setenv("X509_USER_PROXY", "/tmp/this_does_not_exist_gfal_test.pem")
 
@@ -377,7 +377,7 @@ class TestBuildStorageOptions:
         """An empty X509_USER_PROXY is silently ignored."""
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         monkeypatch.setenv("X509_USER_PROXY", "")
 
@@ -395,7 +395,7 @@ class TestBuildStorageOptionsBearerToken:
     def test_bearer_token_env_var(self, monkeypatch):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         monkeypatch.setenv("BEARER_TOKEN", "token-from-env")
         monkeypatch.delenv("BEARER_TOKEN_FILE", raising=False)
@@ -407,7 +407,7 @@ class TestBuildStorageOptionsBearerToken:
     def test_bearer_token_file_env_var(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         token_file = tmp_path / "token"
         token_file.write_text("file-token\n")
@@ -421,7 +421,7 @@ class TestBuildStorageOptionsBearerToken:
     def test_bearer_token_env_takes_priority_over_file(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         token_file = tmp_path / "token"
         token_file.write_text("file-token\n")
@@ -435,7 +435,7 @@ class TestBuildStorageOptionsBearerToken:
     def test_no_bearer_token_env_no_key(self, monkeypatch):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         monkeypatch.delenv("BEARER_TOKEN", raising=False)
         monkeypatch.delenv("BEARER_TOKEN_FILE", raising=False)
@@ -447,7 +447,7 @@ class TestBuildStorageOptionsBearerToken:
     def test_bearer_token_file_missing_ignored(self, monkeypatch):
         from types import SimpleNamespace
 
-        from gfal_cli.fs import build_storage_options
+        from gfal.core.fs import build_storage_options
 
         monkeypatch.delenv("BEARER_TOKEN", raising=False)
         monkeypatch.setenv("BEARER_TOKEN_FILE", "/tmp/this_does_not_exist_bearer_token")

@@ -12,8 +12,9 @@ import zlib
 from pathlib import Path
 from urllib.parse import urlparse
 
-from gfal_cli import base, fs
-from gfal_cli.progress import Progress
+from gfal.cli import base
+from gfal.cli.progress import Progress
+from gfal.core import fs
 
 
 class CommandCopy(base.CommandBase):
@@ -382,7 +383,7 @@ class CommandCopy(base.CommandBase):
                     )
 
             try:
-                from gfal_cli import (
+                from gfal.core import (
                     tpc as _tpc,  # lazy: tpc.py may not be installed  # noqa: PLC0415
                 )
 

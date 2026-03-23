@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from gfal_cli.progress import TuiProgress
-from gfal_cli.tui import GfalTui, HighlightableDirectoryTree, PasteModal
+from gfal.cli.progress import TuiProgress
+from gfal.tui import GfalTui, HighlightableDirectoryTree, PasteModal
 
 
 def test_tui_progress_has_branch_coro():
@@ -23,7 +23,7 @@ async def test_tui_xrootd_copy_branch_coro_fix(tmp_path):
     src_url = "root://eospublic.cern.ch//eos/opendata/cms/Run2017E/BTagCSV/MINIAOD/UL2017_MiniAODv2-v1/260000/118EDE47-ED73-8E4E-9CEB-4C4BF9E01704.root"
     src_filename = "118EDE47-ED73-8E4E-9CEB-4C4BF9E01704.root"
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
 
         def mock_put(lpath, rpath, callback=None, **kwargs):
@@ -91,7 +91,7 @@ async def test_tui_xrootd_multi_copy_branch_coro_fix(tmp_path):
         "root://eospublic.cern.ch//eos/file2.root",
     }
 
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
 
         def mock_put(lpath, rpath, callback=None, **kwargs):

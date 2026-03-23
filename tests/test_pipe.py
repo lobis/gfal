@@ -14,7 +14,7 @@ def test_cat_pipe_broken():
     # Create a dummy large file (larger than CHUNK_SIZE/pipe buffer)
     # Actually even a small file works if we close the pipe.
 
-    cmd = [sys.executable, "-m", "gfal_cli.shell", "cat", "file:///etc/hosts"]
+    cmd = [sys.executable, "-m", "gfal.cli.shell", "cat", "file:///etc/hosts"]
 
     # We run the command and pipe it to something that closes early (like 'head')
     # Or we manually close the pipe in a subprocess.
@@ -53,7 +53,7 @@ def test_cat_pipe_broken():
 
 def test_ls_pipe_broken():
     """Verify that gfal-ls handles broken pipes gracefully."""
-    cmd = [sys.executable, "-m", "gfal_cli.shell", "ls", "file:///"]
+    cmd = [sys.executable, "-m", "gfal.cli.shell", "ls", "file:///"]
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

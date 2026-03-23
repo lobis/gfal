@@ -59,7 +59,7 @@ def _http_fs_opts(storage_options):
     """Convert storage_options to kwargs for fsspec's HTTPFileSystem."""
     from functools import partial
 
-    from gfal_cli.fs import _no_verify_get_client, _verify_get_client
+    from gfal.core.fs import _no_verify_get_client, _verify_get_client
 
     opts = {k: v for k, v in storage_options.items() if k != "ssl_verify"}
     verify = storage_options.get("ssl_verify", True)

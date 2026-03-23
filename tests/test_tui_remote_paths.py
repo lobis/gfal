@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gfal_cli.tui import GfalTui, HighlightableRemoteDirectoryTree
+from gfal.tui import GfalTui, HighlightableRemoteDirectoryTree
 
 
 @pytest.mark.asyncio
@@ -12,7 +12,7 @@ async def test_tui_remote_command_logging_includes_base_url():
     app = GfalTui()
     test_path = "/eos/opendata/cms/file.txt"
     # Mock url_to_fs so we don't hit the network
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         # Mock ls to return our test file
         mock_fs.ls.return_value = [{"name": test_path, "type": "file"}]

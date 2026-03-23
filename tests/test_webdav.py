@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from gfal_cli.webdav import WebDAVFileSystem, _parse_propfind
+from gfal.core.webdav import WebDAVFileSystem, _parse_propfind
 
 # ---------------------------------------------------------------------------
 # Minimal mock WebDAV server
@@ -713,13 +713,13 @@ class TestWebDAVPropfindExtra:
 
 class TestMakeSessionBearerToken:
     def test_bearer_token_added_to_headers(self):
-        from gfal_cli.webdav import _make_session
+        from gfal.core.webdav import _make_session
 
         session = _make_session({"bearer_token": "my-macaroon"})
         assert session.headers.get("Authorization") == "Bearer my-macaroon"
 
     def test_no_bearer_token_no_auth_header(self):
-        from gfal_cli.webdav import _make_session
+        from gfal.core.webdav import _make_session
 
         session = _make_session({})
         assert "Authorization" not in session.headers

@@ -1,6 +1,6 @@
 """Tests for gfal_cli.progress — Progress bar unit tests."""
 
-from gfal_cli.progress import LegacyProgress as Progress
+from gfal.cli.progress import LegacyProgress as Progress
 
 
 class TestProgressInit:

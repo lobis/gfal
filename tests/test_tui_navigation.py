@@ -1,6 +1,6 @@
 import pytest
 
-from gfal_cli.tui import GfalTui
+from gfal.tui import GfalTui
 
 
 @pytest.mark.asyncio

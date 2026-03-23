@@ -3,8 +3,8 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from gfal_cli.base import CommandBase
-from gfal_cli.fs import _verify_get_client, build_storage_options
+from gfal.cli.base import CommandBase
+from gfal.core.fs import _verify_get_client, build_storage_options
 
 
 def test_ipv4_v6_parsing():
@@ -87,7 +87,7 @@ def test_urllib3_patching():
     try:
         # We need to mock the Thread behavior because execute() starts a thread.
         # For testing, we just want to see if the patch is applied.
-        with patch("gfal_cli.base.Thread"):
+        with patch("gfal.cli.base.Thread"):
             cmd.execute(cmd.execute_test)
             # The lambda should have been assigned
             assert nsock.allowed_gai_family() == socket.AF_INET
@@ -98,7 +98,7 @@ def test_urllib3_patching():
     # Test IPv6
     cmd.parse(cmd.execute_test, ["gfal-test", "-6"])
     try:
-        with patch("gfal_cli.base.Thread"):
+        with patch("gfal.cli.base.Thread"):
             cmd.execute(cmd.execute_test)
             assert nsock.allowed_gai_family() == socket.AF_INET6
     finally:

@@ -9,7 +9,7 @@ preserved for backwards compatibility; each command prints a clear
 
 import sys
 
-from gfal_cli import base  # noqa: E402
+from gfal.cli import base  # noqa: E402
 
 _NOT_SUPPORTED_MSG = (
     "{prog}: this command requires the native gfal2 C library and is not "

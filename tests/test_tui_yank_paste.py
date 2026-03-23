@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gfal_cli.tui import (
+from gfal.tui import (
     GfalTui,
     HighlightableDirectoryTree,
     HighlightableRemoteDirectoryTree,
@@ -48,7 +48,7 @@ async def test_tui_yank_functionality():
 async def test_tui_paste_modal_trigger():
     """Test that pressing 'p' on a directory opens the PasteModal."""
     app = GfalTui()
-    with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
         mock_fs = MagicMock()
         mock_fs.ls.return_value = [{"name": "file.txt", "type": "file"}]
         mock_url_to_fs.return_value = (mock_fs, "/remote")
@@ -90,7 +90,7 @@ async def test_tui_paste_execution():
     # We patch _do_copy because it runs in a background thread and we just want to verify trigger
     with (
         patch.object(GfalTui, "_do_copy") as mock_do_copy,
-        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
+        patch("gfal.tui.url_to_fs") as mock_url_to_fs,
     ):
         mock_fs = MagicMock()
         mock_fs.ls.return_value = [{"name": "file.txt", "type": "file"}]
@@ -143,7 +143,7 @@ async def test_tui_paste_to_file_uses_parent():
     app = GfalTui()
     with (
         patch.object(GfalTui, "_do_copy") as mock_do_copy,
-        patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs,
+        patch("gfal.tui.url_to_fs") as mock_url_to_fs,
     ):
         mock_fs = MagicMock()
         # Mock a file entry

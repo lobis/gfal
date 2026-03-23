@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from gfal_cli import fs
-from gfal_cli.errors import (
+from gfal.core import fs
+from gfal.core.errors import (
     GfalError,
     GfalFileExistsError,
     GfalFileNotFoundError,

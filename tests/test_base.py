@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from gfal_cli.base import CommandBase, arg, surl
+from gfal.cli.base import CommandBase, arg, surl
 
 # ---------------------------------------------------------------------------
 # surl() type converter
@@ -94,7 +94,7 @@ class TestCommandBase:
 
     def test_get_subclasses_non_empty(self):
         """At least GfalCommands, CommandCopy, CommandLs, CommandRm exist."""
-        import gfal_cli.shell  # noqa: F401 — triggers subclass registration
+        import gfal.cli.shell  # noqa: F401 — triggers subclass registration
 
         subs = CommandBase.get_subclasses()
         assert len(subs) >= 4

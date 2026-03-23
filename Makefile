@@ -1,5 +1,5 @@
-NAME = gfal-cli
-NAME_DIST = gfal_cli
+NAME = gfal
+NAME_DIST = gfal
 SPECFILE = $(NAME).spec
 DIST_DIR = dist
 RPMBUILD = $(shell pwd)/rpmbuild
@@ -11,7 +11,7 @@ all: dist
 clean:
 	rm -rf $(DIST_DIR)
 	rm -rf $(RPMBUILD)
-	rm -f src/gfal_cli/_version.py
+	rm -f src/gfal/_version.py
 
 dist: clean
 	python3 -m pip install --upgrade build hatchling hatch-vcs

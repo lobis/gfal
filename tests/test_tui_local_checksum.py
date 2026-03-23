@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gfal_cli.tui import GfalTui, HighlightableDirectoryTree
+from gfal.tui import GfalTui, HighlightableDirectoryTree
 
 
 @pytest.mark.asyncio
@@ -46,13 +46,13 @@ async def test_tui_local_checksum_calls_fs():
             # Since DirectoryTree might be large, we'll manually set the cursor
             # to a node we know exists or mock the selection.
 
-            with patch("gfal_cli.tui.url_to_fs") as mock_url_to_fs:
+            with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
                 from fsspec.implementations.local import LocalFileSystem
 
                 mock_fs = LocalFileSystem()
                 mock_url_to_fs.return_value = (mock_fs, str(test_file.absolute()))
 
-                with patch("gfal_cli.tui.compute_checksum") as mock_compute:
+                with patch("gfal.tui.compute_checksum") as mock_compute:
                     mock_compute.return_value = (
                         "5eb63bbbe01eeed093cb22bb8f5acdc3"  # md5 of 'hello world'
                     )

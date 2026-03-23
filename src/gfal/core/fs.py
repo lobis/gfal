@@ -116,7 +116,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
     scheme = parsed.scheme.lower()
 
     if scheme in ("http", "https"):
-        from gfal_cli.webdav import WebDAVFileSystem
+        from gfal.core.webdav import WebDAVFileSystem
 
         return WebDAVFileSystem(storage_options), url
 

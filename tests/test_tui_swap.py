@@ -1,7 +1,7 @@
 import pytest
 from textual.widgets import Tree
 
-from gfal_cli.tui import (
+from gfal.tui import (
     GfalTui,
     HighlightableDirectoryTree,
     HighlightableRemoteDirectoryTree,

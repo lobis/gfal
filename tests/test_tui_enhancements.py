@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from gfal_cli.tui import (
+from gfal.tui import (
     ChecksumResultModal,
     GfalTui,
     HighlightableDirectoryTree,

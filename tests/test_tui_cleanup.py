@@ -13,8 +13,8 @@ async def test_tui_hang_on_quit():
 import time
 import sys
 import os
-from gfal_cli.tui import GfalTui
-from gfal_cli.base import interactive
+from gfal.tui import GfalTui
+from gfal.cli.base import interactive
 
 class HungTui(GfalTui):
     def on_mount(self):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from gfal_cli.shell import _command_from_argv0, _find_command
+from gfal.cli.shell import _command_from_argv0, _find_command
 
 # ---------------------------------------------------------------------------
 # _command_from_argv0
@@ -92,7 +92,7 @@ class TestMainEntrypoint:
 
         script = (
             "import sys; sys.argv=['gfal-unknown_cmd_xyz']+sys.argv[1:];"
-            "from gfal_cli.shell import main; main()"
+            "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],
@@ -122,7 +122,7 @@ class TestGfalParentCommand:
 
         script = (
             "import sys; sys.argv=['gfal', 'version'];"
-            "from gfal_cli.shell import main; main()"
+            "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],
@@ -143,7 +143,7 @@ class TestGfalParentCommand:
 
         script = (
             "import sys; sys.argv=['gfal', 'help'];"
-            "from gfal_cli.shell import main; main()"
+            "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],
@@ -169,7 +169,7 @@ class TestGfalParentCommand:
 
         script = (
             f"import sys; sys.argv=['gfal', 'ls', '{tmp_path.as_uri()}'];"
-            "from gfal_cli.shell import main; main()"
+            "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],

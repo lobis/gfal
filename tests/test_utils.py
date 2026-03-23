@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from gfal_cli.utils import file_mode_str, file_type_str
+from gfal.core.utils import file_mode_str, file_type_str
 
 # ---------------------------------------------------------------------------
 # file_type_str

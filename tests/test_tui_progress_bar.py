@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from gfal_cli.progress import TuiProgress
-from gfal_cli.tui import (
+from gfal.cli.progress import TuiProgress
+from gfal.tui import (
     GfalTui,
     HighlightableDirectoryTree,
     PasteModal,
@@ -180,8 +180,8 @@ async def test_tui_transfer_summary_modal(tmp_path):
     mock_url_to_fs.return_value = (mock_fs, "/eos/.../file.root")
 
     with (
-        patch("gfal_cli.fs.url_to_fs", mock_url_to_fs),
-        patch("gfal_cli.tui.url_to_fs", mock_url_to_fs),
+        patch("gfal.core.fs.url_to_fs", mock_url_to_fs),
+        patch("gfal.tui.url_to_fs", mock_url_to_fs),
     ):
         async with app.run_test() as pilot:
             await pilot.pause()

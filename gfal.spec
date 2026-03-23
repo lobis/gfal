@@ -1,7 +1,7 @@
 %{!?__python3: %global __python3 /usr/bin/python3}
 
 %define base_name gfal
-%define dist_name gfal_cli
+%define dist_name gfal
 %define install_dir /opt/%{base_name}
 
 Name: python3-%{base_name}
