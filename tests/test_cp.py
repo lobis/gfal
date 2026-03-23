@@ -476,27 +476,16 @@ class TestCopyLargeFile:
 # ---------------------------------------------------------------------------
 
 
-class TestCopyAlias:
-    def test_cp_alias(self, tmp_path):
-        """gfal-cp is an alias for gfal-copy."""
+class TestCp:
+    def test_cp(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
-        src.write_bytes(b"alias test")
+        src.write_bytes(b"cp test")
 
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
         assert rc == 0
-        assert dst.read_bytes() == b"alias test"
-
-    def test_copy_command(self, tmp_path):
-        src = tmp_path / "src.txt"
-        dst = tmp_path / "dst.txt"
-        src.write_bytes(b"copy test")
-
-        rc, out, err = run_gfal("copy", src.as_uri(), dst.as_uri())
-
-        assert rc == 0
-        assert dst.read_bytes() == b"copy test"
+        assert dst.read_bytes() == b"cp test"
 
 
 # ---------------------------------------------------------------------------

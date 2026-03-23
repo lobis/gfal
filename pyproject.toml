@@ -25,23 +25,6 @@ dependencies = [
 
 [project.scripts]
 gfal = "gfal_cli.shell:main"
-gfal-ls = "gfal_cli.shell:main"
-gfal-cp = "gfal_cli.shell:main"
-gfal-copy = "gfal_cli.shell:main"
-gfal-rm = "gfal_cli.shell:main"
-gfal-mkdir = "gfal_cli.shell:main"
-gfal-stat = "gfal_cli.shell:main"
-gfal-cat = "gfal_cli.shell:main"
-gfal-save = "gfal_cli.shell:main"
-gfal-rename = "gfal_cli.shell:main"
-gfal-chmod = "gfal_cli.shell:main"
-gfal-sum = "gfal_cli.shell:main"
-gfal-xattr = "gfal_cli.shell:main"
-gfal-bringonline = "gfal_cli.shell:main"
-gfal-archivepoll = "gfal_cli.shell:main"
-gfal-evict = "gfal_cli.shell:main"
-gfal-token = "gfal_cli.shell:main"
-gfal-tui = "gfal_cli.shell:main"
 
 [project.optional-dependencies]
 dev = [

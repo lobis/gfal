@@ -690,7 +690,7 @@ class GfalTui(App):
         if not path:
             return
 
-        self.log_activity(f"gfal-stat {path}", level="command")
+        self.log_activity(f"gfal stat {path}", level="command")
         self.log_activity(f"Fetching stat for: {path}")
 
         def get_stat():
@@ -789,7 +789,7 @@ class GfalTui(App):
                     if isinstance(result, bytes):
                         result = result.hex()
                     msg = f"Checksum ({algo}) for {path}:\n  {result}"
-                    self.log_activity(f"gfal-sum {path} {algo}", level="command")
+                    self.log_activity(f"gfal sum {path} {algo}", level="command")
                     self.log_activity(msg, level="success")
                     if modal:
                         modal.result = str(result)
@@ -833,7 +833,7 @@ class GfalTui(App):
                         result = result.hex()
                     if result:
                         m.result = str(result)
-                        self.log_activity(f"gfal-sum {path} {algo}", level="command")
+                        self.log_activity(f"gfal sum {path} {algo}", level="command")
                         self.log_activity(
                             f"Checksum ({algo}) for {path}:\n  {result}",
                             level="success",
@@ -1338,7 +1338,7 @@ class UrlInputModal(ModalScreen):
     def handle_submit(self):
         url = self.query_one("#modal-url-input", Input).value
         if url:
-            self.app.log_activity(f"gfal-ls {url}", level="command")
+            self.app.log_activity(f"gfal ls {url}", level="command")
             self.app.run_worker(self.app.update_focused_pane(url))
         self.action_close()
 

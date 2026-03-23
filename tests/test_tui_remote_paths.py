@@ -51,9 +51,9 @@ async def test_tui_remote_command_logging_includes_base_url():
             all_log_text = "".join(
                 "".join(s.text for s in strip._segments) for strip in log.lines
             )
-            # We expect gfal-stat root://eospublic.cern.ch//eos/opendata/cms/file.txt
+            # We expect gfal stat root://eospublic.cern.ch//eos/opendata/cms/file.txt
             assert (
-                "gfal-stat root://eospublic.cern.ch" in all_log_text
+                "gfal stat root://eospublic.cern.ch" in all_log_text
                 and "file.txt" in all_log_text
             ), f"Command with base URL not found in log. Log: {all_log_text}"
 

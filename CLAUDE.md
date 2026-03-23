@@ -59,9 +59,9 @@ src/gfal_cli/
   base.py       CommandBase class, @arg decorator, surl() type, common args
   fs.py         fsspec integration: url_to_fs(), StatInfo wrapper, helpers
   commands.py   mkdir, save, cat, stat, rename, chmod, sum, xattr
-  ls.py         gfal-ls (CommandLs)
-  copy.py       gfal-cp / gfal-copy (CommandCopy)
-  rm.py         gfal-rm (CommandRm)
+  ls.py         gfal ls (CommandLs)
+  copy.py       gfal cp (CommandCopy)
+  rm.py         gfal rm (CommandRm)
   tpc.py        Third-party copy backends (HTTP WebDAV COPY, XRootD CopyProcess)
   utils.py      file_type_str(), file_mode_str() — pure helpers, no fsspec
   progress.py   Terminal progress bar for copy operations
@@ -249,7 +249,7 @@ canonical help output for every command has already been captured in
 
 When a live connection is genuinely needed (e.g. to observe actual output format,
 not just flags), only run commands that:
-- Are completely read-only (e.g. `--help`, `gfal-stat` on a public file, `gfal-ls` on a public path).
+- Are completely read-only (e.g. `--help`, `gfal stat` on a public file, `gfal ls` on a public path).
 - Cannot leave any persistent side-effects (no writes, no staging requests, no token requests).
 
 Use:
@@ -257,8 +257,8 @@ Use:
 ssh lxplus.cern.ch '<command>'
 ```
 
-Never run `gfal-bringonline`, `gfal-archivepoll`, `gfal-evict`, `gfal-token`,
-`gfal-cp`, `gfal-rm`, `gfal-mkdir`, `gfal-chmod`, `gfal-save`, `gfal-rename`
+Never run `gfal bringonline`, `gfal archivepoll`, `gfal evict`, `gfal token`,
+`gfal cp`, `gfal rm`, `gfal mkdir`, `gfal chmod`, `gfal save`, `gfal rename`
 without explicit user confirmation, even with `--dry-run`.
 
 ## Intentionally omitted / stubbed
@@ -306,6 +306,25 @@ Similarly, never use `str | None` type unions in test files — use
 `Optional[str]` from `typing` instead, since CI still tests Python 3.9
 where PEP 604 unions are not supported at runtime.
 
+### Windows subprocess encoding
+
+CI also runs on Windows. When using `subprocess.run(..., text=True)`, always
+specify `encoding="utf-8"` explicitly — otherwise Python uses the system
+default (cp1252 on Windows) which cannot decode rich-click's Unicode box-drawing
+characters. Failure to do so causes stdout to be `None` and subsequent string
+operations to crash with `TypeError`.
+
+```python
+# BAD — breaks on Windows when output contains Unicode:
+proc = subprocess.run([...], capture_output=True, text=True)
+
+# GOOD — works cross-platform:
+proc = subprocess.run([...], capture_output=True, text=True, encoding="utf-8")
+
+# For rich/help output that may contain unusual characters, also add errors="replace":
+proc = subprocess.run([...], capture_output=True, text=True, encoding="utf-8", errors="replace")
+```
+
 pytest test suite lives in `tests/`. Run with:
 
 ```bash
@@ -338,15 +357,15 @@ Manual smoke tests against local files:
 ```bash
 echo "hello" > /tmp/test.txt
 
-gfal-stat /tmp/test.txt
-gfal-ls -l /tmp/
-gfal-cp /tmp/test.txt /tmp/test_copy.txt
-gfal-sum /tmp/test.txt ADLER32
-gfal-cat /tmp/test.txt
-gfal-mkdir /tmp/test_dir
-gfal-cp -r /tmp/test_dir /tmp/test_dir2   # recursive copy
-gfal-rm -r /tmp/test_dir /tmp/test_dir2
-gfal-rm /tmp/test_copy.txt
+gfal stat /tmp/test.txt
+gfal ls -l /tmp/
+gfal cp /tmp/test.txt /tmp/test_copy.txt
+gfal sum /tmp/test.txt ADLER32
+gfal cat /tmp/test.txt
+gfal mkdir /tmp/test_dir
+gfal cp -r /tmp/test_dir /tmp/test_dir2   # recursive copy
+gfal rm -r /tmp/test_dir /tmp/test_dir2
+gfal rm /tmp/test_copy.txt
 rm /tmp/test.txt
 ```
 

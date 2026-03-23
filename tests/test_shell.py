@@ -13,11 +13,8 @@ class TestCommandFromArgv0:
     def test_gfal_ls(self):
         assert _command_from_argv0("gfal-ls") == "ls"
 
-    def test_gfal_copy(self):
-        assert _command_from_argv0("gfal-copy") == "copy"
-
-    def test_gfal_cp_alias(self):
-        assert _command_from_argv0("gfal-cp") == "copy"
+    def test_gfal_cp(self):
+        assert _command_from_argv0("gfal-cp") == "cp"
 
     def test_gfal_rm(self):
         assert _command_from_argv0("gfal-rm") == "rm"
@@ -64,9 +61,9 @@ class TestFindCommand:
         cls, method = _find_command("ls")
         assert method.__name__ == "execute_ls"
 
-    def test_copy_command(self):
-        cls, method = _find_command("copy")
-        assert method.__name__ == "execute_copy"
+    def test_cp_command(self):
+        cls, method = _find_command("cp")
+        assert method.__name__ == "execute_cp"
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown command"):
@@ -101,6 +98,7 @@ class TestMainEntrypoint:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=_subprocess_env(),
         )
         assert proc.returncode != 0
@@ -130,6 +128,7 @@ class TestGfalParentCommand:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=_subprocess_env(),
         )
         assert proc.returncode == 0
@@ -150,6 +149,8 @@ class TestGfalParentCommand:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=_subprocess_env(),
         )
         assert proc.returncode == 0
@@ -158,7 +159,7 @@ class TestGfalParentCommand:
         assert "ls" in combined or "cp" in combined or "copy" in combined
 
     def test_gfal_dispatches_to_ls(self, tmp_path):
-        """``gfal ls <url>`` works the same as ``gfal-ls <url>``."""
+        """``gfal ls <url>`` dispatches correctly to the ls command."""
         import subprocess
         import sys
 
@@ -174,6 +175,7 @@ class TestGfalParentCommand:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=_subprocess_env(),
         )
         assert proc.returncode == 0

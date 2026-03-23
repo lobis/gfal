@@ -1,5 +1,5 @@
 """
-gfal-cp / gfal-copy implementation.
+gfal cp implementation.
 """
 
 import contextlib
@@ -167,7 +167,7 @@ class CommandCopy(base.CommandBase):
         help="destination URI(s). Multiple destinations are chained: "
         "src->dst1, dst1->dst2, ...",
     )
-    def execute_copy(self):
+    def execute_cp(self):
         """Copy files or directories."""
         if self.params.from_file and self.params.src:
             sys.stderr.write("Cannot combine --from-file with a positional source\n")

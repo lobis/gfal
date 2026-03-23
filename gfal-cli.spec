@@ -50,7 +50,7 @@ find %{buildroot}%{install_dir}/bin -type f -exec sed -i "s|%{buildroot}||g" {} 
 sed -i "s|%{buildroot}||g" %{buildroot}%{install_dir}/pyvenv.cfg
 
 # 5. Symlink the executables to /usr/bin
-# This allows users to run `gfal-copy` from anywhere, but it routes traffic into the isolated /opt/ environment
+# This allows users to run `gfal` from anywhere, but it routes traffic into the isolated /opt/ environment
 pushd %{buildroot}%{install_dir}/bin/
 for cmd in gfal*; do
     if [ -x "$cmd" ]; then

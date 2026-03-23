@@ -548,7 +548,7 @@ async def test_tui_local_stat_command_logging(tmp_path):
 
             assert log_file.exists()
             content = log_file.read_text()
-            assert "gfal-stat" in content
+            assert "gfal stat" in content
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_tui_local_checksum_command_logging(tmp_path):
 
             assert log_file.exists()
             content = log_file.read_text()
-            assert "gfal-sum" in content
+            assert "gfal sum" in content
 
 
 @pytest.mark.asyncio

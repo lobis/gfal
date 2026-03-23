@@ -250,8 +250,8 @@ jobs:
       run: ${{ matrix.target.install_cmd }}
     - name: Verify executables
       run: |
-        command -v gfal-copy
-        gfal-copy --help
+        command -v gfal
+        gfal --help
 
   update-repo:
     name: Update YUM/APT Repository 🌐
@@ -389,8 +389,8 @@ jobs:
       run: |
         ${{ matrix.target.install_cmd }}
         export PATH=$PATH:/usr/local/bin
-        command -v gfal-copy || exit 1
-        INSTALLED_VERSION=$(gfal-copy --version | awk '{print $NF}')
+        command -v gfal || exit 1
+        INSTALLED_VERSION=$(gfal --version | awk '{print $NF}')
         EXPECTED_VERSION=${{ github.ref_name }}
         EXPECTED_VERSION=${EXPECTED_VERSION#v}
         if [ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]; then

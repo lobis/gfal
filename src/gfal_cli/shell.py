@@ -63,10 +63,7 @@ def _ensure_xrootd_dylib_path():
 # Command name → (class, method) resolution
 # ---------------------------------------------------------------------------
 
-# Aliases: executable suffix → execute_* method name
-_ALIASES = {
-    "cp": "copy",
-}
+_ALIASES = {}
 
 
 def _find_command(cmd):
@@ -81,9 +78,8 @@ def _find_command(cmd):
 def _command_from_argv0(argv0):
     """Extract the command token from the executable name.
 
-    gfal-ls   → ls
-    gfal-copy → copy
-    gfal-cp   → copy  (alias)
+    gfal-ls → ls
+    gfal-cp → cp
     """
     name = Path(argv0).stem  # .stem strips .exe on Windows
     # strip leading 'gfal-' prefix

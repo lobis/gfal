@@ -41,17 +41,17 @@ def _subprocess_env():
 
 def run_gfal(cmd, *args, input=None, env=None):
     """
-    Run ``gfal-<cmd>`` in a subprocess via the current Python interpreter.
+    Run ``gfal <cmd>`` in a subprocess via the current Python interpreter.
 
     Returns ``(returncode, stdout, stderr)`` as strings.
 
     Args are passed as separate argv elements so paths with spaces are safe.
-    ``input`` may be a str piped to stdin (useful for gfal-save).
+    ``input`` may be a str piped to stdin (useful for gfal save).
     ``env`` may be a dict of extra environment variables to set (or override)
     on top of the base subprocess environment.
     """
     script = (
-        f"import sys; sys.argv=['gfal-{cmd}']+sys.argv[1:];"
+        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
         "from gfal_cli.shell import main; main()"
     )
     subprocess_env = _subprocess_env()
@@ -73,7 +73,7 @@ def run_gfal_binary(cmd, *args, input_bytes=None):
     Like run_gfal but captures stdout as raw bytes (for cat/save binary tests).
     """
     script = (
-        f"import sys; sys.argv=['gfal-{cmd}']+sys.argv[1:];"
+        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
         "from gfal_cli.shell import main; main()"
     )
     proc = subprocess.run(

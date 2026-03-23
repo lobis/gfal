@@ -32,21 +32,21 @@ sudo apt-get update
 sudo apt-get install -y python3-gfal-cli
 ```
 
-After installation the following commands are available on your `PATH`:
+After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:
 
-| Command | Description |
-|---------|-------------|
-| `gfal-ls` | List directory contents |
-| `gfal-cp` / `gfal-copy` | Copy files |
-| `gfal-rm` | Remove files or directories |
-| `gfal-mkdir` | Create directories |
-| `gfal-stat` | Display file status |
-| `gfal-cat` | Print file contents to stdout |
-| `gfal-save` | Write stdin to a remote file |
-| `gfal-rename` | Rename / move a file |
-| `gfal-chmod` | Change file permissions |
-| `gfal-sum` | Compute file checksums |
-| `gfal-xattr` | Get or set extended attributes |
+| Subcommand | Description |
+|-----------|-------------|
+| `gfal ls` | List directory contents |
+| `gfal cp` | Copy files |
+| `gfal rm` | Remove files or directories |
+| `gfal mkdir` | Create directories |
+| `gfal stat` | Display file status |
+| `gfal cat` | Print file contents to stdout |
+| `gfal save` | Write stdin to a remote file |
+| `gfal rename` | Rename / move a file |
+| `gfal chmod` | Change file permissions |
+| `gfal sum` | Compute file checksums |
+| `gfal xattr` | Get or set extended attributes |
 
 ## Quick start
 
@@ -54,24 +54,24 @@ All commands accept any URL that fsspec understands. Local paths must be given a
 
 ```bash
 # Stat a remote file (HTTPS)
-gfal-stat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root
+gfal stat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root
 
 # Compute a checksum (XRootD)
-gfal-sum root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root ADLER32
+gfal sum root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root ADLER32
 
 # Copy a remote file to local
-gfal-cp root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root file:///tmp/higgs.root
+gfal cp root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root file:///tmp/higgs.root
 
 # Cat a remote file (first 100 bytes)
-gfal-cat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root | head -c 100
+gfal cat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root | head -c 100
 ```
 
 ## Command reference
 
-### `gfal-ls`
+### `gfal ls`
 
 ```
-gfal-ls [OPTIONS] URI [URI ...]
+gfal ls [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
@@ -86,15 +86,15 @@ gfal-ls [OPTIONS] URI [URI ...]
 | `--color` | Colorise output: `auto` (default), `always`, `never` |
 
 ```bash
-gfal-ls -lH root://server//eos/data/
-gfal-ls -la file:///tmp/mydir/
-gfal-ls -l --time-style=full-iso https://example.com/files/
+gfal ls -lH root://server//eos/data/
+gfal ls -la file:///tmp/mydir/
+gfal ls -l --time-style=full-iso https://example.com/files/
 ```
 
-### `gfal-cp` / `gfal-copy`
+### `gfal cp`
 
 ```
-gfal-cp [OPTIONS] SRC [SRC ...] DST
+gfal cp [OPTIONS] SRC [SRC ...] DST
 ```
 
 | Option | Description |
@@ -113,22 +113,22 @@ gfal-cp [OPTIONS] SRC [SRC ...] DST
 
 ```bash
 # Simple copy
-gfal-cp file:///tmp/src.txt https://server/dst.txt
+gfal cp file:///tmp/src.txt https://server/dst.txt
 
 # Force overwrite with ADLER32 verification
-gfal-cp -f -K ADLER32 root://server//path/file.root file:///tmp/file.root
+gfal cp -f -K ADLER32 root://server//path/file.root file:///tmp/file.root
 
 # Recursive copy, create parents
-gfal-cp -r -p root://server//eos/srcdir/ file:///tmp/dstdir/
+gfal cp -r -p root://server//eos/srcdir/ file:///tmp/dstdir/
 
 # Third-party copy between two XRootD servers
-gfal-cp --tpc root://src-server//path/file root://dst-server//path/file
+gfal cp --tpc root://src-server//path/file root://dst-server//path/file
 ```
 
-### `gfal-rm`
+### `gfal rm`
 
 ```
-gfal-rm [OPTIONS] URI [URI ...]
+gfal rm [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
@@ -139,15 +139,15 @@ gfal-rm [OPTIONS] URI [URI ...]
 | `--just-delete` | Skip the stat check and delete directly |
 
 ```bash
-gfal-rm file:///tmp/old.txt
-gfal-rm -r root://server//eos/old_dir/
-gfal-rm --dry-run root://server//eos/dir/     # preview only
+gfal rm file:///tmp/old.txt
+gfal rm -r root://server//eos/old_dir/
+gfal rm --dry-run root://server//eos/dir/     # preview only
 ```
 
-### `gfal-stat`
+### `gfal stat`
 
 ```
-gfal-stat URI [URI ...]
+gfal stat URI [URI ...]
 ```
 
 Prints POSIX-style stat information (size, permissions, timestamps):
@@ -161,10 +161,10 @@ Modify: 2025-06-01 12:34:56.000000
 Change: 2025-06-01 12:34:56.000000
 ```
 
-### `gfal-mkdir`
+### `gfal mkdir`
 
 ```
-gfal-mkdir [OPTIONS] URI [URI ...]
+gfal mkdir [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
@@ -173,53 +173,53 @@ gfal-mkdir [OPTIONS] URI [URI ...]
 | `-m MODE` | Permissions in octal (default: `755`) |
 
 ```bash
-gfal-mkdir root://server//eos/user/j/jdoe/newdir
-gfal-mkdir -p root://server//eos/user/j/jdoe/a/b/c
+gfal mkdir root://server//eos/user/j/jdoe/newdir
+gfal mkdir -p root://server//eos/user/j/jdoe/a/b/c
 ```
 
-### `gfal-sum`
+### `gfal sum`
 
 ```
-gfal-sum URI ALGORITHM
+gfal sum URI ALGORITHM
 ```
 
 Supported algorithms: `ADLER32`, `CRC32`, `CRC32C`, `MD5`, `SHA1`, `SHA256`, `SHA512`.
 
 ```bash
-gfal-sum file:///tmp/file.root ADLER32
+gfal sum file:///tmp/file.root ADLER32
 # file:///tmp/file.root 0a1b2c3d
 ```
 
-### `gfal-cat`
+### `gfal cat`
 
 ```
-gfal-cat URI [URI ...]
+gfal cat URI [URI ...]
 ```
 
 Prints file contents to stdout. Multiple files are concatenated.
 
-### `gfal-save`
+### `gfal save`
 
 ```
-gfal-save URI
+gfal save URI
 ```
 
 Reads from stdin and writes to the given URI.
 
 ```bash
-echo "hello" | gfal-save root://server//eos/user/j/jdoe/hello.txt
+echo "hello" | gfal save root://server//eos/user/j/jdoe/hello.txt
 ```
 
-### `gfal-rename`
+### `gfal rename`
 
 ```
-gfal-rename SOURCE DESTINATION
+gfal rename SOURCE DESTINATION
 ```
 
-### `gfal-chmod`
+### `gfal chmod`
 
 ```
-gfal-chmod MODE URI [URI ...]
+gfal chmod MODE URI [URI ...]
 ```
 
 MODE is an octal permission string, e.g. `0644` or `755`.
