@@ -24,8 +24,10 @@ Enable the repository to receive automatic updates via `dnf update`.
 #### YUM (AlmaLinux / RHEL)
 
 ```bash
-sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-sudo dnf install -y python3-gfal
+dnf install -y epel-release
+dnf config-manager --set-enabled crb
+curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+dnf install -y python3-gfal
 ```
 
 After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:

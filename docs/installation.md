@@ -19,8 +19,10 @@ We provide a native YUM repository hosted on GitHub Pages. This is the recommend
 Install the repository configuration:
 
 ```bash
-sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-sudo dnf install -y python3-gfal
+dnf install -y epel-release
+dnf config-manager --set-enabled crb
+curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+dnf install -y python3-gfal
 ```
 
 ---
