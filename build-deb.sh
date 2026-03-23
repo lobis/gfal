@@ -24,7 +24,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
 git config --global --add safe.directory '*'
 
 # Install Python build tools.
-python3 -m pip install --quiet build hatchling hatch-vcs
+python3 -m pip install --quiet --break-system-packages build hatchling hatch-vcs
 
 # Determine the package version (strip the local part: +gXXXXXXX…).
 FULL_VERSION=$(python3 -m hatchling version)
@@ -53,12 +53,12 @@ EOF
 # packages satisfy everything else listed in Depends above).
 python3 -m pip install \
     fsspec-xrootd "dist/gfal-${FULL_VERSION}-py3-none-any.whl" \
-    --no-deps --ignore-installed \
+    --no-deps --ignore-installed --break-system-packages \
     --target pkg/usr/lib/python3/dist-packages
 
 # Bundle textual and rich-click (not yet in Ubuntu repos as of 22.04/24.04).
 python3 -m pip install textual rich-click \
-    --ignore-installed \
+    --ignore-installed --break-system-packages \
     --target pkg/usr/lib/python3/dist-packages
 
 # Prune packages that conflict with official Ubuntu system packages.
