@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build a Debian package for gfal.
-# Intended to run inside an ubuntu:22.04 (or later) container with the
+# Intended to run inside an ubuntu:24.04 (or later) container with the
 # repository root mounted at /workspace (the working directory).
 #
 # Usage (matching the Makefile 'deb' target):

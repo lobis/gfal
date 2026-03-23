@@ -151,12 +151,12 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 - `pyproject.toml` is the **source of truth** for versioning and dependencies.
 - `Makefile`: Use `make dist` to build Python distributions, `make rpm` for RPMs (requires Linux/`rpmbuild`), and `make deb` for DEBs (requires Docker or an Ubuntu container).
-- `build-deb.sh`: Shell script that builds the DEB package. Intended to run inside an `ubuntu:22.04` container. Called by `make deb` and the CI `build-deb` job. To test locally:
+- `build-deb.sh`: Shell script that builds the DEB package. Intended to run inside an `ubuntu:24.04` (or later) container. Called by `make deb` and the CI `build-deb` job. To test locally:
   ```bash
   # with explicit architecture (as the CI does):
-  docker run --rm --platform linux/amd64 -v $(pwd):/workspace -w /workspace ubuntu:22.04 bash build-deb.sh amd64
+  docker run --rm --platform linux/amd64 -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash build-deb.sh amd64
   # auto-detect architecture from the container:
-  docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:22.04 bash build-deb.sh
+  docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash build-deb.sh
   ```
 - `gfal.spec`: RPM spec file.
   - > [!IMPORTANT]
