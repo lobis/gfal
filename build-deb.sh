@@ -8,7 +8,7 @@
 #
 # ARCH defaults to the output of `dpkg --print-architecture` (e.g. amd64).
 # The resulting .deb is written to the repository root as:
-#   python3-gfal-<VERSION>-<ARCH>.deb
+#   python3-gfal_<VERSION>_<ARCH>.deb
 
 set -euo pipefail
 
@@ -88,6 +88,6 @@ fi
 sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal*
 
 # Build the .deb.
-DEB_FILE="python3-gfal-${VERSION}-${ARCH}.deb"
+DEB_FILE="python3-gfal_${VERSION}_${ARCH}.deb"
 dpkg-deb --build pkg "${DEB_FILE}"
 echo "Built: ${DEB_FILE}"
