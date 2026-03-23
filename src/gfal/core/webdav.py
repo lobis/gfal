@@ -23,6 +23,8 @@ from xml.etree import ElementTree as ET
 import fsspec
 import requests as _requests
 from fsspec import AbstractFileSystem
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 _DAV = "{DAV:}"
 
@@ -37,9 +39,46 @@ _PROPFIND_BODY = (
 # ---------------------------------------------------------------------------
 
 
+# WebDAV methods that are safe to retry on connection errors.
+# Standard idempotent methods plus the WebDAV-specific ones.
+_RETRY_METHODS = frozenset(
+    [
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "PUT",
+        "TRACE",
+        "PROPFIND",
+        "MKCOL",
+        "MOVE",
+        "COPY",
+    ]
+)
+
+
 def _make_session(storage_options):
-    """Build a ``requests.Session`` with cert / SSL-verify config."""
+    """Build a ``requests.Session`` with cert / SSL-verify config.
+
+    A ``Retry`` adapter is mounted for both http:// and https:// to
+    transparently retry transient connection errors (e.g. WinError 10053 /
+    ECONNABORTED on Windows when the server closes a keep-alive socket before
+    the client reuses it).  HTTP error status codes are *not* retried so that
+    real 4xx/5xx responses are never silently hidden.
+    """
+    _retry = Retry(
+        total=3,
+        connect=3,
+        read=1,
+        status=0,
+        backoff_factor=0.1,
+        raise_on_status=False,
+        allowed_methods=_RETRY_METHODS,
+    )
+    _adapter = HTTPAdapter(max_retries=_retry)
     session = _requests.Session()
+    session.mount("http://", _adapter)
+    session.mount("https://", _adapter)
     cert = storage_options.get("client_cert")
     key = storage_options.get("client_key")
     if cert:
