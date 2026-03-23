@@ -19,7 +19,7 @@ jobs:
     name: Codespell spell-check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: codespell-project/actions-codespell@v2
       with:
         ignore_words_list: cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag
@@ -28,7 +28,7 @@ jobs:
     name: Pre-commit checks
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -45,7 +45,7 @@ jobs:
     env:
       PYTEST_ADDOPTS: "--color=yes"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
@@ -58,7 +58,7 @@ jobs:
     name: XRootD Server Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -75,7 +75,7 @@ jobs:
     name: Integration Tests (EOS)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -105,7 +105,7 @@ jobs:
     needs: [ codespell, pre-commit, tests, xrootd, integration ]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - uses: actions/setup-python@v6
@@ -138,7 +138,7 @@ jobs:
     - name: Set up QEMU
       if: matrix.arch == 'aarch64'
       uses: docker/setup-qemu-action@v3
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - name: Build RPM in Container
@@ -270,7 +270,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/download-artifact@v8
       with:
         path: artifacts/
