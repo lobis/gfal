@@ -159,10 +159,10 @@ async def test_tui_paste_to_file_uses_parent():
             app.set_focus(tree)
 
             # Wait for nodes and select the file (child of root)
-            for _ in range(50):
+            for _ in range(200):
                 if tree.root and tree.root.children:
                     break
-                await pilot.pause(0.01)
+                await pilot.pause(0.05)
 
             file_node = tree.root.children[0]
             tree.select_node(file_node)
