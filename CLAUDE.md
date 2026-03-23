@@ -145,6 +145,33 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
   - > Always keep the `Requires:` and `BuildRequires:` in the `.spec` file in sync with the `dependencies` in `pyproject.toml`.
 - **GitHub Actions**: The `publish.yml` workflow automatically builds and publishes PyPI packages, RPMs, and DEBs to both PyPI and GitHub Releases when a new `v*` tag is pushed.
 
+### DEB packaging (Ubuntu/Debian)
+
+The DEB is built in `.github/workflows/ci.yml`. It uses `pip install --target` to bundle dependencies into `/usr/lib/python3/dist-packages/`. This works but **will break whenever a new bundled package conflicts with a system `python3-*` package**.
+
+**Symptom:** `dpkg: error processing archive ... trying to overwrite '/usr/lib/python3/dist-packages/<pkg>/__init__.py', which is also in package python3-<pkg>`
+
+**Fix — two steps, both required:**
+
+1. **Add the conflicting package to `Depends:`** in the `control` block so `apt` installs the system version.
+2. **Prune the bundled copy** with `rm -rf` immediately after the `pip install` step — before `dpkg-deb --build`.
+
+**Currently pruned packages** (system packages that must not be re-bundled):
+
+| Pruned path pattern | Ubuntu system package |
+|--------------------|-----------------------|
+| `rich*` | `python3-rich` |
+| `markdown_it*` | `python3-markdown-it` |
+| `mdurl*` | `python3-mdurl` |
+| `mdit_py_plugins*` | (dep of markdown-it, no separate deb) |
+| `pygments*` | `python3-pygments` |
+| `click*` | `python3-click` |
+
+When adding a new Python dependency to `pyproject.toml`, check whether Ubuntu 24.04 already ships it as a `python3-<pkg>` package. If it does, add it to the prune list and `Depends` in `ci.yml`. To check:
+```bash
+docker run --rm ubuntu:24.04 apt-cache show python3-<pkg> 2>/dev/null | grep Version
+```
+
 ## Common args (every command)
 
 `-v / --verbose`, `-t / --timeout`, `-E / --cert`, `--key`, `--log-file`

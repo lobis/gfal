@@ -189,11 +189,15 @@ jobs:
         Priority: optional
         Architecture: ${{ matrix.arch }}
         Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
-        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments
+        Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments, python3-click
         Description: GFAL2-compatible CLI tools based on fsspec
         EOF
-                   # Bundle textual and its requirements.
-                   # We prune rich, markdown_it, and pygments because they conflict with official ubuntu packages.
+                   # Bundle textual and its requirements (rich-click not yet in Ubuntu repos so it must be bundled).
+                   # After bundling, prune packages that conflict with official Ubuntu system packages.
+                   # IMPORTANT: When adding new dependencies, check if they are already in Ubuntu repos.
+                   # If so, add them to Depends above AND prune them here with rm -rf.
+                   # Conflicting packages cause "trying to overwrite" dpkg errors.
+                   # Currently pruned (provided by system): rich, markdown_it, mdurl, mdit_py_plugins, pygments, click.
                    python3 -m pip install fsspec-xrootd dist/gfal_cli-*.whl --no-deps --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    python3 -m pip install textual rich-click --ignore-installed --target pkg/usr/lib/python3/dist-packages && \
                    rm -rf pkg/usr/lib/python3/dist-packages/rich* && \
@@ -201,6 +205,7 @@ jobs:
                    rm -rf pkg/usr/lib/python3/dist-packages/mdurl* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/mdit_py_plugins* && \
                    rm -rf pkg/usr/lib/python3/dist-packages/pygments* && \
+                   rm -rf pkg/usr/lib/python3/dist-packages/click* && \
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ || true && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
