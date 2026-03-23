@@ -150,7 +150,14 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 ## Packaging
 
 - `pyproject.toml` is the **source of truth** for versioning and dependencies.
-- `Makefile`: Use `make dist` to build Python distributions and `make rpm` for RPMs (requires Linux/`rpmbuild`).
+- `Makefile`: Use `make dist` to build Python distributions, `make rpm` for RPMs (requires Linux/`rpmbuild`), and `make deb` for DEBs (requires Docker or an Ubuntu container).
+- `build-deb.sh`: Shell script that builds the DEB package. Intended to run inside an `ubuntu:24.04` (or later) container. Called by `make deb` and the CI `build-deb` job. To test locally:
+  ```bash
+  # with explicit architecture (as the CI does):
+  docker run --rm --platform linux/amd64 -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash build-deb.sh amd64
+  # auto-detect architecture from the container:
+  docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash build-deb.sh
+  ```
 - `gfal.spec`: RPM spec file.
   - > [!IMPORTANT]
   - > Always keep the `Requires:` and `BuildRequires:` in the `.spec` file in sync with the `dependencies` in `pyproject.toml`.
@@ -158,7 +165,7 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 ### DEB packaging (Ubuntu/Debian)
 
-The DEB is built in `.github/workflows/ci.yml`. It uses `pip install --target` to bundle dependencies into `/usr/lib/python3/dist-packages/`. This works but **will break whenever a new bundled package conflicts with a system `python3-*` package**.
+The DEB is built by `build-deb.sh`, called from the `build-deb` CI job in `.github/workflows/ci.yml`. It uses `pip install --target` to bundle dependencies into `/usr/lib/python3/dist-packages/`. This works but **will break whenever a new bundled package conflicts with a system `python3-*` package**.
 
 **Symptom:** `dpkg: error processing archive ... trying to overwrite '/usr/lib/python3/dist-packages/<pkg>/__init__.py', which is also in package python3-<pkg>`
 
@@ -171,14 +178,14 @@ The DEB is built in `.github/workflows/ci.yml`. It uses `pip install --target` t
 
 | Pruned path pattern | Ubuntu system package |
 |--------------------|-----------------------|
-| `rich*` | `python3-rich` |
+| `rich/` + `rich-*.dist-info` (exact, NOT `rich*` — would also remove `rich_click`) | `python3-rich` |
 | `markdown_it*` | `python3-markdown-it` |
 | `mdurl*` | `python3-mdurl` |
 | `mdit_py_plugins*` | (dep of markdown-it, no separate deb) |
 | `pygments*` | `python3-pygments` |
-| `click*` | `python3-click` |
+| `click/` + `click-*.dist-info` (exact, NOT `click*`) | `python3-click` |
 
-When adding a new Python dependency to `pyproject.toml`, check whether Ubuntu 24.04 already ships it as a `python3-<pkg>` package. If it does, add it to the prune list and `Depends` in `ci.yml`. To check:
+When adding a new Python dependency to `pyproject.toml`, check whether Ubuntu 24.04 already ships it as a `python3-<pkg>` package. If it does, add it to the prune list and `Depends` in `build-deb.sh`. To check:
 ```bash
 docker run --rm ubuntu:24.04 apt-cache show python3-<pkg> 2>/dev/null | grep Version
 ```

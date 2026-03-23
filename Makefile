@@ -4,7 +4,7 @@ SPECFILE = $(NAME).spec
 DIST_DIR = dist
 RPMBUILD = $(shell pwd)/rpmbuild
 
-.PHONY: all clean dist srpm rpm prepare
+.PHONY: all clean dist srpm rpm deb prepare
 
 all: dist
 
@@ -44,3 +44,6 @@ rpm: srpm
 		--define "_topdir $(RPMBUILD)" \
 		--define "pkg_version $${VERSION}" \
 		--define "pkg_release $${RELEASE:-1}"
+
+deb:
+	bash build-deb.sh $(ARCH)
