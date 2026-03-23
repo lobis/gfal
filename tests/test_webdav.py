@@ -89,8 +89,19 @@ class _ReuseAddrHTTPServer(HTTPServer):
 
 
 class _WebDAVHandler(BaseHTTPRequestHandler):
+    # Always close the connection after each response so that the requests
+    # session pool never tries to reuse a dead socket.  On Windows,
+    # reusing a closed HTTP/1.0 connection raises ConnectionAbortedError
+    # (WinError 10053) instead of the ConnectionResetError that urllib3
+    # knows how to retry, causing spurious test failures.
+    close_connection = True
+
     def log_message(self, *args):
         pass  # silence request logging during tests
+
+    def end_headers(self):
+        self.send_header("Connection", "close")
+        super().end_headers()
 
     def do_PROPFIND(self):
         with _vfs_lock:

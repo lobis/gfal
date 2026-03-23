@@ -28,8 +28,7 @@ except PackageNotFoundError:
 # rich-click configuration
 # ---------------------------------------------------------------------------
 
-click.rich_click.USE_RICH_MARKUP = True
-click.rich_click.USE_MARKDOWN = False
+click.rich_click.TEXT_MARKUP = "rich"
 click.rich_click.SHOW_ARGUMENTS = True
 click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
 click.rich_click.STYLE_ERRORS_SUGGESTION = "italic"
