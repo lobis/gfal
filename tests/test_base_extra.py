@@ -555,40 +555,37 @@ class TestCommandBaseExecute:
         rc = cmd.execute(func)
         assert rc == 0
 
+    @pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="Unix only")
     def test_execute_x509_proxy_autodetect(self, monkeypatch, tmp_path):
         """When no cert and proxy file exists, X509_USER_PROXY should be set."""
+        import contextlib
         import os
+        from pathlib import Path
 
-        # Create a fake proxy file
-        uid = os.getuid() if hasattr(os, "getuid") else 0
-        proxy = tmp_path / f"x509up_u{uid}"
-        proxy.write_text("fake proxy")
+        uid = os.getuid()
+        proxy_path = Path(f"/tmp/x509up_u{uid}")
 
         monkeypatch.delenv("X509_USER_PROXY", raising=False)
         monkeypatch.delenv("X509_USER_CERT", raising=False)
 
-        # Patch the Path check to use our tmp_path proxy
-        from gfal.cli import base as _base
+        # Create the proxy at the exact location base.py checks, then clean up.
+        already_existed = proxy_path.exists()
+        if not already_existed:
+            proxy_path.write_text("fake proxy")
+        try:
+            cmd = self._make_minimal_cmd_with_params(cert=None)
 
-        original_path = _base.Path
+            def func(self):
+                return 0
 
-        class PatchedPath(original_path):
-            def __new__(cls, *args, **kwargs):
-                s = str(args[0]) if args else ""
-                if s.startswith("/tmp/x509up_u"):
-                    return original_path.__new__(cls, str(proxy))
-                return original_path.__new__(cls, *args, **kwargs)
-
-        monkeypatch.setattr(_base, "Path", PatchedPath)
-
-        cmd = self._make_minimal_cmd_with_params(cert=None)
-
-        def func(self):
-            return 0
-
-        func.is_interactive = False
-        rc = cmd.execute(func)
-        assert rc == 0
+            func.is_interactive = False
+            rc = cmd.execute(func)
+            assert rc == 0
+            assert os.environ.get("X509_USER_PROXY") == str(proxy_path)
+        finally:
+            if not already_existed:
+                with contextlib.suppress(OSError):
+                    proxy_path.unlink()
 
 
 # ---------------------------------------------------------------------------
