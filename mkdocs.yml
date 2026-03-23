@@ -1,7 +1,7 @@
-site_name: gfal-cli
-site_description: GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)
-site_url: https://lobis.github.io/gfal-cli/
-repo_url: https://github.com/lobis/gfal-cli
+site_name: gfal
+site_description: Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS and XRootD)
+site_url: https://lobis.github.io/gfal/
+repo_url: https://github.com/lobis/gfal
 edit_uri: edit/main/docs/
 
 theme:

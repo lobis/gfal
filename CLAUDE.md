@@ -1,10 +1,12 @@
-# gfal-cli
+# gfal — Grid File Access Library
 
 > **`AGENTS.md` is a symlink to this file.**  Claude Code reads `CLAUDE.md`;
 > other AI coding agents (Codex, Copilot Workspace, Cursor, …) read `AGENTS.md`.
 > Edit only `CLAUDE.md` — changes are automatically visible through both names.
 
-A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
+**gfal** stands for **Grid File Access Library**. This is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
+
+GitHub: [github.com/lobis/gfal](https://github.com/lobis/gfal)
 
 The original gfal2-util implementation lives in `gfal2-util/` (gitignored, clone separately for reference) and is the reference for CLI compatibility.
 
@@ -140,7 +142,7 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 - `pyproject.toml` is the **source of truth** for versioning and dependencies.
 - `Makefile`: Use `make dist` to build Python distributions and `make rpm` for RPMs (requires Linux/`rpmbuild`).
-- `gfal-cli.spec`: RPM spec file.
+- `gfal-cli.spec`: RPM spec file (project PyPI name is now `gfal`).
   - > [!IMPORTANT]
   - > Always keep the `Requires:` and `BuildRequires:` in the `.spec` file in sync with the `dependencies` in `pyproject.toml`.
 - **GitHub Actions**: The `publish.yml` workflow automatically builds and publishes PyPI packages, RPMs, and DEBs to both PyPI and GitHub Releases when a new `v*` tag is pushed.

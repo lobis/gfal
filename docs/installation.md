@@ -2,10 +2,10 @@
 
 ## PyPI (Stable)
 
-The easiest way to install `gfal-cli` is via `pip`:
+The easiest way to install `gfal` is via `pip`:
 
 ```bash
-pip install gfal-cli
+pip install gfal
 ```
 
 ---
@@ -19,8 +19,8 @@ We provide native YUM and APT repositories hosted on GitHub Pages. This is the r
 Install the repository configuration:
 
 ```bash
-sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-sudo dnf install -y python3-gfal-cli
+sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+sudo dnf install -y python3-gfal
 ```
 
 ### APT (Ubuntu / Debian)
@@ -28,25 +28,25 @@ sudo dnf install -y python3-gfal-cli
 Add the repository:
 
 ```bash
-echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal-cli.list
+echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal.list
 sudo apt-get update
-sudo apt-get install -y python3-gfal-cli
+sudo apt-get install -y python3-gfal
 ```
 
 ---
 
 ## Direct Download (RPM / DEB)
 
-You can also download individual packages from the [GitHub Releases](https://github.com/lobis/gfal-cli/releases) page.
+You can also download individual packages from the [GitHub Releases](https://github.com/lobis/gfal/releases) page.
 
 **AlmaLinux 9/10**:
 ```bash
-dnf install -y https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest-el9.rpm
+dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest-el9.rpm
 ```
 
 **Ubuntu**:
 ```bash
-curl -L -O https://github.com/lobis/gfal-cli/releases/latest/download/python3-gfal-cli-latest.deb
+curl -L -O https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest.deb
 
 ---
 

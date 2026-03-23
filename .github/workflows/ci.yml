@@ -183,14 +183,14 @@ jobs:
                    python3 -m build --no-isolation && \
                    mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/lib/python3/dist-packages && \
                    cat <<EOF > pkg/DEBIAN/control
-        Package: python3-gfal-cli
+        Package: python3-gfal
         Version: \$VERSION
         Section: utils
         Priority: optional
         Architecture: ${{ matrix.arch }}
         Maintainer: Luis Antonio Obis Aparicio <luis.obis@cern.ch>
         Depends: python3, python3-fsspec, python3-xrootd, python3-aiohttp, python3-requests, python3-rich, python3-markdown-it, python3-mdurl, python3-pygments, python3-click
-        Description: GFAL2-compatible CLI tools based on fsspec
+        Description: Grid File Access Library — Python rewrite of gfal2, based on fsspec
         EOF
                    # Bundle textual and its requirements (rich-click not yet in Ubuntu repos so it must be bundled).
                    # After bundling, prune packages that conflict with official Ubuntu system packages.
@@ -209,7 +209,7 @@ jobs:
                    mv pkg/usr/lib/python3/dist-packages/bin/* pkg/usr/bin/ || true && \
                    rm -rf pkg/usr/lib/python3/dist-packages/bin && \
                    sed -i '1s|^.*$|#!/usr/bin/python3|' pkg/usr/bin/gfal* && \
-                   dpkg-deb --build pkg python3-gfal-cli-\$VERSION-${{ matrix.arch }}.deb"
+                   dpkg-deb --build pkg python3-gfal-\$VERSION-${{ matrix.arch }}.deb"
     - name: Store DEBs
       uses: actions/upload-artifact@v4
       with:
@@ -284,7 +284,7 @@ jobs:
     - name: Prepare Repository
       run: |
         mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64 site/rpm/el10/x86_64 site/rpm/el10/aarch64
-        mkdir -p site/deb/pool/main/g/gfal-cli site/deb/dists/stable/main/binary-amd64 site/deb/dists/stable/main/binary-arm64
+        mkdir -p site/deb/pool/main/g/gfal site/deb/dists/stable/main/binary-amd64 site/deb/dists/stable/main/binary-arm64
 
         find artifacts/ -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
         find artifacts/ -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
@@ -292,19 +292,19 @@ jobs:
         find artifacts/ -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
         for d in site/rpm/el*/*/; do createrepo_c "$d"; done
 
-        cp artifacts/*.deb site/deb/pool/main/g/gfal-cli/
+        cp artifacts/*.deb site/deb/pool/main/g/gfal/
         cd site/deb
         for arch in amd64 arm64; do
-          apt-ftparchive packages pool/main/g/gfal-cli --arch $arch > dists/stable/main/binary-$arch/Packages
+          apt-ftparchive packages pool/main/g/gfal --arch $arch > dists/stable/main/binary-$arch/Packages
           gzip -c dists/stable/main/binary-$arch/Packages > dists/stable/main/binary-$arch/Packages.gz
         done
         apt-ftparchive release dists/stable > dists/stable/Release
         cd ../..
 
-        cat <<EOF > site/rpm/gfal-cli.repo
-        [gfal-cli]
-        name=gfal-cli repository
-        baseurl=https://lobis.github.io/gfal-cli/rpm/el\$releasever/\$basearch/
+        cat <<EOF > site/rpm/gfal.repo
+        [gfal]
+        name=gfal repository
+        baseurl=https://lobis.github.io/gfal/rpm/el\$releasever/\$basearch/
         enabled=1
         gpgcheck=0
         EOF
@@ -321,7 +321,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/gfal-cli
+      url: https://pypi.org/p/gfal
     permissions:
       id-token: write
     steps:
@@ -346,12 +346,12 @@ jobs:
     - name: Create latest aliases
       run: |
         cd artifacts
-        find . -name "*el9*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9.rpm \;
-        find . -name "*el10*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10.rpm \;
-        find . -name "*el9*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el9-aarch64.rpm \;
-        find . -name "*el10*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-cli-latest-el10-aarch64.rpm \;
-        find . -name "*amd64.deb" -exec cp {} python3-gfal-cli-latest.deb \;
-        find . -name "*arm64.deb" -exec cp {} python3-gfal-cli-latest-arm64.deb \;
+        find . -name "*el9*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el9.rpm \;
+        find . -name "*el10*x86_64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el10.rpm \;
+        find . -name "*el9*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el9-aarch64.rpm \;
+        find . -name "*el10*aarch64.rpm" -not -name "*.src.rpm" -exec cp {} python3-gfal-latest-el10-aarch64.rpm \;
+        find . -name "*amd64.deb" -exec cp {} python3-gfal-latest.deb \;
+        find . -name "*arm64.deb" -exec cp {} python3-gfal-latest-arm64.deb \;
     - uses: softprops/action-gh-release@v2
       with:
         files: artifacts/**/*
@@ -370,24 +370,24 @@ jobs:
           container: almalinux:9
           install_cmd: |
             dnf install -y epel-release curl
-            curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
+            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal && break || sleep 10; done
         - name: AlmaLinux 10
           container: almalinux:10
           install_cmd: |
             dnf install -y epel-release curl
-            curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal-cli && break || sleep 10; done
+            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..12}; do dnf clean all && dnf install -y python3-gfal && break || sleep 10; done
         - name: Ubuntu 24.04
           container: ubuntu:24.04
           install_cmd: |
             apt-get update && apt-get install -y curl
-            echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | tee /etc/apt/sources.list.d/gfal-cli.list
-            for i in {1..12}; do apt-get update && apt-get install -y python3-gfal-cli && break || sleep 10; done
+            echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | tee /etc/apt/sources.list.d/gfal.list
+            for i in {1..12}; do apt-get update && apt-get install -y python3-gfal && break || sleep 10; done
         - name: PyPI
           container: python:3.9
           install_cmd: |
-            for i in {1..12}; do pip install --no-cache-dir gfal-cli && break || sleep 10; done
+            for i in {1..12}; do pip install --no-cache-dir gfal && break || sleep 10; done
     container: ${{ matrix.target.container }}
     steps:
     - name: Install and Verify

@@ -1,15 +1,17 @@
-# gfal-cli
+# gfal
 
-**Documentation: [lobis.github.io/gfal-cli](https://lobis.github.io/gfal-cli/)**
+**Grid File Access Library — Python rewrite of gfal2**
 
-A pip-installable Python rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
+**Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
+
+A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
 
 ## Installation
 
 ### From PyPI
 
 ```bash
-pip install gfal-cli
+pip install gfal
 ```
 
 ### From Native Repository (Recommended for Updates)
@@ -19,17 +21,17 @@ Enable the repository to receive automatic updates via `dnf update` or `apt upgr
 #### YUM (AlmaLinux / RHEL)
 
 ```bash
-sudo curl -sL -o /etc/yum.repos.d/gfal-cli.repo https://lobis.github.io/gfal-cli/rpm/gfal-cli.repo
-sudo dnf install -y python3-gfal-cli
+sudo curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+sudo dnf install -y python3-gfal
 ```
 
 #### APT (Ubuntu / Debian)
 
 Add the repository:
 ```bash
-echo "deb [trusted=yes] https://lobis.github.io/gfal-cli/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal-cli.list
+echo "deb [trusted=yes] https://lobis.github.io/gfal/deb/ stable main" | sudo tee /etc/apt/sources.list.d/gfal.list
 sudo apt-get update
-sudo apt-get install -y python3-gfal-cli
+sudo apt-get install -y python3-gfal
 ```
 
 After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:
@@ -246,8 +248,8 @@ Every command accepts these global flags:
 ## Development
 
 ```bash
-git clone https://github.com/lobis/gfal-cli.git
-cd gfal-cli
+git clone https://github.com/lobis/gfal.git
+cd gfal
 
 python -m venv .venv
 source .venv/bin/activate
