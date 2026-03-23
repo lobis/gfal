@@ -137,7 +137,7 @@ jobs:
     steps:
     - name: Set up QEMU
       if: matrix.arch == 'aarch64'
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
@@ -168,7 +168,7 @@ jobs:
     steps:
     - name: Set up QEMU
       if: matrix.arch == 'arm64'
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
     - uses: actions/checkout@v6
     - name: Build DEB (Native dpkg-deb)
       run: |
