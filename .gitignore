@@ -216,8 +216,9 @@ gfal2-util/
 
 .claude/
 
+# Packaging
 !gfal-cli.spec
-
 rpmbuild/
+pgk/
 
 *.root
