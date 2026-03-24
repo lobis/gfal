@@ -11,7 +11,7 @@ import sys
 import zlib
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import fsspec
 
@@ -93,9 +93,9 @@ def normalize_url(url):
             p = Path.cwd() / p
         return p.as_uri()
     if scheme == "dav":
-        return "http" + url[3:]
+        return urlunparse(parsed._replace(scheme="http"))
     if scheme == "davs":
-        return "https" + url[4:]
+        return urlunparse(parsed._replace(scheme="https"))
     return url
 
 
