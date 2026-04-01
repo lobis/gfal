@@ -129,13 +129,13 @@ def _run(cmd, proxy_cert, *args):
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotStreamingCopy
+# TestEosPilotStreamingCopy
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotStreamingCopy:
+class TestEosPilotStreamingCopy:
     def test_copy_small_file(self, proxy_cert, pilot_dir, tmp_path):
         """Download from eospublic and re-upload to pilot dir."""
         local = tmp_path / "src.C"
@@ -236,13 +236,13 @@ class TestEospilotStreamingCopy:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotStat
+# TestEosPilotStat
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotStat:
+class TestEosPilotStat:
     def test_stat_file(self, proxy_cert, pilot_dir, tmp_path):
         """stat on an uploaded file should show size and 'regular file'."""
         data = b"stat me " * 10
@@ -272,13 +272,13 @@ class TestEospilotStat:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotLs
+# TestEosPilotLs
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotLs:
+class TestEosPilotLs:
     def test_ls_empty_directory(self, proxy_cert, pilot_dir):
         """ls on a freshly-created empty directory should return no output."""
         rc, out, err = _run("ls", proxy_cert, pilot_dir)
@@ -330,13 +330,13 @@ class TestEospilotLs:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotMkdirRm
+# TestEosPilotMkdirRm
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotMkdirRm:
+class TestEosPilotMkdirRm:
     def test_mkdir(self, proxy_cert, pilot_dir):
         """Create a subdirectory and verify it exists with stat."""
         subdir = f"{pilot_dir}/subdir_mkdir_test"
@@ -384,13 +384,13 @@ class TestEospilotMkdirRm:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotRename
+# TestEosPilotRename
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotRename:
+class TestEosPilotRename:
     def test_rename_file(self, proxy_cert, pilot_dir, tmp_path):
         """Upload a file, rename it, verify src is gone and dst exists."""
         src = tmp_path / "rename_src.bin"
@@ -414,13 +414,13 @@ class TestEospilotRename:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotSum
+# TestEosPilotSum
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotSum:
+class TestEosPilotSum:
     def test_sum_md5(self, proxy_cert, pilot_dir, tmp_path):
         """Upload a file with known content and verify its MD5 checksum."""
         import hashlib
@@ -457,13 +457,13 @@ class TestEospilotSum:
 
 
 # ---------------------------------------------------------------------------
-# TestEospilotTpc
+# TestEosPilotTpc
 # ---------------------------------------------------------------------------
 
 
 @requires_eospilot
 @requires_proxy
-class TestEospilotTpc:
+class TestEosPilotTpc:
     def test_tpc_copy_from_public(self, proxy_cert, pilot_dir):
         """Server-side copy from eospublic to eospilot using --tpc."""
         dst = f"{pilot_dir}/tpc_from_public.C"
