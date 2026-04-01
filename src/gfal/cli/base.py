@@ -426,7 +426,8 @@ def _configure_option_groups(prog_name: str, cmd_suffix: str) -> None:
     groups.append({"name": "Authentication", "options": _COMMON_AUTH_OPTS})
     groups.append({"name": "Compatibility", "options": _COMMON_COMPAT_OPTS})
 
-    click.rich_click.OPTION_GROUPS[prog_name] = groups
+    if hasattr(click, "rich_click"):
+        click.rich_click.OPTION_GROUPS[prog_name] = groups
 
 
 def _build_click_command(method, prog_name, help_text):
