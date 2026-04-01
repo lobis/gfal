@@ -218,6 +218,8 @@ gfal2-util/
 # X.509 credentials / proxies used for local integration testing
 *.p12
 proxies/
+*.pem
+*.key
 
 .idea/
 
