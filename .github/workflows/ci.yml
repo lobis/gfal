@@ -224,10 +224,10 @@ jobs:
       run: |
         command -v gfal
         gfal --help
-    - name: Install test dependencies into RPM venv
-      run: /opt/gfal/bin/pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
-    - name: Run tests against RPM-installed package
-      run: /opt/gfal/bin/python -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
+    - name: Install test dependencies
+      run: pip3 install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
+    - name: Run tests against installed package
+      run: python3 -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
 
   update-repo:
     name: Update YUM Repository 🌐
