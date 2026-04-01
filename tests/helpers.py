@@ -1,9 +1,11 @@
 """Shared test helpers for gfal-cli tests."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def _subprocess_env():
@@ -64,6 +66,105 @@ def run_gfal(cmd, *args, input=None, env=None):
         encoding="utf-8",
         input=input,
         env=subprocess_env,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _find_docker() -> Optional[str]:
+    """Return the path to the Docker binary, or None if not found."""
+    for candidate in (
+        "docker",
+        "/usr/local/bin/docker",
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+    ):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
+# Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and
+# fsspec-xrootd installed.  Used for XRootD integration tests that require
+# proper GSI authentication (not available on macOS without /etc/grid-security).
+_DOCKER_IMAGE = "xrootd-cern-test"
+
+# Repo root — mounted read-only into the container so gfal is importable.
+_REPO_ROOT = str(Path(__file__).parent.parent)
+
+
+def docker_available() -> bool:
+    """Return True if Docker is installed and the test image exists."""
+    docker = _find_docker()
+    if not docker:
+        return False
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", _DOCKER_IMAGE],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def run_gfal_docker(
+    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+):
+    """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
+
+    Mounts the repo source read-only and installs it before running the
+    command.  The CERN CAs and XRootD client are already baked into the image.
+
+    Returns ``(returncode, stdout, stderr)`` as strings.
+    """
+    docker = _find_docker()
+    if not docker:
+        raise RuntimeError("Docker not found")
+
+    proxy = proxy_cert or os.environ.get("X509_USER_PROXY", "")
+
+    volume_args = ["-v", f"{_REPO_ROOT}:/repo:ro"]
+    env_args = []
+
+    if proxy and Path(proxy).is_file():
+        volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
+        env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
+
+    # fsspec-xrootd (gfal3-updates branch) is pre-installed in the image.
+    # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
+    # but /repo is mounted read-only.
+    script = (
+        f"cp -r /repo /tmp/gfal-src && "
+        f"python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        f'python3.12 -c "'
+        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
+        f'from gfal.cli.shell import main; main()"'
+    )
+
+    cmd_args = [str(a) for a in args]
+    # Escape args for shell
+    escaped = " ".join(f"'{a}'" for a in cmd_args)
+
+    proc = subprocess.run(
+        [
+            docker,
+            "run",
+            "--rm",
+            *volume_args,
+            *env_args,
+            _DOCKER_IMAGE,
+            "sh",
+            "-c",
+            f"{script} {escaped}",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        input=input,
+        timeout=120,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
