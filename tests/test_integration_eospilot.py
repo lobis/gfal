@@ -32,6 +32,7 @@ Known stable public source file
 import hashlib
 import os
 import socket
+import sys
 import uuid
 from pathlib import Path
 
@@ -808,20 +809,44 @@ class TestEosPilotTpc:
 
 
 # ---------------------------------------------------------------------------
-# TestEosPilotXrootd  (root:// protocol, run via Docker)
+# TestEosPilotXrootd  (root:// protocol)
 # ---------------------------------------------------------------------------
 
-requires_docker = pytest.mark.skipif(
-    not docker_available(),
-    reason="Docker not available or xrootd-cern-test image not built",
+
+def _xrootd_gsi_native() -> bool:
+    """True if XRootD GSI auth is expected to work natively.
+
+    On Linux, GSI works when the CERN CA certificates are in
+    /etc/grid-security/certificates (pointed to by XRD_CADIR).  On macOS the
+    pip-installed xrootd lacks a proper cert dir and falls back to Kerberos,
+    so we use Docker instead.
+    """
+    if sys.platform != "linux":
+        return False
+    cadir = os.environ.get("XRD_CADIR", "")
+    if cadir and Path(cadir).is_dir():
+        return True
+    return Path("/etc/grid-security/certificates").is_dir()
+
+
+requires_xrootd_env = pytest.mark.skipif(
+    not docker_available() and not _xrootd_gsi_native(),
+    reason=(
+        "XRootD GSI tests require either the xrootd-cern-test Docker image "
+        "or Linux with /etc/grid-security/certificates (XRD_CADIR) set up"
+    ),
 )
 
 
 @requires_eospilot
 @requires_proxy
-@requires_docker
+@requires_xrootd_env
 class TestEosPilotXrootd:
-    """XRootD protocol tests run inside the xrootd-cern-test Docker container.
+    """XRootD protocol tests.
+
+    On macOS: run inside the xrootd-cern-test Docker container (GSI auth
+    requires CERN CAs in /etc/grid-security which the container provides).
+    On Linux (CI): run natively — the integration job sets up XRD_CADIR.
 
     GSI authentication requires /etc/grid-security/certificates with proper
     CERN CA setup, which is already baked into the xrootd-cern-test image.
@@ -836,7 +861,11 @@ class TestEosPilotXrootd:
         # Do NOT pass -E to gfal: base.py would then set X509_USER_CERT/KEY and
         # remove X509_USER_PROXY, causing XRootD to use cert auth instead of
         # proxy auth (which the server rejects as "unauthorized identity").
-        # Instead, let X509_USER_PROXY set by run_gfal_docker's -e flag do the job.
+        # X509_USER_PROXY must be set in the environment instead.
+        if _xrootd_gsi_native():
+            # Linux CI: run natively; X509_USER_PROXY is already in the env.
+            return run_gfal(cmd, *args)
+        # macOS (and other non-Linux): use Docker where CAs are pre-installed.
         return run_gfal_docker(cmd, *args, proxy_cert=proxy_cert)
 
     @pytest.fixture
