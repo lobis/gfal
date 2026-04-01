@@ -117,11 +117,11 @@ def _make_session(storage_options):
     verify = storage_options.get("ssl_verify", True)
     ssl_ctx = _make_ssl_context(verify)
     _retry = Retry(
-        total=3,
-        connect=3,
-        read=1,
+        total=10,
+        connect=5,
+        read=5,
         status=0,
-        backoff_factor=0.1,
+        backoff_factor=0.2,
         raise_on_status=False,
         allowed_methods=_RETRY_METHODS,
     )
@@ -129,15 +129,23 @@ def _make_session(storage_options):
     session = _requests.Session()
     session.mount("http://", _adapter)
     session.mount("https://", _adapter)
+
+    # Note: We do NOT set session.verify = False here, even when verify is False.
+    # Instead, the _make_ssl_context returns a context with verify_mode=CERT_NONE.
+    # This ensures that requests/urllib3 still uses our custom SSLContext (which
+    # has the OP_IGNORE_UNEXPECTED_EOF flag set) instead of substituting a
+    # default one that might lack the flag.
+
     cert = storage_options.get("client_cert")
     key = storage_options.get("client_key")
     if cert:
         session.cert = (cert, key) if key else cert
-    if not storage_options.get("ssl_verify", True):
+
+    if not verify:
         import urllib3
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        session.verify = False
+
     bearer_token = storage_options.get("bearer_token")
     if bearer_token:
         session.headers.update({"Authorization": f"Bearer {bearer_token}"})
@@ -296,10 +304,9 @@ class _RequestsPutFile(io.RawIOBase):
     partial upload unless close() raises an exception.
     """
 
-    def __init__(self, session, url: str, verify) -> None:
+    def __init__(self, session, url: str) -> None:
         self._session = session
         self._url = url
-        self._verify = verify
         self._buf: tempfile.SpooledTemporaryFile = tempfile.SpooledTemporaryFile(  # noqa: SIM115
             max_size=64 * 1024 * 1024
         )
@@ -318,7 +325,12 @@ class _RequestsPutFile(io.RawIOBase):
         if not self.closed:
             try:
                 self._buf.seek(0)
-                resp = self._session.put(self._url, data=self._buf, verify=self._verify)
+                # Read the entire buffer. Since we use SpooledTemporaryFile with
+                # max_size=64MiB, this is safe and allows requests/urllib3 to
+                # perform retries automatically (which it cannot easily do with
+                # a raw file-like object that doesn't support automatic rewinding).
+                data = self._buf.read()
+                resp = self._session.put(self._url, data=data)
                 resp.raise_for_status()
             finally:
                 self._buf.close()
@@ -364,7 +376,6 @@ class WebDAVFileSystem(AbstractFileSystem):
                 "Content-Type": "application/xml; charset=utf-8",
             },
             data=_PROPFIND_BODY.encode(),
-            verify=self._verify,
         )
         _raise_for_status(resp, url)
         return _parse_propfind(resp.content, url)
@@ -446,7 +457,7 @@ class WebDAVFileSystem(AbstractFileSystem):
         if create_parents:
             self.makedirs(path, exist_ok=True)
             return
-        resp = self._session.request("MKCOL", path, verify=self._verify)
+        resp = self._session.request("MKCOL", path)
         if resp.status_code == 201:
             return
         if resp.status_code in (301, 405):
@@ -465,7 +476,7 @@ class WebDAVFileSystem(AbstractFileSystem):
         for i in range(1, len(parts) + 1):
             partial_path = "/" + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
-            resp = self._session.request("MKCOL", partial_url, verify=self._verify)
+            resp = self._session.request("MKCOL", partial_url)
             sc = resp.status_code
             if sc == 201:
                 continue  # created
@@ -486,7 +497,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
     def rm(self, path: str, recursive: bool = False) -> None:
         """Delete a file or directory via HTTP DELETE."""
-        resp = self._session.delete(path, verify=self._verify)
+        resp = self._session.delete(path)
         _raise_for_status(resp, path)
 
     def rmdir(self, path: str) -> None:
@@ -505,7 +516,6 @@ class WebDAVFileSystem(AbstractFileSystem):
             "MOVE",
             path1,
             headers={"Destination": path2, "Overwrite": "T"},
-            verify=self._verify,
         )
         resp.raise_for_status()
 
@@ -522,7 +532,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
     def open(self, path: str, mode: str = "rb", **kwargs):
         if "w" in mode:
-            return _RequestsPutFile(self._session, path, self._verify)
+            return _RequestsPutFile(self._session, path)
         return self._http_fs.open(path, mode, **kwargs)
 
     def checksum(self, path: str, algorithm: str) -> str:
@@ -531,7 +541,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
         # Ask the server to return the digest (RFC 3230)
         headers = {"Want-Digest": alg_lower}
-        resp = self._session.head(path, headers=headers, verify=self._verify)
+        resp = self._session.head(path, headers=headers)
         _raise_for_status(resp, path)
 
         digest_header = resp.headers.get("Digest")
