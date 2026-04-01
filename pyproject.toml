@@ -14,20 +14,33 @@ authors = [
 ]
 dependencies = [
     "fsspec>=2023.1.0",
-    "fsspec-xrootd>=0.5.1",
-    "xrootd>=5.9.2",
     "aiohttp>=3.8.0",
     "requests>=2.28.0",
     "truststore; python_version >= '3.10'",
-    "textual>=0.50.0",
     "rich>=13.0.0",
-    "rich-click>=1.7.0",
+    "click>=8.0.0",
 ]
 
 [project.scripts]
 gfal = "gfal.cli.shell:main"
 
 [project.optional-dependencies]
+rich-click = [
+    "rich-click>=1.7.0",
+]
+tui = [
+    "textual>=0.50.0",
+]
+xrootd = [
+    "fsspec-xrootd>=0.5.1",
+    "xrootd>=5.9.2",
+]
+all = [
+    "rich-click>=1.7.0",
+    "textual>=0.50.0",
+    "fsspec-xrootd>=0.5.1",
+    "xrootd>=5.9.2",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",

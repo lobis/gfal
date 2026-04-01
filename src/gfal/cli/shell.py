@@ -16,9 +16,20 @@ from gfal.cli import (
     tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict/token)
 )
 
-with contextlib.suppress(ImportError):
+try:
     import gfal.tui  # noqa: F401  – registers CommandTui subclass
-    # textual not installed → gfal-tui unavailable but all other commands work fine
+except ImportError:
+    # textual not installed — register a stub that prints a friendly error
+    class _CommandTuiStub(base.CommandBase):
+        @base.arg("src", nargs="?", help="source path")
+        @base.arg("dst", nargs="?", help="destination path")
+        def execute_tui(self):
+            """Launch the Text User Interface (requires gfal[tui])."""
+            sys.stderr.write(
+                "error: the TUI requires optional dependencies.\n"
+                "Install them with:  pip install 'gfal[tui]'\n"
+            )
+            sys.exit(1)
 
 
 def _ensure_xrootd_dylib_path():
@@ -109,29 +120,29 @@ def _all_commands():
 
 
 def _print_gfal_help(to=sys.stdout):
-    import rich_click as click
+    try:
+        import rich_click as _click
 
-    # Build a RichGroup populated with one sub-command stub per registered command
-    # so that rich-click renders the full panel-style help page.
-    epilog = "Run [bold]gfal <command> --help[/bold] for more information on a command."
-    grp = click.RichGroup(
+        GroupClass = _click.RichGroup
+        CommandClass = _click.RichCommand
+    except ImportError:
+        import click as _click  # type: ignore[no-redef]
+
+        GroupClass = _click.Group
+        CommandClass = _click.Command
+
+    epilog = "Run 'gfal <command> --help' for more information on a command."
+    grp = GroupClass(
         name="gfal",
-        help=(
-            f"[bold]gfal {base.VERSION}[/bold] — "
-            "GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD)."
-        ),
+        help=f"gfal {base.VERSION} — GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD).",
         epilog=epilog,
     )
     for cmd_name, doc in _all_commands():
-        grp.add_command(
-            click.RichCommand(name=cmd_name, help=doc, callback=lambda: None),
-        )
+        grp.add_command(CommandClass(name=cmd_name, help=doc, callback=lambda: None))
     grp.add_command(
-        click.RichCommand(
-            name="version",
-            help="Show the version and exit.",
-            callback=lambda: None,
-        ),
+        CommandClass(
+            name="version", help="Show the version and exit.", callback=lambda: None
+        )
     )
 
     with contextlib.suppress(SystemExit):

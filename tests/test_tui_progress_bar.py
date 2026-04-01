@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+pytest.importorskip("textual")
+
 from gfal.cli.progress import TuiProgress
 from gfal.tui import (
     GfalTui,

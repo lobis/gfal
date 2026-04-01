@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip("textual")
 from rich.style import Style
 from textual.widgets import Tree
 

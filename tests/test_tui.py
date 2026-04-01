@@ -1,6 +1,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytest.importorskip("textual")
 from textual.containers import Vertical
 from textual.widgets import Button, Input, RichLog, Tree
 

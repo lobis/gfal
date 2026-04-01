@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("textual")
+
 from gfal.tui import GfalTui, HighlightableRemoteDirectoryTree
 
 

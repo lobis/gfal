@@ -2,6 +2,8 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip("textual")
 from textual.widgets import RichLog, Tree
 
 from gfal.tui import GfalTui

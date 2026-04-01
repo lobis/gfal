@@ -1,4 +1,6 @@
 import pytest
+
+pytest.importorskip("textual")
 from textual.widgets import Tree
 
 from gfal.tui import (

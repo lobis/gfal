@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("textual")
+
 from gfal.tui import (
     ChecksumResultModal,
     GfalTui,

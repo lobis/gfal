@@ -154,14 +154,14 @@ class TestArgspecToClickOption:
         assert spec["click_kw"]["metavar"] == "SECS"
 
     def test_regular_with_choices(self):
-        import rich_click as click
+        import click
 
         spec = _argspec_to_click_option(("--mode",), {"choices": ["a", "b", "c"]})
         assert spec["kind"] == "option"
         assert isinstance(spec["click_kw"]["type"], click.Choice)
 
     def test_regular_with_choices_and_type(self):
-        import rich_click as click
+        import click
 
         spec = _argspec_to_click_option(
             ("--mode",), {"type": str, "choices": ["a", "b"]}
@@ -596,7 +596,7 @@ class TestCommandBaseExecute:
 class TestArgspecEdgeCases:
     def test_choices_no_type_not_in_choices(self):
         """When choices is set but type is not, and choices is already consumed."""
-        import rich_click as click
+        import click
 
         from gfal.cli.base import _argspec_to_click_option
 

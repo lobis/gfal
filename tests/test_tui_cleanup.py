@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("textual")
+
 
 @pytest.mark.asyncio
 async def test_tui_hang_on_quit():

@@ -15,7 +15,11 @@ from threading import Thread
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
-import rich_click as click
+try:
+    import rich_click as click
+except ImportError:
+    import click  # type: ignore[no-redef]
+
 from rich.console import Console
 
 try:
@@ -25,17 +29,18 @@ except PackageNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# rich-click configuration
+# rich-click configuration (only when rich-click is installed)
 # ---------------------------------------------------------------------------
 
-click.rich_click.TEXT_MARKUP = "rich"
-click.rich_click.SHOW_ARGUMENTS = True
-click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
-click.rich_click.STYLE_ERRORS_SUGGESTION = "italic"
-click.rich_click.ERRORS_SUGGESTION = ""
-click.rich_click.MAX_WIDTH = 100
-click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
-click.rich_click.STYLE_HELPTEXT = ""
+if hasattr(click, "rich_click"):
+    click.rich_click.TEXT_MARKUP = "rich"
+    click.rich_click.SHOW_ARGUMENTS = True
+    click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
+    click.rich_click.STYLE_ERRORS_SUGGESTION = "italic"
+    click.rich_click.ERRORS_SUGGESTION = ""
+    click.rich_click.MAX_WIDTH = 100
+    click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
+    click.rich_click.STYLE_HELPTEXT = ""
 
 
 # ---------------------------------------------------------------------------
