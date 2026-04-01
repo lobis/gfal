@@ -495,7 +495,8 @@ def _build_click_command(method, prog_name, help_text):
                 param_name_map[click_var.lower()] = orig_name
             params.append(click_param)
 
-    cmd = click.RichCommand(
+    CommandClass = getattr(click, "RichCommand", click.Command)
+    cmd = CommandClass(
         name=prog_name,
         params=params,
         help=help_text,
