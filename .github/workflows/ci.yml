@@ -206,18 +206,28 @@ jobs:
         - name: AlmaLinux 10
           container: almalinux:10
           artifact: rpm-package-distributions-el10-x86_64
-          install_cmd: dnf install -y epel-release && find . -name "*.rpm" -exec dnf install -y {} +
+          install_cmd: |
+            dnf install -y epel-release
+            find . -name "*.rpm" -exec dnf install -y {} +
     container: ${{ matrix.target.container }}
     steps:
+    - uses: actions/checkout@v6
     - uses: actions/download-artifact@v8
       with:
         name: ${{ matrix.target.artifact }}
+        path: rpms/
     - name: Install package
-      run: ${{ matrix.target.install_cmd }}
+      run: |
+        cd rpms
+        ${{ matrix.target.install_cmd }}
     - name: Verify executables
       run: |
         command -v gfal
         gfal --help
+    - name: Install test dependencies into RPM venv
+      run: /opt/gfal/bin/pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
+    - name: Run tests against RPM-installed package
+      run: /opt/gfal/bin/python -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
 
   update-repo:
     name: Update YUM Repository 🌐
