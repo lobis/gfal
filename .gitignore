@@ -212,6 +212,13 @@ src/gfal/_version.py
 # Reference implementation (not part of the project)
 gfal2-util/
 
+# CI credentials (base64-encoded .p12 — copy value to GitHub secret EOS_SERVICE_ACCOUNT_P12)
+.gfal_ci_secret
+
+# X.509 credentials / proxies used for local integration testing
+*.p12
+proxies/
+
 .idea/
 
 .claude/

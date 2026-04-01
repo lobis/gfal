@@ -83,25 +83,56 @@ jobs:
   integration:
     name: Integration Tests (EOS)
     runs-on: ubuntu-latest
+    env:
+      PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - name: Install system build dependencies
-      run: sudo apt-get update && sudo apt-get install -y uuid-dev
-    - name: Install CERN CA certificate
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y uuid-dev globus-proxy-utils openssl wget
+    - name: Install CERN CA certificates
       run: |
-        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Root%20Certification%20Authority%202.crt" -O /tmp/cern.der
-        openssl x509 -inform DER -in /tmp/cern.der -out /tmp/cern.crt
-        sudo cp /tmp/cern.crt /usr/local/share/ca-certificates/cern-root-ca-2.crt
+        # CERN Root CA 2 (DER format)
+        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Root%20Certification%20Authority%202.crt" -O /tmp/cern-root-ca2.der
+        openssl x509 -inform DER -in /tmp/cern-root-ca2.der -out /tmp/cern-root-ca2.pem
+        sudo cp /tmp/cern-root-ca2.pem /usr/local/share/ca-certificates/cern-root-ca2.crt
+        # CERN Grid CA (PEM despite .crt extension; note the (1) in filename — plain name 404s)
+        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Grid%20Certification%20Authority(1).crt" -O /tmp/cern-grid-ca.pem
+        sudo cp /tmp/cern-grid-ca.pem /usr/local/share/ca-certificates/cern-grid-ca.crt
         sudo update-ca-certificates
+        # XRootD resolves CAs from /etc/grid-security/certificates with OpenSSL hash naming
+        sudo mkdir -p /etc/grid-security/certificates
+        HASH1=$(openssl x509 -noout -hash -in /tmp/cern-root-ca2.pem)
+        sudo cp /tmp/cern-root-ca2.pem /etc/grid-security/certificates/${HASH1}.0
+        HASH2=$(openssl x509 -noout -hash -in /tmp/cern-grid-ca.pem)
+        sudo cp /tmp/cern-grid-ca.pem /etc/grid-security/certificates/${HASH2}.0
+        echo "XRD_CADIR=/etc/grid-security/certificates" >> "$GITHUB_ENV"
         echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
         echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+    - name: Set up EOS service account credentials
+      # Secret PYTHON3_GFAL_SERVICE_ACCOUNT_P12: base64-encoded .p12 from CERN CA (no password).
+      # To regenerate: base64 -i gfal_service_account.p12  (macOS)  or  base64 -w0 (Linux)
+      # The .p12 is the robot certificate downloaded from https://ca.cern.ch/ca/
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: |
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > /tmp/service_account.p12
+        openssl pkcs12 -in /tmp/service_account.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
+        openssl pkcs12 -in /tmp/service_account.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
+        chmod 600 /tmp/userkey.pem
+        grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
+        echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
     - name: Install package and test dependencies
       run: pip install --no-cache-dir ".[dev,xrootd]"
     - name: Override fsspec-xrootd with gfal3-updates
       run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
+    - name: Copy test file to EOS (smoke test)
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: |
+        DEST="root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/ci_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        gfal cp /etc/hostname "$DEST"
+        gfal stat "$DEST"
     - name: Run integration tests
       run: pytest tests/ -v -m integration
 
