@@ -856,7 +856,7 @@ class TestWebDAVChecksum:
         assert fs.checksum("https://server/file", "MD5") == "O123456789"
 
         fs._session.head.assert_called_with(
-            "https://server/file", headers={"Want-Digest": "md5"}
+            "https://server/file", headers={"Want-Digest": "md5"}, timeout=None
         )
 
     def test_checksum_no_digest_header_raises(self):

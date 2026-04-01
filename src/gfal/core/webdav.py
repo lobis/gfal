@@ -36,7 +36,8 @@ def _norm_url(url: str) -> Literal[b""]:
 
     EOS WebDAV returns hrefs with a single leading slash (e.g. /eos/...)
     while callers may supply double-slash URLs (https://host//eos/...).
-    Stripping trailing slashes and collapsing ``//`` → ``/`` in the path
+
+    Stripping trailing slashes and collapsing ``//`` \u2192 ``/`` in the path
     component ensures the self-entry is always identified correctly in ls().
     """
     p = urlparse(url.rstrip("/"))
@@ -121,7 +122,7 @@ def _make_session(storage_options):
         connect=5,
         read=5,
         status=0,
-        backoff_factor=0.2,
+        backoff_factor=0.5,
         raise_on_status=False,
         allowed_methods=_RETRY_METHODS,
     )
@@ -130,11 +131,10 @@ def _make_session(storage_options):
     session.mount("http://", _adapter)
     session.mount("https://", _adapter)
 
-    # Note: We do NOT set session.verify = False here, even when verify is False.
-    # Instead, the _make_ssl_context returns a context with verify_mode=CERT_NONE.
-    # This ensures that requests/urllib3 still uses our custom SSLContext (which
-    # has the OP_IGNORE_UNEXPECTED_EOF flag set) instead of substituting a
-    # default one that might lack the flag.
+    # Note: We do NOT set session.verify = False even when verify is False.
+    # Instead, we rely on the custom SSLContext (with verify_mode=CERT_NONE
+    # and the OP_IGNORE_UNEXPECTED_EOF flag) to handle the connection correctly.
+    session.verify = True
 
     cert = storage_options.get("client_cert")
     key = storage_options.get("client_key")
@@ -162,6 +162,7 @@ def _http_fs_opts(storage_options):
     verify = storage_options.get("ssl_verify", True)
     ipv4_only = storage_options.get("ipv4_only", False)
     ipv6_only = storage_options.get("ipv6_only", False)
+    timeout = storage_options.get("timeout")
     # Pull client cert out of opts: we load it directly into the aiohttp SSL
     # context via get_client so it doesn't conflict with our custom SSL context.
     client_cert = opts.pop("client_cert", None)
@@ -174,6 +175,7 @@ def _http_fs_opts(storage_options):
             client_key=client_key,
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
+            timeout=timeout,
         )
     else:
         opts["get_client"] = partial(
@@ -183,6 +185,7 @@ def _http_fs_opts(storage_options):
             client_key=client_key,
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
+            timeout=timeout,
         )
     return opts
 
@@ -304,9 +307,10 @@ class _RequestsPutFile(io.RawIOBase):
     partial upload unless close() raises an exception.
     """
 
-    def __init__(self, session, url: str) -> None:
+    def __init__(self, session, url: str, timeout: Optional[float] = None) -> None:
         self._session = session
         self._url = url
+        self._timeout = timeout
         self._buf: tempfile.SpooledTemporaryFile = tempfile.SpooledTemporaryFile(  # noqa: SIM115
             max_size=64 * 1024 * 1024
         )
@@ -330,8 +334,27 @@ class _RequestsPutFile(io.RawIOBase):
                 # perform retries automatically (which it cannot easily do with
                 # a raw file-like object that doesn't support automatic rewinding).
                 data = self._buf.read()
-                resp = self._session.put(self._url, data=data)
-                resp.raise_for_status()
+                # Manual retry for SSL/Connection errors that urllib3 might not
+                # catch or retry aggressively enough (e.g. some SSLEOFError cases).
+                import random
+                import time
+
+                from requests.exceptions import ConnectionError, SSLError
+
+                for attempt in range(5):
+                    try:
+                        resp = self._session.put(
+                            self._url, data=data, timeout=self._timeout
+                        )
+                        resp.raise_for_status()
+                        break
+                    except (SSLError, ConnectionError):
+                        if attempt == 4:
+                            raise
+                        delay = (attempt + 1) * 0.5 + random.random()
+                        # session.close() is a bit too harsh; it closes the entire adapter.
+                        # We just want to allow a retry on a fresh connection.
+                        time.sleep(delay)
             finally:
                 self._buf.close()
                 super().close()
@@ -346,19 +369,20 @@ class WebDAVFileSystem(AbstractFileSystem):
     """
     Filesystem adapter for HTTP/HTTPS/WebDAV endpoints.
 
-    - ``ls`` / ``info``    — WebDAV PROPFIND (falls back to HEAD for info on
+    - ``ls`` / ``info``    \u2014 WebDAV PROPFIND (falls back to HEAD for info on
                              non-WebDAV servers so plain-HTTP file access works)
-    - ``mkdir``            — WebDAV MKCOL
-    - ``makedirs``         — iterative MKCOL from the root down
-    - ``rm`` / ``rmdir``   — HTTP DELETE
-    - ``mv``               — WebDAV MOVE
-    - ``open``             — delegated to fsspec's HTTPFileSystem (GET/PUT)
-    - ``chmod``            — no-op (HTTP has no permission model)
+    - ``mkdir``            \u2014 WebDAV MKCOL
+    - ``makedirs``         \u2014 iterative MKCOL from the root down
+    - ``rm`` / ``rmdir``   \u2014 HTTP DELETE
+    - ``mv``               \u2014 WebDAV MOVE
+    - ``open``             \u2014 delegated to fsspec's HTTPFileSystem (GET/PUT)
+    - ``chmod``            \u2014 no-op (HTTP has no permission model)
     """
 
     def __init__(self, storage_options: Optional[dict] = None) -> None:
         self._opts = dict(storage_options or {})
         self._verify = self._opts.get("ssl_verify", True)
+        self._timeout = self._opts.get("timeout")
         self._session = _make_session(self._opts)
         self._http_fs = fsspec.filesystem("http", **_http_fs_opts(self._opts))
 
@@ -376,6 +400,7 @@ class WebDAVFileSystem(AbstractFileSystem):
                 "Content-Type": "application/xml; charset=utf-8",
             },
             data=_PROPFIND_BODY.encode(),
+            timeout=self._timeout,
         )
         _raise_for_status(resp, url)
         return _parse_propfind(resp.content, url)
@@ -386,7 +411,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
     def info(self, path: str) -> dict:
         """Return an info dict for *path* (file or directory)."""
-        # Try PROPFIND Depth:0 first — works for both files and directories.
+        # Try PROPFIND Depth:0 first \u2014 works for both files and directories.
         try:
             entries = self._propfind(path, depth=0)
             if entries:
@@ -435,7 +460,7 @@ class WebDAVFileSystem(AbstractFileSystem):
         children = [e for e in entries if _norm_url(e["name"]) != path_norm]
 
         # If PROPFIND returned only the self-entry AND it is a file (not a
-        # collection), the path refers to a single file — return it as-is.
+        # collection), the path refers to a single file \u2014 return it as-is.
         if not children and self_entries and self_entries[0].get("type") != "directory":
             return self_entries if detail else [e["name"] for e in self_entries]
 
@@ -457,7 +482,7 @@ class WebDAVFileSystem(AbstractFileSystem):
         if create_parents:
             self.makedirs(path, exist_ok=True)
             return
-        resp = self._session.request("MKCOL", path)
+        resp = self._session.request("MKCOL", path, timeout=self._timeout)
         if resp.status_code == 201:
             return
         if resp.status_code in (301, 405):
@@ -476,14 +501,14 @@ class WebDAVFileSystem(AbstractFileSystem):
         for i in range(1, len(parts) + 1):
             partial_path = "/" + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
-            resp = self._session.request("MKCOL", partial_url)
+            resp = self._session.request("MKCOL", partial_url, timeout=self._timeout)
             sc = resp.status_code
             if sc == 201:
                 continue  # created
             if sc in (301, 405):
-                continue  # already exists — fine
+                continue  # already exists \u2014 fine
             if sc == 409:
-                # Conflict: intermediate missing — shouldn't happen top-down but skip
+                # Conflict: intermediate missing \u2192 shouldn't happen top-down but skip
                 continue
             if sc == 403:
                 # Might not have permission to create ancestors; try to continue
@@ -497,7 +522,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
     def rm(self, path: str, recursive: bool = False) -> None:
         """Delete a file or directory via HTTP DELETE."""
-        resp = self._session.delete(path)
+        resp = self._session.delete(path, timeout=self._timeout)
         _raise_for_status(resp, path)
 
     def rmdir(self, path: str) -> None:
@@ -516,6 +541,7 @@ class WebDAVFileSystem(AbstractFileSystem):
             "MOVE",
             path1,
             headers={"Destination": path2, "Overwrite": "T"},
+            timeout=self._timeout,
         )
         resp.raise_for_status()
 
@@ -527,12 +553,12 @@ class WebDAVFileSystem(AbstractFileSystem):
         pass  # HTTP has no permission model
 
     # ------------------------------------------------------------------
-    # file I/O — delegate to fsspec's HTTPFileSystem
+    # file I/O \u2014 delegate to fsspec's HTTPFileSystem
     # ------------------------------------------------------------------
 
     def open(self, path: str, mode: str = "rb", **kwargs):
         if "w" in mode:
-            return _RequestsPutFile(self._session, path)
+            return _RequestsPutFile(self._session, path, self._timeout)
         return self._http_fs.open(path, mode, **kwargs)
 
     def checksum(self, path: str, algorithm: str) -> str:
@@ -541,7 +567,7 @@ class WebDAVFileSystem(AbstractFileSystem):
 
         # Ask the server to return the digest (RFC 3230)
         headers = {"Want-Digest": alg_lower}
-        resp = self._session.head(path, headers=headers)
+        resp = self._session.head(path, headers=headers, timeout=self._timeout)
         _raise_for_status(resp, path)
 
         digest_header = resp.headers.get("Digest")
@@ -554,12 +580,8 @@ class WebDAVFileSystem(AbstractFileSystem):
         for piece in digest_header.split(","):
             piece = piece.strip()
             if "=" in piece:
-                key, val = piece.split("=", 1)
-                # Handle variations like 'adler-32' vs 'adler32'
-                if key.lower().replace("-", "") == alg_lower.replace("-", ""):
-                    # In WLCG, adler32 is typically returned as hex. If a server
-                    # strictly follows RFC 3230 for other algorithms, it might use Base64.
-                    # Currently, we just return the raw string (works for adler32 hex).
+                name, val = piece.split("=", 1)
+                if name.lower() == alg_lower:
                     return val
 
         raise NotImplementedError(
