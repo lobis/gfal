@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import posixpath
 import socket
-import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -84,33 +83,31 @@ def _make_propfind_response(path: str, depth: int) -> str:
     return _PROPFIND_TMPL.format(responses="\n".join(responses))
 
 
-class _ReuseAddrHTTPServer(HTTPServer):
+class _ReuseAddrHTTPServer(ThreadingHTTPServer):
     """HTTPServer with SO_REUSEADDR to prevent Windows 'address already in use' errors."""
 
     allow_reuse_address = True
 
 
 class _WebDAVHandler(BaseHTTPRequestHandler):
-    # Always close the connection after each response so that the requests
-    # session pool never tries to reuse a dead socket.  On Windows,
-    # reusing a closed HTTP/1.0 connection raises ConnectionAbortedError
-    # (WinError 10053) instead of the ConnectionResetError that urllib3
-    # knows how to retry, causing spurious test failures.
-    close_connection = True
+    # Enable HTTP/1.1 keep-alive to avoid connection teardown
+    # races that cause spurious ConnectionAbortedError (WinError 10053)
+    # on Windows when reusing heavily recycled TCP sockets.
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, *args):
         pass  # silence request logging during tests
 
-    def end_headers(self):
-        self.send_header("Connection", "close")
-        super().end_headers()
-
     def do_PROPFIND(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 0:
+            self.rfile.read(length)
         with _vfs_lock:
             norm = self.path.rstrip("/")
             # 404 if not root and not in vfs at all
             if norm != "" and (norm + "/") not in _vfs and norm not in _vfs:
                 self.send_response(404)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             depth = int(self.headers.get("Depth", "0"))
@@ -126,16 +123,19 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
         with _vfs_lock:
             if path in _vfs:
                 self.send_response(405)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             parent = posixpath.dirname(path.rstrip("/")).rstrip("/") + "/"
             # root is always "/"
             if parent != "/" and parent not in _vfs:
                 self.send_response(409)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             _vfs.add(path)
         self.send_response(201)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_DELETE(self):
@@ -148,6 +148,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
             }
             if not to_remove:
                 self.send_response(404)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             _vfs.difference_update(to_remove)
@@ -168,6 +169,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
             }
             if not to_move:
                 self.send_response(404)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             for entry in list(to_move):
@@ -175,6 +177,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
                 _vfs.discard(entry)
                 _vfs.add(new)
         self.send_response(201)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
@@ -183,6 +186,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
             exists = path in _vfs or (path + "/") in _vfs
         if not exists:
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         body = b"hello"
@@ -197,6 +201,7 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
         with _vfs_lock:
             _vfs.add(self.path.rstrip("/"))
         self.send_response(201)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
 
@@ -691,10 +696,6 @@ class TestWebDAVOpenWrite:
 
 
 class TestWebDAVPropfindExtra:
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="Flaky on Windows CI due to ConnectionAbortedError (WinError 10053)",
-    )
     def test_multiple_children(self, dav_server):
         with _vfs_lock:
             _vfs.add("/multi/")

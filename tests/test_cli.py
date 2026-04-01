@@ -76,7 +76,7 @@ def run_bin_binary(*args, input_bytes=None):
 
 def test_binary_installed():
     """The gfal console_script entry point must be on PATH."""
-    assert shutil.which("gfal") is not None, "'gfal' not found — run 'pip install -e .'"
+    assert _find_binary("gfal") is not None, "'gfal' not found — run 'pip install -e .'"
 
 
 # ---------------------------------------------------------------------------
