@@ -60,7 +60,13 @@ async def _no_verify_get_client(loop=None, **kwargs):
 
 
 async def _verify_get_client(
-    loop=None, verify=True, ipv4_only=False, ipv6_only=False, **kwargs
+    loop=None,
+    verify=True,
+    client_cert=None,
+    client_key=None,
+    ipv4_only=False,
+    ipv6_only=False,
+    **kwargs,
 ):
     """aiohttp client factory for fsspec with system trust (truststore) and IP family support."""
     import socket
@@ -68,6 +74,8 @@ async def _verify_get_client(
     import aiohttp
 
     ctx = get_ssl_context(verify=verify)
+    if client_cert:
+        ctx.load_cert_chain(client_cert, client_key or client_cert)
     family = socket.AF_INET if ipv4_only else (socket.AF_INET6 if ipv6_only else 0)
     return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx, family=family))
 

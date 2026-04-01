@@ -104,14 +104,27 @@ def _http_fs_opts(storage_options):
     verify = storage_options.get("ssl_verify", True)
     ipv4_only = storage_options.get("ipv4_only", False)
     ipv6_only = storage_options.get("ipv6_only", False)
+    # Pull client cert out of opts: we load it directly into the aiohttp SSL
+    # context via get_client so it doesn't conflict with our custom SSL context.
+    client_cert = opts.pop("client_cert", None)
+    client_key = opts.pop("client_key", None)
 
     if not verify:
         opts["get_client"] = partial(
-            _no_verify_get_client, ipv4_only=ipv4_only, ipv6_only=ipv6_only
+            _no_verify_get_client,
+            client_cert=client_cert,
+            client_key=client_key,
+            ipv4_only=ipv4_only,
+            ipv6_only=ipv6_only,
         )
     else:
         opts["get_client"] = partial(
-            _verify_get_client, verify=True, ipv4_only=ipv4_only, ipv6_only=ipv6_only
+            _verify_get_client,
+            verify=True,
+            client_cert=client_cert,
+            client_key=client_key,
+            ipv4_only=ipv4_only,
+            ipv6_only=ipv6_only,
         )
     return opts
 
