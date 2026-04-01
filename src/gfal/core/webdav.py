@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import stat as stat_module
 import tempfile
 from email.utils import parsedate_to_datetime
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
@@ -27,6 +28,19 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 _DAV = "{DAV:}"
+
+
+def _norm_url(url: str) -> Literal[b""]:
+    """Normalize a URL for comparison by collapsing repeated slashes in the path.
+
+    EOS WebDAV returns hrefs with a single leading slash (e.g. /eos/...)
+    while callers may supply double-slash URLs (https://host//eos/...).
+    Stripping trailing slashes and collapsing ``//`` → ``/`` in the path
+    component ensures the self-entry is always identified correctly in ls().
+    """
+    p = urlparse(url.rstrip("/"))
+    return urlunparse(p._replace(path=re.sub(r"/+", "/", p.path)))
+
 
 _PROPFIND_BODY = (
     '<?xml version="1.0" encoding="utf-8"?>'
@@ -364,10 +378,14 @@ class WebDAVFileSystem(AbstractFileSystem):
             info = self.info(path)
             return [info] if detail else [info["name"]]
 
-        # Separate the self-entry (the collection itself) from its children
-        path_norm = path.rstrip("/")
-        self_entries = [e for e in entries if e["name"].rstrip("/") == path_norm]
-        children = [e for e in entries if e["name"].rstrip("/") != path_norm]
+        # Separate the self-entry (the collection itself) from its children.
+        # EOS returns href paths with a single slash (e.g. /eos/...) while the
+        # request URL may use double slashes (https://host//eos/...).  Normalise
+        # both sides by collapsing consecutive slashes in the URL path component
+        # before comparing so the self-entry is always filtered out correctly.
+        path_norm = _norm_url(path)
+        self_entries = [e for e in entries if _norm_url(e["name"]) == path_norm]
+        children = [e for e in entries if _norm_url(e["name"]) != path_norm]
 
         # If PROPFIND returned only the self-entry AND it is a file (not a
         # collection), the path refers to a single file — return it as-is.
@@ -495,7 +513,7 @@ class WebDAVFileSystem(AbstractFileSystem):
                 if key.lower().replace("-", "") == alg_lower.replace("-", ""):
                     # In WLCG, adler32 is typically returned as hex. If a server
                     # strictly follows RFC 3230 for other algorithms, it might use Base64.
-                    # Currently we just return the raw string (works for adler32 hex).
+                    # Currently, we just return the raw string (works for adler32 hex).
                     return val
 
         raise NotImplementedError(
