@@ -576,6 +576,95 @@ class TestCopyTpcFlagsExtra:
 
         assert rc != 0
 
+    def test_tpc_only_incompatible_schemes_fails_fast(self, tmp_path):
+        """--tpc-only with incompatible scheme pair must fail without any network I/O.
+
+        Regression test: the early-fail guard in _do_copy must prevent
+        unnecessary connection attempts (chain-stat and dst info) that would
+        otherwise cause a multi-second hang when the destination host is slow
+        or unreachable.  We verify this by patching the network layer and
+        asserting it is never called.
+        """
+        import time
+
+        from gfal.core import fs as fs_mod
+
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"data")
+
+        # Patch fs.stat (chain-stat in execute_cp) and WebDAVFileSystem.info
+        # (dst info in _do_copy) — neither should be called for an incompatible
+        # scheme pair when --tpc-only is set.
+        with (
+            patch.object(fs_mod, "stat", wraps=fs_mod.stat) as mock_stat,
+            patch("gfal.core.webdav.WebDAVFileSystem.info") as mock_info,
+        ):
+            t0 = time.monotonic()
+            rc, out, err = run_gfal(
+                "cp", "--tpc-only", src.as_uri(), "https://unreachable.invalid/dst"
+            )
+            elapsed = time.monotonic() - t0
+
+        assert rc != 0
+        # The error must mention tpc-only or TPC so the user understands why it failed
+        assert "tpc" in err.lower() or "tpc" in out.lower()
+        # Must complete well under the typical network timeout (30 s).
+        # A 5-second ceiling is generous but still catches the regression.
+        assert elapsed < 5, (
+            f"--tpc-only with incompatible schemes took {elapsed:.1f}s "
+            "(expected < 5s — possible network I/O before early-fail check)"
+        )
+        # Neither the chain-stat nor the dst-info may be called for the remote URL.
+        for call in mock_stat.call_args_list:
+            called_url = str(call.args[0] if call.args else "")
+            assert "unreachable.invalid" not in called_url, (
+                "chain-stat was called for the remote destination — "
+                "the early-fail guard is broken"
+            )
+        mock_info.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "src_scheme, dst_scheme",
+        [
+            ("file", "https"),
+            ("file", "http"),
+            ("https", "file"),
+            ("file", "root"),
+            ("root", "file"),
+        ],
+    )
+    def test_tpc_only_incompatible_scheme_pair(self, tmp_path, src_scheme, dst_scheme):
+        """--tpc-only must always fail for scheme pairs TPC cannot handle.
+
+        Regression test: all incompatible (src_scheme, dst_scheme) combinations
+        must exit non-zero without making network calls.
+        """
+        import time
+
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"x")
+
+        if src_scheme == "file":
+            src_url = src.as_uri()
+        else:
+            src_url = f"{src_scheme}://unreachable.invalid//data/src"
+
+        dst_url = f"{dst_scheme}://unreachable.invalid//data/dst"
+        if dst_scheme == "file":
+            dst_url = (tmp_path / "dst_nonexistent.txt").as_uri()
+
+        t0 = time.monotonic()
+        rc, out, err = run_gfal("cp", "--tpc-only", src_url, dst_url)
+        elapsed = time.monotonic() - t0
+
+        assert rc != 0, (
+            f"--tpc-only {src_scheme}:// -> {dst_scheme}:// should fail but exited 0"
+        )
+        assert elapsed < 5, (
+            f"--tpc-only {src_scheme}:// -> {dst_scheme}:// took {elapsed:.1f}s; "
+            "possible network I/O before the early-fail check"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestTpcStartCallback
