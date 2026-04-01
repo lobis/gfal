@@ -206,8 +206,10 @@ jobs:
       run: |
         command -v gfal
         gfal --help
-    - name: Install test dependencies
-      run: python3 -m pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
+    - name: Install pip and test dependencies
+      run: |
+        python3 -m ensurepip --upgrade || dnf install -y python3-pip
+        python3 -m pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
     - name: Run tests against installed package
       run: python3 -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
 
