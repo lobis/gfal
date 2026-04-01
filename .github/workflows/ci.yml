@@ -49,8 +49,11 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install package and test dependencies (no optional extras)
-      run: pip install --no-cache-dir ".[dev]"
+    - name: Install system build dependencies (xrootd needs libuuid on Linux)
+      if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install -y uuid-dev
+    - name: Install package and test dependencies
+      run: pip install --no-cache-dir "${{ matrix.python-version == '3.12' && matrix.os != 'windows-latest' && '.[dev,all]' || '.[dev]' }}"
     - name: Run unit and functional tests
       run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
     - name: Upload coverage
@@ -58,27 +61,6 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: unittests
-        fail_ci_if_error: false
-
-  tests-all-extras:
-    name: Tests with all extras (ubuntu, Py 3.12)
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
-      with:
-        python-version: "3.12"
-    - name: Install system build dependencies
-      run: sudo apt-get update && sudo apt-get install -y uuid-dev
-    - name: Install package with all optional extras
-      run: pip install --no-cache-dir ".[dev,all]"
-    - name: Run unit and functional tests (all extras)
-      run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
-    - name: Upload coverage
-      uses: codecov/codecov-action@v6
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        flags: unittests-all-extras
         fail_ci_if_error: false
 
   xrootd:
@@ -129,7 +111,7 @@ jobs:
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, tests-all-extras, xrootd, integration ]
+    needs: [ codespell, pre-commit, tests, xrootd, integration ]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -225,7 +207,7 @@ jobs:
         command -v gfal
         gfal --help
     - name: Install test dependencies
-      run: pip3 install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
+      run: python3 -m pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
     - name: Run tests against installed package
       run: python3 -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
 

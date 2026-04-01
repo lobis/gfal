@@ -16,15 +16,20 @@ BuildArch: noarch
 BuildRequires: python3-devel
 BuildRequires: python3-pip
 
-# Runtime dependencies — all available in EPEL / base RHEL
-Requires: python3-fsspec
+# Runtime dependencies available in EPEL / base RHEL
 Requires: python3-aiohttp
 Requires: python3-requests
 Requires: python3-rich
 Requires: python3-click
 Requires: python3-xrootd
+# python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
+%if 0%{?rhel} >= 10
+Requires: python3-fsspec
+%endif
+# Note: python3-truststore is not packaged in EPEL; it is an optional TLS
+#       enhancement and is omitted here (no functional impact).
 # Note: fsspec-xrootd (XRootD fsspec plugin) is not packaged in EPEL.
-# Install it separately with: pip install fsspec-xrootd
+#       Install it separately with: pip install fsspec-xrootd
 
 AutoReq: no
 
@@ -40,7 +45,7 @@ Supports HTTP/HTTPS and XRootD. XRootD support requires python3-xrootd from EPEL
 # Nothing to build for a pre-built wheel
 
 %install
-# Install the wheel into the system Python site-packages (no venv, EPEL-compliant)
+# Install gfal itself (no deps — all declared as Requires or bundled below)
 %{__python3} -m pip install \
     --root %{buildroot} \
     --prefix /usr \
@@ -49,9 +54,23 @@ Supports HTTP/HTTPS and XRootD. XRootD support requires python3-xrootd from EPEL
     --no-cache-dir \
     %{_sourcedir}/%{dist_name}-%{version}-py3-none-any.whl
 
+%if 0%{?rhel} < 10
+# Bundle fsspec on RHEL/EL9 where it is not available in EPEL
+%{__python3} -m pip install \
+    --root %{buildroot} \
+    --prefix /usr \
+    --no-build-isolation \
+    --no-cache-dir \
+    "fsspec>=2023.1.0"
+%endif
+
 %files
 %{python3_sitelib}/gfal/
 %{python3_sitelib}/gfal-*.dist-info/
+%if 0%{?rhel} < 10
+%{python3_sitelib}/fsspec/
+%{python3_sitelib}/fsspec-*.dist-info/
+%endif
 %{_bindir}/gfal*
 
 %changelog -f %{_sourcedir}/CHANGELOG
