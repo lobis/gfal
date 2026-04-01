@@ -44,14 +44,13 @@ def get_ssl_context(verify=True):
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        return ctx
+    else:
+        try:
+            import truststore
 
-    try:
-        import truststore
-
-        ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    except (ImportError, AttributeError):
-        ctx = ssl.create_default_context()
+            ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        except (ImportError, AttributeError):
+            ctx = ssl.create_default_context()
 
     # Python 3.12 raises SSLEOFError when a server closes the TLS connection
     # without sending close_notify (EOS does this after large PUT uploads).
