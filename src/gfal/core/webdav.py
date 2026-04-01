@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import io
 import re
+import ssl
 import stat as stat_module
 import tempfile
 from email.utils import parsedate_to_datetime
@@ -53,6 +54,39 @@ _PROPFIND_BODY = (
 # ---------------------------------------------------------------------------
 
 
+def _make_ssl_context(verify: bool) -> ssl.SSLContext:
+    """Return an SSL context for the requests session.
+
+    Sets ``ssl.OP_IGNORE_UNEXPECTED_EOF`` (Python 3.12+) so that servers
+    like EOS HTTPS that close the TLS connection without a proper
+    ``close_notify`` alert do not trigger ``SSLEOFError``.
+    """
+    if verify:
+        ctx = ssl.create_default_context()
+    else:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    # Python 3.12 raises SSLEOFError when a server closes the TLS connection
+    # without sending close_notify (EOS does this after large PUT uploads).
+    # OP_IGNORE_UNEXPECTED_EOF suppresses that behaviour.
+    with contextlib.suppress(AttributeError):
+        ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF  # type: ignore[attr-defined]
+    return ctx
+
+
+class _SSLContextAdapter(HTTPAdapter):
+    """HTTPAdapter that injects a custom SSL context into urllib3's pool manager."""
+
+    def __init__(self, ssl_context: ssl.SSLContext, **kwargs):
+        self._ssl_context = ssl_context
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self._ssl_context
+        return super().init_poolmanager(*args, **kwargs)
+
+
 # WebDAV methods that are safe to retry on connection errors.
 # Standard idempotent methods plus the WebDAV-specific ones.
 _RETRY_METHODS = frozenset(
@@ -80,6 +114,8 @@ def _make_session(storage_options):
     the client reuses it).  HTTP error status codes are *not* retried so that
     real 4xx/5xx responses are never silently hidden.
     """
+    verify = storage_options.get("ssl_verify", True)
+    ssl_ctx = _make_ssl_context(verify)
     _retry = Retry(
         total=3,
         connect=3,
@@ -89,7 +125,7 @@ def _make_session(storage_options):
         raise_on_status=False,
         allowed_methods=_RETRY_METHODS,
     )
-    _adapter = HTTPAdapter(max_retries=_retry)
+    _adapter = _SSLContextAdapter(ssl_context=ssl_ctx, max_retries=_retry)
     session = _requests.Session()
     session.mount("http://", _adapter)
     session.mount("https://", _adapter)

@@ -113,15 +113,39 @@ jobs:
         echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
     - name: Set up EOS service account credentials
       # Secret PYTHON3_GFAL_SERVICE_ACCOUNT_P12: base64-encoded .p12 from CERN CA (no password).
-      # To regenerate: base64 -i gfal_service_account.p12  (macOS)  or  base64 -w0 (Linux)
-      # The .p12 is the robot certificate downloaded from https://ca.cern.ch/ca/
+      # To regenerate the secret (after the cert expires or is revoked):
+      #   1. Download a new robot cert from https://ca.cern.ch/ca/ as a .p12 (no password)
+      #   2. base64 -i cert.p12   (macOS)   or   base64 -w0 cert.p12   (Linux)
+      #   3. Update the PYTHON3_GFAL_SERVICE_ACCOUNT_P12 secret in GitHub Settings → Secrets
+      # To regenerate the local proxy from .gfal_ci_secret (valid ~1 year):
+      #   cat .gfal_ci_secret | base64 -d > /tmp/sa.p12
+      #   openssl pkcs12 -in /tmp/sa.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
+      #   openssl pkcs12 -in /tmp/sa.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
+      #   docker run --rm --platform linux/amd64 \
+      #     -v /tmp/usercert.pem:/tmp/usercert.pem:ro \
+      #     -v /tmp/userkey.pem:/tmp/userkey.pem:ro \
+      #     -v $(pwd)/proxies:/proxies \
+      #     xrootd-cern-test \
+      #     sh -c "dnf install -q -y globus-proxy-utils && \
+      #       grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem \
+      #                       -out /proxies/gfal-tmp-proxy -valid 8760:00 -q && echo done"
       if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
       run: |
         echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > /tmp/service_account.p12
         openssl pkcs12 -in /tmp/service_account.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
         openssl pkcs12 -in /tmp/service_account.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
         chmod 600 /tmp/userkey.pem
+        # Show cert validity to make it easy to notice when it's about to expire
+        CERT_EXPIRY=$(openssl x509 -in /tmp/usercert.pem -noout -enddate | cut -d= -f2)
+        echo "Service account certificate expires: ${CERT_EXPIRY}"
+        if openssl x509 -in /tmp/usercert.pem -noout -checkend 2592000 > /dev/null 2>&1; then
+          echo "Certificate is valid for at least 30 days."
+        else
+          echo "::warning::Service account certificate expires within 30 days (${CERT_EXPIRY})! Renew it at https://ca.cern.ch/ca/"
+        fi
         grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
+        PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
+        echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
     - name: Install package and test dependencies
       run: pip install --no-cache-dir ".[dev,xrootd]"
