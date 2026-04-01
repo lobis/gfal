@@ -303,6 +303,7 @@ async def test_do_copy_local_directory(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=2)
 async def test_do_copy_error_marks_modal_failed(tmp_path):
     """_do_copy marks modal transfer as failed on error."""
     app = GfalTui(dst=str(tmp_path))

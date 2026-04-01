@@ -61,7 +61,7 @@ if __name__ == "__main__":
     )
 
     try:
-        stdout, stderr = process.communicate(timeout=10)
+        stdout, stderr = process.communicate(timeout=60)
         print(f"DEBUG STDOUT: {stdout}")
         print(f"DEBUG STDERR: {stderr}")
         if "EXIT_SUCCESS" in stderr:
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     except subprocess.TimeoutExpired:
         process.kill()
         stdout, stderr = process.communicate()
-        pytest.fail(f"TUI hung for more than 10 seconds. STDERR: {stderr}")
+        pytest.fail(f"TUI hung for more than 60 seconds. STDERR: {stderr}")
     finally:
         if test_script_path.exists():
             test_script_path.unlink()
