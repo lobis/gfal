@@ -49,9 +49,16 @@ def get_ssl_context(verify=True):
     try:
         import truststore
 
-        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     except (ImportError, AttributeError):
-        return ssl.create_default_context()
+        ctx = ssl.create_default_context()
+
+    # Python 3.12 raises SSLEOFError when a server closes the TLS connection
+    # without sending close_notify (EOS does this after large PUT uploads).
+    # OP_IGNORE_UNEXPECTED_EOF suppresses that behaviour.
+    with contextlib.suppress(AttributeError):
+        ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF  # type: ignore[attr-defined]
+    return ctx
 
 
 async def _no_verify_get_client(loop=None, **kwargs):
