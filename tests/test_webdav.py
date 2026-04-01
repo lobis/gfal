@@ -9,8 +9,10 @@ No external network access is required.
 from __future__ import annotations
 
 import posixpath
+import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -205,6 +207,15 @@ def dav_server():
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
+    # Wait until the server is actually accepting connections (important on Windows
+    # where thread scheduling lag can cause the first request to arrive before
+    # serve_forever() has entered its select loop).
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                break
+        time.sleep(0.02)
     yield f"http://127.0.0.1:{port}"
     server.shutdown()
 
