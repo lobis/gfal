@@ -59,7 +59,9 @@ def _download_cern_ca() -> Path:
             no_verify_ctx = ssl.create_default_context()
             no_verify_ctx.check_hostname = False
             no_verify_ctx.verify_mode = ssl.CERT_NONE
-            with urllib.request.urlopen(_CERN_CA_URL, context=no_verify_ctx) as resp:  # noqa: S310
+            with urllib.request.urlopen(
+                _CERN_CA_URL, context=no_verify_ctx, timeout=10
+            ) as resp:  # noqa: S310
                 _CERN_CA_DER.write_bytes(resp.read())
         der_bytes = _CERN_CA_DER.read_bytes()
         pem_str = ssl.DER_cert_to_PEM_cert(der_bytes)

@@ -222,14 +222,19 @@ class CommandCopy(base.CommandBase):
                 jobs.append((s, dst))
                 # Chain: if dst is a dir the actual destination will be dst/basename(s),
                 # otherwise s becomes dst for the next hop.
-                try:
-                    dst_st = fs.stat(dst, opts)
-                    if stat.S_ISDIR(dst_st.st_mode):
-                        s = dst.rstrip("/") + "/" + Path(s.rstrip("/")).name
-                    else:
+                # Skip the stat when --tpc-only and TPC cannot work for this scheme pair:
+                # the copy will fail early anyway and the stat would cause an unnecessary
+                # network timeout (e.g. file:// -> https:// with --tpc-only).
+                tpc_only = getattr(self.params, "tpc_only", False)
+                if not (tpc_only and not _tpc_applicable(s, dst)):
+                    try:
+                        dst_st = fs.stat(dst, opts)
+                        if stat.S_ISDIR(dst_st.st_mode):
+                            s = dst.rstrip("/") + "/" + Path(s.rstrip("/")).name
+                        else:
+                            s = dst
+                    except Exception:
                         s = dst
-                except Exception:
-                    s = dst
         else:
             sys.stderr.write("Missing source\n")
             return 1
@@ -270,6 +275,18 @@ class CommandCopy(base.CommandBase):
 
     def _do_copy(self, src_url, dst_url, opts):
         """High-level copy: handle directories, overwrite checks, etc."""
+        # Early fail: if --tpc-only but TPC cannot work for this scheme pair,
+        # raise before any network I/O to avoid unnecessary connection timeouts.
+        if getattr(self.params, "tpc_only", False) and not _tpc_applicable(
+            src_url, dst_url
+        ):
+            src_scheme = urlparse(src_url).scheme.lower()
+            dst_scheme = urlparse(dst_url).scheme.lower()
+            raise OSError(
+                f"Third-party copy required (--tpc-only) but TPC is not supported "
+                f"for {src_scheme}:// -> {dst_scheme}://"
+            )
+
         src_fs, src_path = fs.url_to_fs(src_url, opts)
         dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
 
