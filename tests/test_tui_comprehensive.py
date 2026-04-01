@@ -655,18 +655,23 @@ async def test_remote_tree_render_label_yanked():
 async def test_tui_custom_src_dst():
     """GfalTui initializes with custom src and dst paths."""
     app = GfalTui(src="root://example.com//data/", dst="/tmp")
-    async with app.run_test() as pilot:
-        await pilot.pause()
+    with patch("gfal.tui.url_to_fs") as mock_url_to_fs:
+        mock_fs = MagicMock()
+        mock_fs.ls.return_value = []
+        mock_url_to_fs.return_value = (mock_fs, "/data")
 
-        src_tree = app.query_one("#left-tree")
-        dst_tree = app.query_one("#right-tree")
+        async with app.run_test() as pilot:
+            await pilot.pause()
 
-        assert isinstance(src_tree, HighlightableRemoteDirectoryTree)
-        assert isinstance(dst_tree, HighlightableDirectoryTree)
+            src_tree = app.query_one("#left-tree")
+            dst_tree = app.query_one("#right-tree")
 
-        assert "root://example.com" in src_tree.url
-        # Use Path comparison to handle Windows path separators
-        assert Path(str(dst_tree.path)).parts[-1] == "tmp"
+            assert isinstance(src_tree, HighlightableRemoteDirectoryTree)
+            assert isinstance(dst_tree, HighlightableDirectoryTree)
+
+            assert "root://example.com" in src_tree.url
+            # Use Path comparison to handle Windows path separators
+            assert Path(str(dst_tree.path)).parts[-1] == "tmp"
 
 
 @pytest.mark.asyncio

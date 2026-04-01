@@ -545,15 +545,18 @@ class GfalTui(App):
 
     def action_quit(self) -> None:
         """Exit the application cleanly."""
+        # Fallback to force exit in case workers are truly stuck.
+        # We start the timer BEFORE self.exit() so if self.exit() blocks,
+        # we still have a ticking bomb.
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            timer = threading.Timer(2.0, os._exit, args=[0])
+            timer.daemon = True
+            timer.start()
+
         # Cancel all workers to prevent hangs
         for worker in list(self.workers):
             worker.cancel()
         self.exit()
-
-        # Fallback to force exit in case workers are truly stuck
-        # We give Textual 2 seconds to restore the terminal state
-        if "PYTEST_CURRENT_TEST" not in os.environ:
-            threading.Timer(2.0, os._exit, args=[0]).start()
 
     def action_focus_left(self) -> None:
         """Focus the left pane."""

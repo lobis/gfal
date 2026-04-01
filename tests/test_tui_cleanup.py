@@ -20,23 +20,31 @@ from gfal.cli.base import interactive
 
 class HungTui(GfalTui):
     def on_mount(self):
+        super().on_mount()
         print("HungTui mounted", file=sys.stderr)
+        sys.stderr.flush()
         def hung_worker():
             print("Hung worker started", file=sys.stderr)
+            sys.stderr.flush()
             time.sleep(100)
         self.run_worker(hung_worker, thread=True)
         print("Timer set", file=sys.stderr)
+        sys.stderr.flush()
         self.set_timer(0.5, self.action_quit)
 
     def action_quit(self):
         print("action_quit called", file=sys.stderr)
+        sys.stderr.flush()
         super().action_quit()
 
 if __name__ == "__main__":
     print("Starting HungTui", file=sys.stderr)
-    app = HungTui()
+    sys.stderr.flush()
+    # Use local paths to avoid network-induced hangs in CI
+    app = HungTui(src=".", dst=".")
     app.run()
     print("EXIT_SUCCESS", file=sys.stderr)
+    sys.stderr.flush()
     sys.exit(0)
 """
     test_script_path = Path(tempfile.gettempdir()) / "test_tui_hang.py"

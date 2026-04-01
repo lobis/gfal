@@ -143,6 +143,13 @@ class GfalClient:
                     "Rename across different filesystem types is not supported",
                     errno.EXDEV,
                 )
+            # XRootD optimization: use native mv to avoid NotImplementedError from fsspec.mv()
+            if hasattr(src_fs, "_myclient"):
+                status, _ = src_fs._myclient.mv(src_path, dst_path)
+                if not status.ok:
+                    raise OSError(status.errno or 1, status.message)
+                return
+
             src_fs.mv(src_path, dst_path)
         except Exception as e:
             raise self._map_error(e, src_url) from e
