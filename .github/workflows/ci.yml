@@ -60,6 +60,7 @@ jobs:
     - name: Run unit and functional tests
       run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
     - name: Upload coverage
+      if: ${{ !env.ACT }}
       uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -168,6 +169,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
+    # This job is informative on PRs but should not block unrelated changes.
+    # It exercises an Alma + legacy gfal2 comparison stack that is known to be flaky
+    # due to old upstream bindings/runtime issues outside this repo.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
