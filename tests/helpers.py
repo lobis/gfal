@@ -110,16 +110,14 @@ def docker_available() -> bool:
         return False
 
 
-def run_gfal_docker(
-    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+def _docker_run_command(
+    shell_script: str,
+    *,
+    proxy_cert: Optional[str] = None,
+    input: Optional[str] = None,
+    timeout: int = 120,
 ):
-    """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
-
-    Mounts the repo source read-only and installs it before running the
-    command.  The CERN CAs and XRootD client are already baked into the image.
-
-    Returns ``(returncode, stdout, stderr)`` as strings.
-    """
+    """Run a shell script inside the Docker test image."""
     docker = _find_docker()
     if not docker:
         raise RuntimeError("Docker not found")
@@ -133,21 +131,6 @@ def run_gfal_docker(
         volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
         env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
 
-    # fsspec-xrootd (gfal3-updates branch) is pre-installed in the image.
-    # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
-    # but /repo is mounted read-only.
-    script = (
-        f"cp -r /repo /tmp/gfal-src && "
-        f"python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
-        f'python3.12 -c "'
-        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
-        f'from gfal.cli.shell import main; main()"'
-    )
-
-    cmd_args = [str(a) for a in args]
-    # Escape args for shell
-    escaped = " ".join(f"'{a}'" for a in cmd_args)
-
     proc = subprocess.run(
         [
             docker,
@@ -158,15 +141,61 @@ def run_gfal_docker(
             _DOCKER_IMAGE,
             "sh",
             "-c",
-            f"{script} {escaped}",
+            shell_script,
         ],
         capture_output=True,
         text=True,
         encoding="utf-8",
         input=input,
-        timeout=120,
+        timeout=timeout,
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def run_gfal_docker(
+    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+):
+    """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
+
+    Mounts the repo source read-only and installs it before running the
+    command.  The CERN CAs and XRootD client are already baked into the image.
+
+    Returns ``(returncode, stdout, stderr)`` as strings.
+    """
+    # fsspec-xrootd (gfal3-updates branch) is pre-installed in the image.
+    # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
+    # but /repo is mounted read-only.
+    script = (
+        "cp -r /repo /tmp/gfal-src && "
+        "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        f"python3.12 -c \"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:]; "
+        'from gfal.cli.shell import main; main()"'
+    )
+
+    cmd_args = [str(a) for a in args]
+    escaped = " ".join(f"'{a}'" for a in cmd_args)
+    return _docker_run_command(
+        f"{script} {escaped}", proxy_cert=proxy_cert, input=input
+    )
+
+
+def run_gfal2_docker(
+    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+):
+    """Run legacy ``gfal-<cmd>`` inside the Docker xrootd-cern-test container.
+
+    Alma's distro ``python3-gfal2`` bindings are built for Python 3.9 and crash
+    under the image's default Python 3.12. Force the legacy launcher scripts to
+    use Python 3.9 via ``GFAL_PYTHONBIN`` while keeping the new gfal CLI on
+    Python 3.12.
+    """
+    cmd_args = [str(a) for a in args]
+    escaped = " ".join(f"'{a}'" for a in cmd_args)
+    return _docker_run_command(
+        f"GFAL_PYTHONBIN=/usr/bin/python3.9 gfal-{cmd} {escaped}",
+        proxy_cert=proxy_cert,
+        input=input,
+    )
 
 
 def run_gfal_binary(cmd, *args, input_bytes=None):

@@ -53,6 +53,36 @@ pip install -e .
 
 This registers all `gfal-*` executables as console scripts. Reinstall after changes to `pyproject.toml` (new entry points). Source edits in `src/` are picked up immediately without reinstalling.
 
+## GitHub push auth for this repo
+
+This repo has a **dedicated deploy key** and must not rely on the global root SSH key.
+
+Use this key for `lobis/gfal` pushes:
+
+```bash
+/root/.openclaw/workspace/.ssh/gfal_deploy_ed25519
+```
+
+Set it **repo-locally** so it overrides any global `~/.gitconfig` `core.sshCommand`:
+
+```bash
+git config core.sshCommand "ssh -i /root/.openclaw/workspace/.ssh/gfal_deploy_ed25519 -o IdentitiesOnly=yes"
+```
+
+Verify before pushing:
+
+```bash
+ssh -i /root/.openclaw/workspace/.ssh/gfal_deploy_ed25519 -o IdentitiesOnly=yes -T git@github.com
+```
+
+Expected auth banner:
+
+```text
+Hi lobis/gfal! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+If `git push` fails with `Permission to lobis/gfal.git denied to deploy key`, the repo is using the wrong SSH key.
+
 ## Project layout
 
 ```

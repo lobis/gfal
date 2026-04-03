@@ -163,6 +163,38 @@ jobs:
     - name: Run integration tests
       run: pytest tests/ -v -m integration
 
+  integration-compare-gfal2:
+    name: Integration Compare Tests (Alma Docker)
+    runs-on: ubuntu-latest
+    env:
+      PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install local test dependencies
+      run: pip install --no-cache-dir ".[dev]"
+    - name: Build Alma Docker comparison image
+      run: docker build --platform linux/amd64 -t xrootd-cern-test -f docker/Dockerfile.xrootd-cern-test .
+    - name: Set up EOS service account credentials
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: |
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > /tmp/service_account.p12
+        openssl pkcs12 -in /tmp/service_account.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
+        openssl pkcs12 -in /tmp/service_account.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
+        chmod 600 /tmp/userkey.pem
+        docker run --rm --platform linux/amd64 \
+          -v /tmp/usercert.pem:/tmp/usercert.pem:ro \
+          -v /tmp/userkey.pem:/tmp/userkey.pem:ro \
+          -v /tmp:/proxies \
+          xrootd-cern-test \
+          sh -c "grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /proxies/gfal-tmp-proxy -valid 12:00 -q"
+        echo "X509_USER_PROXY=/tmp/gfal-tmp-proxy" >> "$GITHUB_ENV"
+    - name: Run gfal vs gfal2 comparison tests
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: pytest tests/test_integration_compare_gfal2.py -v --tb=short
+
   # ---------------------------------------------------------------------------
   # 2. Packaging
   # ---------------------------------------------------------------------------

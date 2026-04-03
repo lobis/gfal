@@ -30,6 +30,13 @@ RUN dnf install -y \
         python3.12-pip \
         xrootd-client \
         xrootd-client-libs \
+        globus-proxy-utils \
+        gfal2 \
+        gfal2-util-scripts \
+        python3-gfal2-util \
+        gfal2-plugin-xrootd \
+        gfal2-plugin-http \
+        gfal2-plugin-file \
     && dnf clean all \
     && python3.12 -m pip install --upgrade pip --quiet
 
@@ -72,10 +79,12 @@ RUN python3.12 -m pip install --no-cache-dir \
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && alternatives --set python3 /usr/bin/python3.12 \
     && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && python3.12 -m pip install --no-cache-dir pip --upgrade --quiet
 
 # Environment: tell XRootD where to find CA certificates for GSI auth.
 ENV XRD_CADIR=/etc/grid-security/certificates
+ENV PYTHONPATH=/usr/lib64/python3.9/site-packages:/usr/lib/python3.9/site-packages
 
 # The gfal repo is mounted at /repo at runtime; gfal itself is installed
 # per-run by run_gfal_docker() so code changes don't require an image rebuild.
