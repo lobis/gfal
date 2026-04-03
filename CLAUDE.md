@@ -210,7 +210,24 @@ Integration tests (require network) are excluded by default; run them separately
 .venv/bin/python -m pytest tests/ -m integration -q
 ```
 
-Do not mark a task complete if either pre-commit or pytest reports failures.
+If you change `.github/workflows/*` or anything intended specifically for GitHub Actions / CI behavior, also run the relevant workflow locally with `act` before considering it done.
+
+Examples:
+
+```bash
+# list jobs
+/usr/local/bin/act -l
+
+# run the Alma Docker comparison job locally
+/usr/local/bin/act pull_request -j integration-compare-gfal2
+```
+
+Notes:
+- Use `/usr/local/bin/act` explicitly (the plain `act` on PATH may be an older version).
+- Local `act` is configured via `/root/.config/act/actrc`.
+- Current runner fix: `actions/setup-python@v6` requires a newer `act` that supports `node24`.
+
+Do not mark a task complete if either pre-commit, pytest, or relevant local CI checks report failures.
 
 ## Code style
 
