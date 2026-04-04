@@ -17,22 +17,26 @@ from test_integration_eospilot import _PILOT_BASE, _PUBSRC, _find_proxy
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 
+_LEGACY_PROBE_CACHE: tuple[bool, str] | None = None
+
+
 def _legacy_gfal2_probe() -> tuple[bool, str]:
+    global _LEGACY_PROBE_CACHE
+    if _LEGACY_PROBE_CACHE is not None:
+        return _LEGACY_PROBE_CACHE
     rc, out, err = run_gfal2_docker("stat", _PUBSRC)
     if rc == 0:
-        return True, ""
-    msg = (err or out or "legacy gfal2 unavailable").strip()
-    return False, msg
-
-
-_LEGACY_OK, _LEGACY_REASON = _legacy_gfal2_probe()
+        _LEGACY_PROBE_CACHE = (True, "")
+    else:
+        msg = (err or out or "legacy gfal2 unavailable").strip()
+        _LEGACY_PROBE_CACHE = (False, msg)
+    return _LEGACY_PROBE_CACHE
 
 
 def _xfail_if_legacy_unusable():
-    if not _LEGACY_OK:
-        pytest.xfail(
-            f"Legacy gfal2-utils unusable in current Alma image: {_LEGACY_REASON}"
-        )
+    ok, reason = _legacy_gfal2_probe()
+    if not ok:
+        pytest.xfail(f"Legacy gfal2-utils unusable in current Alma image: {reason}")
 
 
 requires_docker = pytest.mark.skipif(
