@@ -41,7 +41,7 @@ def _xfail_if_legacy_unusable():
         pytest.xfail(f"Legacy gfal2-utils unusable in current Alma image: {reason}")
 
 
-def _xfail_if_known_public_http_flake(rc: int, err: str):
+def _skip_if_known_public_http_flake(rc: int, err: str):
     lowered = (err or "").lower()
     if rc != 0 and (
         "host is down" in lowered
@@ -49,7 +49,7 @@ def _xfail_if_known_public_http_flake(rc: int, err: str):
         or "connection reset by peer" in lowered
         or "result (neon)" in lowered
     ):
-        pytest.xfail(f"Known flaky public HTTP cat/stat transport failure in CI: {err}")
+        pytest.skip(f"Known flaky public HTTP transport failure in CI: {err}")
 
 
 requires_docker = pytest.mark.skipif(
@@ -101,7 +101,8 @@ class TestCompareEosPublic:
         rc_new, out_new, err_new = run_gfal_docker("cat", _PUBSRC)
         rc_old, out_old, err_old = run_gfal2_docker("cat", _PUBSRC)
 
-        _xfail_if_known_public_http_flake(rc_new, err_new)
+        _skip_if_known_public_http_flake(rc_new, err_new)
+        _skip_if_known_public_http_flake(rc_old, err_old)
         assert rc_new == 0, err_new
         assert rc_old == 0, err_old
         assert out_new.encode() == out_old.encode()
