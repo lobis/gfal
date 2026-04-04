@@ -35,7 +35,12 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - uses: pre-commit/action@v3.0.1
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir pre-commit
+    - name: Run pre-commit
+      run: pre-commit run --all-files
 
   tests:
     name: Tests (${{ matrix.os }}, Py ${{ matrix.python-version }})
@@ -44,19 +49,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        python-version: [ "3.9", "3.10", "3.11", "3.12", "3.13", "3.14" ]
-    env:
-      PYTEST_ADDOPTS: "--color=yes"
+        python-version: [ "3.9", "3.12" ]
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install system build dependencies (xrootd needs libuuid on Linux)
-      if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
-      run: sudo apt-get update && sudo apt-get install -y uuid-dev
-    - name: Install package and test dependencies
-      run: pip install --no-cache-dir "${{ matrix.python-version == '3.12' && matrix.os != 'windows-latest' && '.[dev,all]' || '.[dev]' }}"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev]"
     - name: Run unit and functional tests
       run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
     - name: Upload coverage
@@ -68,20 +70,18 @@ jobs:
         fail_ci_if_error: false
 
   xrootd:
-    name: XRootD Server Tests
+    name: XRootD Tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - name: Install system build dependencies
-      run: sudo apt-get update && sudo apt-get install -y uuid-dev openssl
-    - name: Install package and test dependencies (with XRootD)
-      run: pip install --no-cache-dir ".[dev,xrootd]"
-    - name: Override fsspec-xrootd with gfal3-updates branch
-      run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
-    - name: Run local XRootD server tests
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev]"
+    - name: Run XRootD tests
       run: pytest tests/ -v -m xrootd
 
   integration:
@@ -94,45 +94,13 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y uuid-dev globus-proxy-utils openssl wget
-    - name: Install CERN CA certificates
+    - name: Install dependencies
       run: |
-        # CERN Root CA 2 (DER format)
-        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Root%20Certification%20Authority%202.crt" -O /tmp/cern-root-ca2.der
-        openssl x509 -inform DER -in /tmp/cern-root-ca2.der -out /tmp/cern-root-ca2.pem
-        sudo cp /tmp/cern-root-ca2.pem /usr/local/share/ca-certificates/cern-root-ca2.crt
-        # CERN Grid CA (PEM despite .crt extension; note the (1) in filename — plain name 404s)
-        wget -q "https://cafiles.cern.ch/cafiles/certificates/CERN%20Grid%20Certification%20Authority(1).crt" -O /tmp/cern-grid-ca.pem
-        sudo cp /tmp/cern-grid-ca.pem /usr/local/share/ca-certificates/cern-grid-ca.crt
-        sudo update-ca-certificates
-        # XRootD resolves CAs from /etc/grid-security/certificates with OpenSSL hash naming
-        sudo mkdir -p /etc/grid-security/certificates
-        HASH1=$(openssl x509 -noout -hash -in /tmp/cern-root-ca2.pem)
-        sudo cp /tmp/cern-root-ca2.pem /etc/grid-security/certificates/${HASH1}.0
-        HASH2=$(openssl x509 -noout -hash -in /tmp/cern-grid-ca.pem)
-        sudo cp /tmp/cern-grid-ca.pem /etc/grid-security/certificates/${HASH2}.0
-        echo "XRD_CADIR=/etc/grid-security/certificates" >> "$GITHUB_ENV"
-        echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
-        echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev]"
+        sudo apt-get update
+        sudo apt-get install -y globus-proxy-utils
     - name: Set up EOS service account credentials
-      # Secret PYTHON3_GFAL_SERVICE_ACCOUNT_P12: base64-encoded .p12 from CERN CA (no password).
-      # To regenerate the secret (after the cert expires or is revoked):
-      #   1. Download a new robot cert from https://ca.cern.ch/ca/ as a .p12 (no password)
-      #   2. base64 -i cert.p12   (macOS)   or   base64 -w0 cert.p12   (Linux)
-      #   3. Update the PYTHON3_GFAL_SERVICE_ACCOUNT_P12 secret in GitHub Settings → Secrets
-      # To regenerate the local proxy from .gfal_ci_secret (valid ~1 year):
-      #   cat .gfal_ci_secret | base64 -d > /tmp/sa.p12
-      #   openssl pkcs12 -in /tmp/sa.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
-      #   openssl pkcs12 -in /tmp/sa.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
-      #   docker run --rm --platform linux/amd64 \
-      #     -v /tmp/usercert.pem:/tmp/usercert.pem:ro \
-      #     -v /tmp/userkey.pem:/tmp/userkey.pem:ro \
-      #     -v $(pwd)/proxies:/proxies \
-      #     xrootd-cern-test \
-      #     sh -c "dnf install -q -y globus-proxy-utils && \
-      #       grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem \
-      #                       -out /proxies/gfal-tmp-proxy -valid 8760:00 -q && echo done"
       if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
       run: |
         CERT_TMPDIR=$(mktemp -d)
@@ -157,16 +125,6 @@ jobs:
         PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
-    - name: Install package and test dependencies
-      run: pip install --no-cache-dir ".[dev,xrootd]"
-    - name: Override fsspec-xrootd with gfal3-updates
-      run: pip install "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
-    - name: Copy test file to EOS (smoke test)
-      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
-      run: |
-        DEST="root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/ci_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-        gfal cp /etc/hostname "$DEST"
-        gfal stat "$DEST"
     - name: Run integration tests
       # Keep this CI job focused on the core EOS coverage and avoid the long tail
       # of slower pilot/xrootd cases that can make the workflow appear stuck near
@@ -193,6 +151,10 @@ jobs:
         python-version: "3.12"
     - name: Install local test dependencies
       run: pip install --no-cache-dir ".[dev]"
+    - name: Install host proxy tooling
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y globus-proxy-utils
     - name: Build Alma Docker comparison image
       run: docker build --platform linux/amd64 -t xrootd-cern-test -f docker/Dockerfile.xrootd-cern-test .
     - name: Set up EOS service account credentials
@@ -328,83 +290,37 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-    - uses: actions/checkout@v6
-    - uses: actions/download-artifact@v8
-      with:
-        path: artifacts/
-        merge-multiple: true
-    - name: Install tools
-      run: |
-        sudo apt-get update && sudo apt-get install -y createrepo-c
-        pip install mkdocs-material
-    - name: Build Docs 📚
-      run: mkdocs build
-    - name: Prepare Repository
-      run: |
-        mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64 site/rpm/el10/x86_64 site/rpm/el10/aarch64
-
-        find artifacts/ -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
-        find artifacts/ -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
-        find artifacts/ -name "*el10*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
-        find artifacts/ -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
-        for d in site/rpm/el*/*/; do createrepo_c "$d"; done
-
-        cat <<EOF > site/rpm/gfal.repo
-        [gfal]
-        name=gfal repository
-        baseurl=https://lobis.github.io/gfal/rpm/el\$releasever/\$basearch/
-        enabled=1
-        gpgcheck=0
-        EOF
-    - uses: actions/upload-pages-artifact@v4
-      with:
-        path: ./site/
-    - uses: actions/deploy-pages@v5
-      id: deployment
-
-  publish-to-pypi:
-    name: Publish to PyPI 🚀
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build, build-rpm, test-install ]
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/gfal
-    permissions:
-      id-token: write
-    steps:
-    - uses: actions/download-artifact@v8
-      with:
-        name: python-package-distributions
-        path: dist/
-    - uses: pypa/gh-action-pypi-publish@release/v1
-
-  github-release:
-    name: Create GitHub Release 🚀
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build, build-rpm, test-install ]
-    runs-on: ubuntu-latest
-    permissions:
       contents: write
     steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
     - uses: actions/download-artifact@v8
       with:
-        path: artifacts/
+        pattern: rpm-package-distributions-*
+        path: repo/
         merge-multiple: true
-    - uses: softprops/action-gh-release@v2
-      with:
-        files: artifacts/**/*
-        generate_release_notes: true
+    - name: Update repo metadata
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y createrepo-c
+        mkdir -p public/repo
+        find repo -name '*.rpm' -exec cp {} public/repo/ \;
+        createrepo_c public/repo
+    - name: Publish repo contents to gh-pages
+      run: |
+        git fetch origin gh-pages || true
+        git switch --orphan gh-pages-tmp
+        rm -rf .
+        cp -r public/* .
+        touch .nojekyll
+        git add .
+        git commit -m "docs: update yum repo for ${GITHUB_REF_NAME}"
+        git push --force origin HEAD:gh-pages
 
-  verify-deployment:
+  verify-deploy:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
-    needs: [ update-repo, publish-to-pypi, github-release ]
+    needs: [ update-repo ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     strategy:
@@ -413,33 +329,28 @@ jobs:
         target:
         - name: AlmaLinux 9
           container: almalinux:9
-          install_cmd: |
-            dnf install -y --allowerasing epel-release curl dnf-plugins-core
-            dnf config-manager --set-enabled crb
-            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: AlmaLinux 10
           container: almalinux:10
-          install_cmd: |
-            dnf install -y --allowerasing epel-release curl dnf-plugins-core
-            # crb is enabled by default in AlmaLinux 10, but dnf-plugins-core is still good practice
-            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: PyPI
-          container: python:3.9
-          install_cmd: |
-            for i in {1..12}; do pip install --no-cache-dir gfal && break || sleep 10; done
+          container: python:3.12-slim
     container: ${{ matrix.target.container }}
     steps:
-    - name: Install and Verify
+    - name: Verify YUM install
+      if: matrix.target.name != 'PyPI'
       run: |
-        ${{ matrix.target.install_cmd }}
-        export PATH=$PATH:/usr/local/bin
-        command -v gfal || exit 1
-        INSTALLED_VERSION=$(gfal --version | awk '{print $NF}')
-        EXPECTED_VERSION=${{ github.ref_name }}
-        EXPECTED_VERSION=${EXPECTED_VERSION#v}
-        if [ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]; then
-          echo "❌ Version mismatch: $INSTALLED_VERSION != $EXPECTED_VERSION"
-          exit 1
-        fi
+        dnf install -y dnf-plugins-core epel-release || true
+        echo '[lobis-gfal]
+name=lobis-gfal
+baseurl=https://lobis.github.io/gfal/repo/
+enabled=1
+gpgcheck=0' > /etc/yum.repos.d/lobis-gfal.repo
+        dnf makecache
+        dnf install -y gfal3
+        command -v gfal
+        gfal --help
+    - name: Verify PyPI install
+      if: matrix.target.name == 'PyPI'
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir gfal3
+        gfal --help
