@@ -290,39 +290,83 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
     - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
     - uses: actions/download-artifact@v8
       with:
-        pattern: rpm-package-distributions-*
-        path: repo/
+        path: artifacts/
         merge-multiple: true
-    - name: Update repo metadata
+    - name: Install tools
       run: |
-        sudo apt-get update
-        sudo apt-get install -y createrepo-c
-        mkdir -p public/repo
-        find repo -name '*.rpm' -exec cp {} public/repo/ \;
-        createrepo_c public/repo
-    - name: Publish repo contents to gh-pages
+        sudo apt-get update && sudo apt-get install -y createrepo-c
+        pip install mkdocs-material
+    - name: Build Docs 📚
+      run: mkdocs build
+    - name: Prepare Repository
       run: |
-        git fetch origin gh-pages || true
-        git switch --orphan gh-pages-tmp
-        find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
-        cp -r public/* .
-        touch .nojekyll
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add .
-        git commit -m "docs: update yum repo for ${GITHUB_REF_NAME}"
-        git push --force origin HEAD:gh-pages
+        mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64 site/rpm/el10/x86_64 site/rpm/el10/aarch64
 
-  verify-deploy:
+        find artifacts/ -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
+        find artifacts/ -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
+        find artifacts/ -name "*el10*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
+        find artifacts/ -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
+        for d in site/rpm/el*/*/; do createrepo_c "$d"; done
+
+        cat <<EOF > site/rpm/gfal.repo
+        [gfal]
+        name=gfal repository
+        baseurl=https://lobis.github.io/gfal/rpm/el\$releasever/\$basearch/
+        enabled=1
+        gpgcheck=0
+        EOF
+    - uses: actions/upload-pages-artifact@v4
+      with:
+        path: ./site/
+    - uses: actions/deploy-pages@v5
+      id: deployment
+
+  publish-to-pypi:
+    name: Publish to PyPI 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build, build-rpm, test-install ]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/gfal
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build, build-rpm, test-install ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        path: artifacts/
+        merge-multiple: true
+    - uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/**/*
+        generate_release_notes: true
+
+  verify-deployment:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
-    needs: [ update-repo ]
+    needs: [ update-repo, publish-to-pypi, github-release ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     strategy:
@@ -331,30 +375,33 @@ jobs:
         target:
         - name: AlmaLinux 9
           container: almalinux:9
+          install_cmd: |
+            dnf install -y --allowerasing epel-release curl dnf-plugins-core
+            dnf config-manager --set-enabled crb
+            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: AlmaLinux 10
           container: almalinux:10
+          install_cmd: |
+            dnf install -y --allowerasing epel-release curl dnf-plugins-core
+            # crb is enabled by default in AlmaLinux 10, but dnf-plugins-core is still good practice
+            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: PyPI
-          container: python:3.12-slim
+          container: python:3.9
+          install_cmd: |
+            for i in {1..12}; do pip install --no-cache-dir gfal && break || sleep 10; done
     container: ${{ matrix.target.container }}
     steps:
-    - name: Verify YUM install
-      if: matrix.target.name != 'PyPI'
+    - name: Install and Verify
       run: |
-        dnf install -y dnf-plugins-core epel-release || true
-        cat > /etc/yum.repos.d/lobis-gfal.repo <<'EOF'
-        [lobis-gfal]
-        name=lobis-gfal
-        baseurl=https://lobis.github.io/gfal/repo/
-        enabled=1
-        gpgcheck=0
-        EOF
-        dnf makecache
-        dnf install -y python3-gfal
-        command -v gfal
-        gfal --help
-    - name: Verify PyPI install
-      if: matrix.target.name == 'PyPI'
-      run: |
-        python -m pip install --upgrade pip
-        pip install --no-cache-dir gfal
-        gfal --help
+        ${{ matrix.target.install_cmd }}
+        export PATH=$PATH:/usr/local/bin
+        command -v gfal || exit 1
+        INSTALLED_VERSION=$(gfal --version | awk '{print $NF}')
+        EXPECTED_VERSION=${{ github.ref_name }}
+        EXPECTED_VERSION=${EXPECTED_VERSION#v}
+        if [ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]; then
+          echo "❌ Version mismatch: $INSTALLED_VERSION != $EXPECTED_VERSION"
+          exit 1
+        fi
