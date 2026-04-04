@@ -388,7 +388,7 @@ jobs:
             curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
             for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
         - name: PyPI
-          container: python:3.9
+          container: python:3.12-slim
           install_cmd: |
             for i in {1..12}; do pip install --no-cache-dir gfal && break || sleep 10; done
     container: ${{ matrix.target.container }}
