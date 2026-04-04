@@ -10,6 +10,7 @@ integration suite, while legacy gfal2-utils still run inside Docker.
 """
 
 from typing import Optional
+from uuid import uuid4
 
 import pytest
 
@@ -50,6 +51,10 @@ def _skip_if_known_public_http_flake(rc: int, err: str):
         or "result (neon)" in lowered
     ):
         pytest.skip(f"Known flaky public HTTP transport failure in CI: {err}")
+
+
+def _unique_pilot_path(stem: str) -> str:
+    return f"{_PILOT_BASE}/{stem}-{uuid4().hex}"
 
 
 requires_docker = pytest.mark.skipif(
@@ -126,7 +131,7 @@ class TestCompareEosPilot:
     def test_mkdir_and_ls_match_legacy(self):
         _xfail_if_legacy_unusable()
         proxy = _find_proxy()
-        target = f"{_PILOT_BASE}/compare-gfal2-utils"
+        target = _unique_pilot_path("compare-gfal2-utils-dir")
 
         try:
             rc_new, out_new, err_new = run_gfal(
@@ -157,7 +162,7 @@ class TestCompareEosPilot:
         _xfail_if_legacy_unusable()
         proxy = _find_proxy()
         payload = "compare old and new gfal\n"
-        remote = f"{_PILOT_BASE}/compare-gfal2-utils-copy.bin"
+        remote = _unique_pilot_path("compare-gfal2-utils-copy.bin")
 
         try:
             rc_new, out_new, err_new = run_gfal(
@@ -182,7 +187,7 @@ class TestCompareEosPilot:
     def test_save_and_cat_match_legacy(self):
         _xfail_if_legacy_unusable()
         proxy = _find_proxy()
-        remote = f"{_PILOT_BASE}/compare-gfal2-utils-save.txt"
+        remote = _unique_pilot_path("compare-gfal2-utils-save.txt")
         payload = "compare via save\nline two\n"
 
         try:
@@ -206,8 +211,8 @@ class TestCompareEosPilot:
     def test_rename_and_rm_match_legacy(self):
         _xfail_if_legacy_unusable()
         proxy = _find_proxy()
-        source = f"{_PILOT_BASE}/compare-gfal2-utils-rename-src.txt"
-        dest = f"{_PILOT_BASE}/compare-gfal2-utils-rename-dst.txt"
+        source = _unique_pilot_path("compare-gfal2-utils-rename-src.txt")
+        dest = _unique_pilot_path("compare-gfal2-utils-rename-dst.txt")
         payload = "rename me\n"
 
         rc_new, out_new, err_new = run_gfal(
