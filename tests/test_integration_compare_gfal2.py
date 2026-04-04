@@ -41,6 +41,17 @@ def _xfail_if_legacy_unusable():
         pytest.xfail(f"Legacy gfal2-utils unusable in current Alma image: {reason}")
 
 
+def _xfail_if_known_public_http_flake(rc: int, err: str):
+    lowered = (err or "").lower()
+    if rc != 0 and (
+        "host is down" in lowered
+        or "could not read status line" in lowered
+        or "connection reset by peer" in lowered
+        or "result (neon)" in lowered
+    ):
+        pytest.xfail(f"Known flaky public HTTP cat/stat transport failure in CI: {err}")
+
+
 requires_docker = pytest.mark.skipif(
     not docker_available(), reason="Docker image xrootd-cern-test not available"
 )
@@ -90,6 +101,7 @@ class TestCompareEosPublic:
         rc_new, out_new, err_new = run_gfal_docker("cat", _PUBSRC)
         rc_old, out_old, err_old = run_gfal2_docker("cat", _PUBSRC)
 
+        _xfail_if_known_public_http_flake(rc_new, err_new)
         assert rc_new == 0, err_new
         assert rc_old == 0, err_old
         assert out_new.encode() == out_old.encode()
