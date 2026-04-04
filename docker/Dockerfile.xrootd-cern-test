@@ -84,7 +84,6 @@ RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
 
 # Environment: tell XRootD where to find CA certificates for GSI auth.
 ENV XRD_CADIR=/etc/grid-security/certificates
-ENV PYTHONPATH=/usr/lib64/python3.9/site-packages:/usr/lib/python3.9/site-packages
 
 # The gfal repo is mounted at /repo at runtime; gfal itself is installed
 # per-run by run_gfal_docker() so code changes don't require an image rebuild.
