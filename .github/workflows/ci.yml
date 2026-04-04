@@ -137,23 +137,23 @@ jobs:
       run: |
         CERT_TMPDIR=$(mktemp -d)
         export CERT_TMPDIR
-        trap 'rm -rf "$CERT_TMPDIR"' EXIT
-        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/usercred.p12"
-        chown "$(id -u):$(id -g)" "$CERT_TMPDIR/usercred.p12"
-        chmod 600 "$CERT_TMPDIR/usercred.p12"
-        rm -f /tmp/usercert.pem /tmp/userkey.pem
-        export X509_USER_CERT="$CERT_TMPDIR/usercred.p12"
-        export X509_USER_KEY="$CERT_TMPDIR/usercred.p12"
-        ls -ln "$CERT_TMPDIR/usercred.p12"
-        openssl pkcs12 -in "$CERT_TMPDIR/usercred.p12" -clcerts -nokeys -passin pass: -out "$CERT_TMPDIR/usercert.pem"
-        CERT_EXPIRY=$(openssl x509 -in "$CERT_TMPDIR/usercert.pem" -noout -enddate | cut -d= -f2)
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem' EXIT
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out "$CERT_TMPDIR/usercert.pem"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out "$CERT_TMPDIR/userkey.pem"
+        cp "$CERT_TMPDIR/usercert.pem" /tmp/usercert.pem
+        cp "$CERT_TMPDIR/userkey.pem" /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
+        ls -ln /tmp/usercert.pem /tmp/userkey.pem
+        CERT_EXPIRY=$(openssl x509 -in /tmp/usercert.pem -noout -enddate | cut -d= -f2)
         echo "Service account certificate expires: ${CERT_EXPIRY}"
-        if openssl x509 -in "$CERT_TMPDIR/usercert.pem" -noout -checkend 2592000 > /dev/null 2>&1; then
+        if openssl x509 -in /tmp/usercert.pem -noout -checkend 2592000 > /dev/null 2>&1; then
           echo "Certificate is valid for at least 30 days."
         else
           echo "::warning::Service account certificate expires within 30 days (${CERT_EXPIRY})! Renew it at https://ca.cern.ch/ca/"
         fi
-        grid-proxy-init -out /tmp/x509proxy -valid 12:00 -q
+        grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
         PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
@@ -200,17 +200,15 @@ jobs:
       run: |
         CERT_TMPDIR=$(mktemp -d)
         export CERT_TMPDIR
-        trap 'rm -rf "$CERT_TMPDIR"' EXIT
-        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/usercred.p12"
-        chown "$(id -u):$(id -g)" "$CERT_TMPDIR/usercred.p12"
-        chmod 600 "$CERT_TMPDIR/usercred.p12"
-        rm -f /tmp/usercert.pem /tmp/userkey.pem
-        ls -ln "$CERT_TMPDIR/usercred.p12"
-        docker run --rm --platform linux/amd64 \
-          -v "$CERT_TMPDIR/usercred.p12":/tmp/usercred.p12:ro \
-          -v /tmp:/proxies \
-          xrootd-cern-test \
-          sh -c 'export X509_USER_CERT=/tmp/usercred.p12 X509_USER_KEY=/tmp/usercred.p12 && ls -ln /tmp/usercred.p12 && grid-proxy-init -out /proxies/gfal-tmp-proxy -valid 12:00 -q'
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem /tmp/gfal-tmp-proxy' EXIT
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
+        ls -ln /tmp/usercert.pem /tmp/userkey.pem
+        grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/gfal-tmp-proxy -valid 12:00 -q
+        ls -ln /tmp/gfal-tmp-proxy
         echo "X509_USER_PROXY=/tmp/gfal-tmp-proxy" >> "$GITHUB_ENV"
     - name: Run gfal vs gfal2 comparison tests
       if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
