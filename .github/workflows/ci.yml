@@ -339,11 +339,13 @@ jobs:
       if: matrix.target.name != 'PyPI'
       run: |
         dnf install -y dnf-plugins-core epel-release || true
-        echo '[lobis-gfal]
-name=lobis-gfal
-baseurl=https://lobis.github.io/gfal/repo/
-enabled=1
-gpgcheck=0' > /etc/yum.repos.d/lobis-gfal.repo
+        cat > /etc/yum.repos.d/lobis-gfal.repo <<'EOF'
+        [lobis-gfal]
+        name=lobis-gfal
+        baseurl=https://lobis.github.io/gfal/repo/
+        enabled=1
+        gpgcheck=0
+        EOF
         dnf makecache
         dnf install -y gfal3
         command -v gfal
