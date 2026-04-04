@@ -9,7 +9,7 @@ For writable EOSPilot HTTPS operations, the new CLI follows the same native
 integration suite, while legacy gfal2-utils still run inside Docker.
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import pytest
 
@@ -19,10 +19,10 @@ from test_integration_eospilot import _PILOT_BASE, _PUBSRC, _find_proxy
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 
-_LEGACY_PROBE_CACHE: Optional[Tuple[bool, str]] = None
+_LEGACY_PROBE_CACHE: Optional[tuple[bool, str]] = None
 
 
-def _legacy_gfal2_probe() -> Tuple[bool, str]:
+def _legacy_gfal2_probe() -> tuple[bool, str]:
     global _LEGACY_PROBE_CACHE
     if _LEGACY_PROBE_CACHE is not None:
         return _LEGACY_PROBE_CACHE
