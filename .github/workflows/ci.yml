@@ -138,7 +138,8 @@ jobs:
         echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > /tmp/service_account.p12
         openssl pkcs12 -in /tmp/service_account.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
         openssl pkcs12 -in /tmp/service_account.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
-        chmod 600 /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
         # Show cert validity to make it easy to notice when it's about to expire
         CERT_EXPIRY=$(openssl x509 -in /tmp/usercert.pem -noout -enddate | cut -d= -f2)
         echo "Service account certificate expires: ${CERT_EXPIRY}"
@@ -188,7 +189,8 @@ jobs:
         echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > /tmp/service_account.p12
         openssl pkcs12 -in /tmp/service_account.p12 -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
         openssl pkcs12 -in /tmp/service_account.p12 -nocerts -nodes  -passin pass: -out /tmp/userkey.pem
-        chmod 600 /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
         docker run --rm --platform linux/amd64 \
           -v /tmp/usercert.pem:/tmp/usercert.pem:ro \
           -v /tmp/userkey.pem:/tmp/userkey.pem:ro \
