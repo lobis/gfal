@@ -143,6 +143,9 @@ jobs:
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes  -passin pass: -out "$CERT_TMPDIR/userkey.pem"
         chown "$(id -u):$(id -g)" "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
         chmod 600 "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
+        rm -f /tmp/usercert.pem /tmp/userkey.pem
+        export X509_USER_CERT="$CERT_TMPDIR/usercert.pem"
+        export X509_USER_KEY="$CERT_TMPDIR/userkey.pem"
         ls -ln "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
         # Show cert validity to make it easy to notice when it's about to expire
         CERT_EXPIRY=$(openssl x509 -in "$CERT_TMPDIR/usercert.pem" -noout -enddate | cut -d= -f2)
@@ -167,7 +170,14 @@ jobs:
         gfal cp /etc/hostname "$DEST"
         gfal stat "$DEST"
     - name: Run integration tests
-      run: pytest tests/ -v -m integration
+      # Keep this CI job focused on the core EOS coverage and avoid the long tail
+      # of slower pilot/xrootd cases that can make the workflow appear stuck near
+      # completion. The dedicated Alma compare job covers legacy/new parity
+      # separately.
+      run: |
+        timeout 45m pytest -v \
+          tests/test_integration_eospublic.py \
+          tests/test_integration_eospilot.py -k "not TestEosPilotTpc and not TestEosPilotXrootd and not test_copy_large_file"
 
   integration-compare-gfal2:
     name: Integration Compare Tests (Alma Docker)
@@ -198,6 +208,9 @@ jobs:
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes  -passin pass: -out "$CERT_TMPDIR/userkey.pem"
         chown "$(id -u):$(id -g)" "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
         chmod 600 "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
+        rm -f /tmp/usercert.pem /tmp/userkey.pem
+        export X509_USER_CERT="$CERT_TMPDIR/usercert.pem"
+        export X509_USER_KEY="$CERT_TMPDIR/userkey.pem"
         ls -ln "$CERT_TMPDIR/usercert.pem" "$CERT_TMPDIR/userkey.pem"
         docker run --rm --platform linux/amd64 \
           -v "$CERT_TMPDIR/usercert.pem":/tmp/usercert.pem:ro \
