@@ -53,6 +53,36 @@ pip install -e .
 
 This registers all `gfal-*` executables as console scripts. Reinstall after changes to `pyproject.toml` (new entry points). Source edits in `src/` are picked up immediately without reinstalling.
 
+## GitHub push auth for this repo
+
+This repo has a **dedicated deploy key** and must not rely on the global root SSH key.
+
+Use this key for `lobis/gfal` pushes:
+
+```bash
+/root/.openclaw/workspace/.ssh/gfal_deploy_ed25519
+```
+
+Set it **repo-locally** so it overrides any global `~/.gitconfig` `core.sshCommand`:
+
+```bash
+git config core.sshCommand "ssh -i /root/.openclaw/workspace/.ssh/gfal_deploy_ed25519 -o IdentitiesOnly=yes"
+```
+
+Verify before pushing:
+
+```bash
+ssh -i /root/.openclaw/workspace/.ssh/gfal_deploy_ed25519 -o IdentitiesOnly=yes -T git@github.com
+```
+
+Expected auth banner:
+
+```text
+Hi lobis/gfal! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+If `git push` fails with `Permission to lobis/gfal.git denied to deploy key`, the repo is using the wrong SSH key.
+
 ## Project layout
 
 ```
@@ -180,7 +210,24 @@ Integration tests (require network) are excluded by default; run them separately
 .venv/bin/python -m pytest tests/ -m integration -q
 ```
 
-Do not mark a task complete if either pre-commit or pytest reports failures.
+If you change `.github/workflows/*` or anything intended specifically for GitHub Actions / CI behavior, also run the relevant workflow locally with `act` before considering it done.
+
+Examples:
+
+```bash
+# list jobs
+/usr/local/bin/act -l
+
+# run the Alma Docker comparison job locally
+/usr/local/bin/act pull_request -j integration-compare-gfal2
+```
+
+Notes:
+- Use `/usr/local/bin/act` explicitly (the plain `act` on PATH may be an older version).
+- Local `act` is configured via `/root/.config/act/actrc`.
+- Current runner fix: `actions/setup-python@v6` requires a newer `act` that supports `node24`.
+
+Do not mark a task complete if either pre-commit, pytest, or relevant local CI checks report failures.
 
 ## Code style
 
