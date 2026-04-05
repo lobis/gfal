@@ -40,6 +40,8 @@ import pytest
 
 from helpers import docker_available, run_gfal, run_gfal_docker
 
+CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
+
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 # ---------------------------------------------------------------------------
@@ -99,6 +101,14 @@ requires_eospilot = pytest.mark.skipif(
 requires_proxy = pytest.mark.skipif(
     _find_proxy() is None,
     reason="No X.509 proxy found (set X509_USER_PROXY or run voms-proxy-init)",
+)
+
+requires_non_ci_for_flaky_pilot_writes = pytest.mark.skipif(
+    CI,
+    reason=(
+        "Skipped in CI: eospilot write/identity paths are intermittently hanging; "
+        "covered manually/outside CI until stabilized"
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -449,6 +459,7 @@ class TestEosPilotLs:
 
 @requires_eospilot
 @requires_proxy
+@requires_non_ci_for_flaky_pilot_writes
 class TestEosPilotMkdirRm:
     def test_mkdir(self, proxy_cert, pilot_dir):
         """Create a subdirectory and verify it exists with stat."""

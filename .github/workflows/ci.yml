@@ -63,6 +63,7 @@ jobs:
       run: pytest tests/ -v -m "not integration and not xrootd" --cov=gfal --cov-report=xml
     - name: Upload coverage
       if: ${{ !env.ACT }}
+      continue-on-error: true
       uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -131,9 +132,9 @@ jobs:
       # completion. The dedicated Alma compare job covers legacy/new parity
       # separately.
       run: |
-        timeout 45m pytest -v \
+        timeout 30m pytest -v -rs \
           tests/test_integration_eospublic.py \
-          tests/test_integration_eospilot.py -k "not TestEosPilotTpc and not TestEosPilotXrootd and not test_copy_large_file"
+          tests/test_integration_eospilot.py -k "not TestEosPilotTpc and not TestEosPilotXrootd and not TestEosPilotMkdirRm and not test_copy_large_file"
 
   integration-compare-gfal2:
     name: Integration Compare Tests (Alma Docker)
