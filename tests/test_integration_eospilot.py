@@ -36,11 +36,11 @@ import sys
 import uuid
 from pathlib import Path
 
-CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
-
 import pytest
 
 from helpers import docker_available, run_gfal, run_gfal_docker
+
+CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
