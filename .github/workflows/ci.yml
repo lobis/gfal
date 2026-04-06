@@ -379,15 +379,27 @@ jobs:
           install_cmd: |
             dnf install -y --allowerasing epel-release curl dnf-plugins-core
             dnf config-manager --set-enabled crb
-            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
+            curl -fsSL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..18}; do \
+              dnf clean all && \
+              dnf makecache && \
+              dnf repoquery --available python3-gfal && \
+              dnf install -y --allowerasing python3-gfal && break || sleep 10; \
+            done
+            rpm -q python3-gfal
         - name: AlmaLinux 10
           container: almalinux:10
           install_cmd: |
             dnf install -y --allowerasing epel-release curl dnf-plugins-core
             # crb is enabled by default in AlmaLinux 10, but dnf-plugins-core is still good practice
-            curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-            for i in {1..12}; do dnf clean all && dnf install -y --allowerasing python3-gfal && break || sleep 10; done
+            curl -fsSL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
+            for i in {1..18}; do \
+              dnf clean all && \
+              dnf makecache && \
+              dnf repoquery --available python3-gfal && \
+              dnf install -y --allowerasing python3-gfal && break || sleep 10; \
+            done
+            rpm -q python3-gfal
         - name: PyPI
           container: python:3.12-slim
           install_cmd: |
