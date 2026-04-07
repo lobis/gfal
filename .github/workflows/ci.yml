@@ -312,10 +312,25 @@ jobs:
       run: |
         mkdir -p site/rpm/el9/x86_64 site/rpm/el9/aarch64 site/rpm/el10/x86_64 site/rpm/el10/aarch64
 
+        # Publish noarch RPMs to both architecture-specific repos so DNF can
+        # resolve the package from the current baseurl layout, while still
+        # keeping room for arch-specific RPMs in the future.
+        find artifacts/ -name "*el9*noarch.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
+        find artifacts/ -name "*el9*noarch.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
+        find artifacts/ -name "*el10*noarch.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
+        find artifacts/ -name "*el10*noarch.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
+
         find artifacts/ -name "*el9*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/x86_64/ \;
         find artifacts/ -name "*el9*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el9/aarch64/ \;
         find artifacts/ -name "*el10*x86_64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/x86_64/ \;
         find artifacts/ -name "*el10*aarch64.rpm" ! -name "*.src.rpm" -exec cp {} site/rpm/el10/aarch64/ \;
+
+        for d in site/rpm/el*/*/; do
+          test -n "$(find "$d" -maxdepth 1 -name '*.rpm' -print -quit)" || {
+            echo "No RPMs copied into $d"
+            exit 1
+          }
+        done
         for d in site/rpm/el*/*/; do createrepo_c "$d"; done
 
         cat <<EOF > site/rpm/gfal.repo
