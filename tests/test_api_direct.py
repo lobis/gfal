@@ -137,6 +137,40 @@ class TestGfalClientLs:
         entries = client.ls(d.as_uri(), detail=True)
         assert entries == []
 
+    def test_ls_uses_xrootd_listing_enrichment(self):
+        from unittest.mock import MagicMock, patch
+
+        client = GfalClient()
+        mock_fso = MagicMock()
+        mock_fso.info.return_value = {
+            "name": "/data/file.txt",
+            "type": "file",
+            "size": 5,
+        }
+        enriched_entries = [
+            {
+                "name": "/data/file.txt",
+                "type": "file",
+                "size": 5,
+                "nlink": 0,
+                "uid": 0,
+                "gid": 0,
+            }
+        ]
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, "/data")),
+            patch(
+                "gfal.core.api.fs.xrootd_ls_enrich",
+                return_value=enriched_entries,
+            ) as ls_enrich,
+        ):
+            entries = client.ls("root://host//data", detail=True)
+
+        ls_enrich.assert_called_once_with(mock_fso, "/data")
+        assert len(entries) == 1
+        assert entries[0].st_nlink == 0
+
 
 # ---------------------------------------------------------------------------
 # mkdir

@@ -242,7 +242,8 @@ class StatInfo:
 
         self.st_uid = int(info.get("uid") or 0)
         self.st_gid = int(info.get("gid") or 0)
-        self.st_nlink = int(info.get("nlink") or 1)
+        raw_nlink = info.get("nlink")
+        self.st_nlink = int(raw_nlink) if raw_nlink is not None else 1
         self.st_mtime = float(info.get("mtime") or 0)
         self.st_atime = float(info.get("atime") or self.st_mtime)
         self.st_ctime = float(info.get("ctime") or self.st_mtime)

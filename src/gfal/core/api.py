@@ -65,7 +65,7 @@ class GfalClient:
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             try:
-                raw_entries = fso.ls(path, detail=True)
+                raw_entries = fs.xrootd_ls_enrich(fso, path)
             except OSError as e:
                 # XRootD/fsspec fallback for files instead of directories
                 msg = str(e).lower()
@@ -76,7 +76,7 @@ class GfalClient:
                     )
                     or getattr(e, "errno", None) == 20
                 ):
-                    raw_entries = [fso.info(path)]
+                    raw_entries = [fs.xrootd_enrich(fso.info(path), fso)]
                 else:
                     raise
         except Exception as e:
