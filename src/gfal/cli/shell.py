@@ -115,7 +115,7 @@ def _print_gfal_help(to=sys.stdout):
     epilog = "Run 'gfal <command> --help' for more information on a command."
     grp = GroupClass(
         name="gfal",
-        help=f"gfal {base.VERSION} — GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS and XRootD).",
+        help=f"gfal {base.VERSION} — GFAL2-compatible CLI tools based on fsspec (HTTP/HTTPS by default, optional XRootD).",
         epilog=epilog,
     )
     for cmd_name, doc in _all_commands():

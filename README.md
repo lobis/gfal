@@ -7,7 +7,7 @@
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
+A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with optional **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd).
 
 ## Installation
 
@@ -16,6 +16,16 @@ A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lob
 ```bash
 pip install gfal
 ```
+
+This installs the base package with local-file and HTTP/HTTPS support.
+
+### From PyPI with XRootD support
+
+```bash
+pip install 'gfal[xrootd]'
+```
+
+This installs the optional XRootD dependencies: `xrootd` and `fsspec-xrootd`.
 
 ### From Native Repository (Recommended for Updates)
 
@@ -29,6 +39,9 @@ dnf config-manager --set-enabled crb
 curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
 dnf install -y python3-gfal
 ```
+
+The RPM build is currently **HTTP/HTTPS-only**. XRootD support is not bundled in
+the EPEL package because `fsspec-xrootd` is not available there yet.
 
 After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:
 

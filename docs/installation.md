@@ -8,6 +8,18 @@ The easiest way to install `gfal` is via `pip`:
 pip install gfal
 ```
 
+This installs the base package with local-file and HTTP/HTTPS support.
+
+### PyPI with XRootD support
+
+For XRootD support, install the optional extra:
+
+```bash
+pip install 'gfal[xrootd]'
+```
+
+This pulls in both `xrootd` and `fsspec-xrootd`.
+
 ---
 
 ## Native Repositories (Auto-updates)
@@ -25,6 +37,9 @@ curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.rep
 dnf install -y python3-gfal
 ```
 
+The RPM build is currently **HTTP/HTTPS-only**. XRootD support is not bundled in
+the EPEL package because `fsspec-xrootd` is not available in EPEL yet.
+
 ---
 
 ## Direct Download (RPM)
@@ -35,6 +50,9 @@ You can also download individual packages from the [GitHub Releases](https://git
 ```bash
 dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest-el9.rpm
 ```
+
+This RPM has the same support profile as the repository package: HTTP/HTTPS by
+default, without bundled XRootD support.
 
 ## CERN CA Certificates
 

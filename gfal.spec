@@ -7,7 +7,7 @@
 Name: python3-%{base_name}
 Version: %{pkg_version}
 Release: %{pkg_release}%{?dist}
-Summary: Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS and XRootD)
+Summary: Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS by default, optional XRootD)
 License: BSD-3-Clause
 URL: https://github.com/lobis/gfal
 Source0: %{dist_name}-%{version}-py3-none-any.whl
@@ -21,22 +21,26 @@ Requires: python3-aiohttp
 Requires: python3-requests
 Requires: python3-rich
 Requires: python3-click
-Requires: python3-xrootd
 # python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
 %if 0%{?rhel} >= 10
 Requires: python3-fsspec
 %endif
 # Note: python3-truststore is not packaged in EPEL; it is an optional TLS
 #       enhancement and is omitted here (no functional impact).
-# Note: fsspec-xrootd (XRootD fsspec plugin) is not packaged in EPEL.
-#       Install it separately with: pip install fsspec-xrootd
+# Note: XRootD support needs both the xrootd Python bindings and the
+#       fsspec-xrootd plugin. The latter is not currently packaged in EPEL,
+#       so the RPM is published as HTTP/HTTPS-only by default.
 
 AutoReq: no
 
 %description
 gfal (Grid File Access Library) is a pip-installable Python-only rewrite of the
 gfal2-util CLI tools, built on fsspec — no C library required.
-Supports HTTP/HTTPS and XRootD. XRootD support requires python3-xrootd from EPEL.
+Supports HTTP/HTTPS out of the box.
+
+XRootD support is optional and requires both the xrootd Python bindings and the
+fsspec-xrootd plugin. Since fsspec-xrootd is not currently packaged in EPEL,
+the RPM is intentionally published without XRootD runtime dependencies.
 
 %prep
 # Nothing to prep for a pre-built wheel

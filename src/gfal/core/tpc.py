@@ -241,8 +241,8 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
         from XRootD import client as xrd_client  # noqa: PLC0415
     except ImportError as exc:
         raise NotImplementedError(
-            "XRootD Python bindings are not installed; "
-            "install them with: pip install xrootd"
+            "XRootD support is not installed; "
+            "install it with: pip install 'gfal[xrootd]'"
         ) from exc
 
     if verbose:

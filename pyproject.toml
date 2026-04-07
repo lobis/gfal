@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "gfal"
 dynamic = ["version"]
-description = "Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS and XRootD)"
+description = "Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS by default, optional XRootD)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
