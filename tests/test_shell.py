@@ -1,55 +1,8 @@
-"""Tests for shell.py: dispatch, aliases, and error handling."""
+"""Tests for shell.py: dispatch and error handling."""
 
 import pytest
 
-from gfal.cli.shell import _command_from_argv0, _find_command
-
-# ---------------------------------------------------------------------------
-# _command_from_argv0
-# ---------------------------------------------------------------------------
-
-
-class TestCommandFromArgv0:
-    def test_gfal_ls(self):
-        assert _command_from_argv0("gfal-ls") == "ls"
-
-    def test_gfal_cp(self):
-        assert _command_from_argv0("gfal-cp") == "cp"
-
-    def test_gfal_rm(self):
-        assert _command_from_argv0("gfal-rm") == "rm"
-
-    def test_gfal_mkdir(self):
-        assert _command_from_argv0("gfal-mkdir") == "mkdir"
-
-    def test_gfal_stat(self):
-        assert _command_from_argv0("gfal-stat") == "stat"
-
-    def test_gfal_cat(self):
-        assert _command_from_argv0("gfal-cat") == "cat"
-
-    def test_gfal_save(self):
-        assert _command_from_argv0("gfal-save") == "save"
-
-    def test_gfal_rename(self):
-        assert _command_from_argv0("gfal-rename") == "rename"
-
-    def test_gfal_chmod(self):
-        assert _command_from_argv0("gfal-chmod") == "chmod"
-
-    def test_gfal_sum(self):
-        assert _command_from_argv0("gfal-sum") == "sum"
-
-    def test_gfal_xattr(self):
-        assert _command_from_argv0("gfal-xattr") == "xattr"
-
-    def test_full_path(self):
-        """Full path like /usr/local/bin/gfal-ls should still work."""
-        assert _command_from_argv0("/usr/local/bin/gfal-ls") == "ls"
-
-    def test_case_insensitive(self):
-        assert _command_from_argv0("gfal-LS") == "ls"
-
+from gfal.cli.shell import _find_command
 
 # ---------------------------------------------------------------------------
 # _find_command
@@ -91,7 +44,7 @@ class TestMainEntrypoint:
         from helpers import _subprocess_env
 
         script = (
-            "import sys; sys.argv=['gfal-unknown_cmd_xyz']+sys.argv[1:];"
+            "import sys; sys.argv=['gfal', 'unknown_cmd_xyz'];"
             "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
@@ -103,6 +56,26 @@ class TestMainEntrypoint:
         )
         assert proc.returncode != 0
         assert "Unknown command" in proc.stderr
+
+    def test_hyphenated_entrypoint_is_rejected(self):
+        import subprocess
+        import sys
+
+        from helpers import _subprocess_env
+
+        script = (
+            "import sys; sys.argv=['gfal-ls', '/tmp'];"
+            "from gfal.cli.shell import main; main()"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_subprocess_env(),
+        )
+        assert proc.returncode != 0
+        assert "gfal <command>" in proc.stderr
 
 
 # ---------------------------------------------------------------------------

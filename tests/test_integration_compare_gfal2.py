@@ -73,6 +73,8 @@ class TestLegacyGfal2Runtime:
         if ok:
             pytest.skip("Legacy gfal2-utils are usable in this image")
         lowered = reason.lower()
+        if "gfal-stat: command not found" in lowered:
+            pytest.skip("Legacy gfal2-utils are not installed in this Docker image")
         assert "initialization of gfal2 raised unreported exception" in lowered
         assert "boost.python.enum" in lowered
 

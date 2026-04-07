@@ -415,7 +415,7 @@ _COMMAND_OPTION_GROUPS: dict[str, list[dict]] = {
 
 
 def _configure_option_groups(prog_name: str, cmd_suffix: str) -> None:
-    """Populate rich_click.OPTION_GROUPS for *prog_name* (e.g. 'gfal-ls')."""
+    """Populate rich_click.OPTION_GROUPS for *prog_name* (e.g. 'gfal ls')."""
     groups: list[dict] = []
 
     # Command-specific groups (if defined)
@@ -441,8 +441,15 @@ def _build_click_command(method, prog_name, help_text):
     arguments_specs = getattr(method, "arguments", [])
     spec_list = _argparse_to_click_params(list(arguments_specs))
 
-    # Configure option panels for this command
-    cmd_suffix = prog_name.rsplit("-", 1)[-1] if "-" in prog_name else prog_name
+    # Configure option panels for this command.
+    # The supported package interface is "gfal <command>", but some internal
+    # tests also construct command objects with simple program names.
+    if " " in prog_name:
+        cmd_suffix = prog_name.split()[-1]
+    elif "-" in prog_name:
+        cmd_suffix = prog_name.rsplit("-", 1)[-1]
+    else:
+        cmd_suffix = prog_name
     _configure_option_groups(prog_name, cmd_suffix)
 
     params = []
@@ -719,7 +726,7 @@ class CommandBase:
             if isinstance(v, tuple):
                 params_dict[k] = list(v)
 
-        # Fix the src/dst interaction for gfal-cp when --from-file is used.
+        # Fix the src/dst interaction for "gfal cp" when --from-file is used.
         # Click assigns the single positional arg to the optional 'src',
         # leaving 'dst' empty. When 'from_file' is set, we need to move
         # 'src' → 'dst[0]' and set 'src' to None.

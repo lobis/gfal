@@ -1,5 +1,5 @@
 """
-Entry point: maps gfal-<cmd> and `gfal <cmd>` to execute_<cmd> methods.
+Entry point for the supported ``gfal <command>`` CLI.
 """
 
 import contextlib
@@ -70,13 +70,6 @@ def _ensure_xrootd_dylib_path():
     os.execve(sys.executable, [sys.executable] + sys.argv, new_env)
 
 
-# ---------------------------------------------------------------------------
-# Command name → (class, method) resolution
-# ---------------------------------------------------------------------------
-
-_ALIASES = {}
-
-
 def _find_command(cmd):
     method_name = "execute_" + cmd
     for cls in base.CommandBase.__subclasses__():
@@ -84,18 +77,6 @@ def _find_command(cmd):
         if method is not None:
             return cls, method
     raise ValueError(f"Unknown command: {cmd!r}")
-
-
-def _command_from_argv0(argv0):
-    """Extract the command token from the executable name.
-
-    gfal-ls → ls
-    gfal-cp → cp
-    """
-    name = Path(argv0).stem  # .stem strips .exe on Windows
-    # strip leading 'gfal-' prefix
-    token = name.rsplit("-", 1)[1].lower() if "-" in name else name.lower()
-    return _ALIASES.get(token, token)
 
 
 # ---------------------------------------------------------------------------
@@ -169,59 +150,48 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv
 
-    prog_stem = Path(argv[0]).stem  # e.g. "gfal", "gfal-ls", "gfal-cp"
+    prog_stem = Path(argv[0]).stem
 
-    # -----------------------------------------------------------------------
-    # `gfal` (no hyphen) — top-level dispatcher
-    # -----------------------------------------------------------------------
     if prog_stem == "gfal":
-        # No subcommand given -> show help
         if len(argv) < 2:
             _print_gfal_help()
             sys.exit(0)
 
         subcmd = argv[1]
 
-        # gfal --help / gfal -h
         if subcmd in ("-h", "--help"):
             _print_gfal_help()
             sys.exit(0)
 
-        # gfal --version / gfal -V
         if subcmd in ("-V", "--version"):
             sys.stdout.write(f"gfal {base.VERSION}\n")
             sys.exit(0)
 
-        # gfal version  (subcommand form)
         if subcmd == "version":
             sys.stdout.write(f"gfal {base.VERSION}\n")
             sys.exit(0)
 
-        # gfal help  (print help)
         if subcmd == "help":
             _print_gfal_help()
             sys.exit(0)
 
-        # Unknown flag at top level (e.g. `gfal --foo`) — show help
         if subcmd.startswith("-"):
             sys.stderr.write(f"gfal: unknown option: {subcmd}\n\n")
             _print_gfal_help(to=sys.stderr)
             sys.exit(1)
+        try:
+            cls, func = _find_command(subcmd)
+        except ValueError as e:
+            sys.stderr.write(f"{e}\n")
+            sys.exit(1)
 
-        # Rewrite argv so the rest of main() sees `gfal-<subcmd> <rest...>`
-        # This way `gfal ls -l /tmp` behaves exactly like `gfal-ls -l /tmp`.
-        argv = [f"gfal-{subcmd}"] + argv[2:]
+        inst = cls()
+        inst.parse(func, [f"gfal {subcmd}"] + argv[2:])
+        sys.exit(inst.execute(func))
 
-    # -----------------------------------------------------------------------
-    # Standard hyphenated dispatch: gfal-ls, gfal-cp, …
-    # -----------------------------------------------------------------------
-    try:
-        cmd = _command_from_argv0(argv[0])
-        cls, func = _find_command(cmd)
-    except ValueError as e:
-        sys.stderr.write(f"{e}\n")
-        sys.exit(1)
-
-    inst = cls()
-    inst.parse(func, argv)
-    sys.exit(inst.execute(func))
+    sys.stderr.write(
+        "This package exposes the CLI as 'gfal <command>', not as hyphenated "
+        f"executables like '{Path(argv[0]).name}'. Use a shell alias if you need "
+        "that form.\n"
+    )
+    sys.exit(1)
