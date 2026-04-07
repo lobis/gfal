@@ -239,7 +239,7 @@ class TestErrorOutput:
 
         rc, out, err = run_gfal("stat", (tmp_path / "missing").as_uri())
         assert rc != 0
-        assert err.startswith("gfal-stat:")
+        assert err.startswith("gfal stat:")
 
 
 # ---------------------------------------------------------------------------
