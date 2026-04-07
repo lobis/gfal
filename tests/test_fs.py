@@ -117,6 +117,10 @@ class TestStatInfo:
         si = StatInfo({"nlink": 3})
         assert si.st_nlink == 3
 
+    def test_zero_nlink_is_preserved(self):
+        si = StatInfo({"nlink": 0})
+        assert si.st_nlink == 0
+
     def test_default_timestamps(self):
         si = StatInfo({})
         assert si.st_mtime == 0.0

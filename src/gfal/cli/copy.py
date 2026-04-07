@@ -218,8 +218,10 @@ class CommandCopy(base.CommandBase):
                         jobs.append((src, dst))
         elif self.params.src:
             s = self.params.src
-            for dst in self.params.dst:
+            for idx, dst in enumerate(self.params.dst):
                 jobs.append((s, dst))
+                if idx == len(self.params.dst) - 1:
+                    continue
                 # Chain: if dst is a dir the actual destination will be dst/basename(s),
                 # otherwise s becomes dst for the next hop.
                 try:
@@ -276,6 +278,21 @@ class CommandCopy(base.CommandBase):
         src_info = src_fs.info(src_path)
         src_st = fs.StatInfo(src_info)
         src_isdir = stat.S_ISDIR(src_st.st_mode)
+
+        # Fail fast for explicit --tpc-only when the protocol pair can never
+        # support third-party copy. This avoids slow destination probes for
+        # cases like file:// -> https:// that should be rejected immediately.
+        if (
+            getattr(self.params, "tpc_only", False)
+            and not self.params.dry_run
+            and not _tpc_applicable(src_url, dst_url)
+        ):
+            src_scheme = urlparse(src_url).scheme.lower()
+            dst_scheme = urlparse(dst_url).scheme.lower()
+            raise OSError(
+                "Third-party copy required (--tpc-only) but not available: "
+                f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
+            )
 
         dst_isdir = False
         dst_exists = False

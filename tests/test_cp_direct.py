@@ -7,6 +7,7 @@ in the pytest process.
 
 import sys
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +21,7 @@ from gfal.cli.copy import (
     _tpc_applicable,
     _update_hasher,
 )
+from gfal.core import fs
 
 
 def _make_cmd():
@@ -109,6 +111,24 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
         assert rc == 0
         assert (dstdir / "src.txt").read_bytes() == b"hello"
+
+    def test_single_destination_skips_chain_probe(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"hello")
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=["https://example.com/dst"])
+
+        with (
+            patch("gfal.cli.copy.fs.stat") as mock_stat,
+            patch.object(cmd, "_do_copy", return_value=None) as mock_do_copy,
+        ):
+            rc = cmd.execute_cp()
+
+        assert rc == 0
+        mock_stat.assert_not_called()
+        mock_do_copy.assert_called_once_with(
+            src.as_uri(), "https://example.com/dst", {}
+        )
 
     def test_copy_force_overwrites(self, tmp_path, capsys):
         src = tmp_path / "src.txt"
@@ -510,3 +530,32 @@ class TestTransferTimeout:
         rc = cmd.execute_cp()
         assert rc == 0
         assert dst.read_bytes() == b"hello world"
+
+
+class TestTpcOnlyPreflight:
+    def test_tpc_only_unsupported_pair_skips_destination_probe(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=["https://example.com/dst"],
+            tpc_only=True,
+        )
+
+        src_fs, src_path = fs.url_to_fs(src.as_uri())
+        mock_dst_fs = MagicMock()
+
+        def _url_to_fs_side_effect(url, opts=None):
+            if url == src.as_uri():
+                return src_fs, src_path
+            return mock_dst_fs, "/dst"
+
+        with (
+            patch("gfal.cli.copy.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            pytest.raises(OSError, match="TPC not supported for file:// -> https://"),
+        ):
+            cmd._do_copy(src.as_uri(), "https://example.com/dst", {})
+
+        mock_dst_fs.info.assert_not_called()
