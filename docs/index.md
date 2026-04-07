@@ -55,20 +55,27 @@ After installation the `gfal` command is available on your `PATH`. Run `gfal --h
 ## Quick start
 
 All commands accept any URL that fsspec understands. Local paths must be given as `file://` URIs.
+If you installed only `pip install gfal`, start with the `https://` examples below.
+The `root://` examples require `pip install 'gfal[xrootd]'`.
 
 ```bash
-# Stat a remote file (HTTPS)
-gfal stat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root
+# Stat a real EOS public file (HTTPS)
+gfal stat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
 
-# Compute a checksum (XRootD)
-gfal sum root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root ADLER32
+# List a real EOS public directory (XRootD)
+gfal ls root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-photons/
 
-# Copy a remote file to local
-gfal cp root://eospublic.cern.ch//eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root file:///tmp/higgs.root
+# Compute a checksum for the same file
+gfal sum https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C MD5
 
-# Cat a remote file (first 100 bytes)
-gfal cat https://eospublic.cern.ch:8444/eos/opendata/cms/derived-data/AOD2NanoAODOutreachTool/ForHiggsTo4Leptons/SMHiggsToZZTo4L.root | head -c 100
+# Copy the file to /tmp
+gfal cp https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C file:///tmp/single_cluster_r5.C
+
+# Peek at the first few lines
+gfal cat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C | head -n 5
 ```
+
+For a larger set of verified examples, see [EOS Public Examples](eospublic-examples.md).
 
 ## Command reference
 
