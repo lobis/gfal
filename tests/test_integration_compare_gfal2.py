@@ -14,7 +14,13 @@ from uuid import uuid4
 
 import pytest
 
-from helpers import docker_available, run_gfal, run_gfal2_docker, run_gfal_docker
+from helpers import (
+    _docker_run_command,
+    docker_available,
+    run_gfal,
+    run_gfal2_docker,
+    run_gfal_docker,
+)
 from test_integration_eospilot import _PILOT_BASE, _PUBSRC, _find_proxy
 
 pytestmark = [pytest.mark.integration, pytest.mark.network]
@@ -57,6 +63,29 @@ def _unique_pilot_path(stem: str) -> str:
     return f"{_PILOT_BASE}/{stem}-{uuid4().hex}"
 
 
+def _copy_preserves_mtime_in_docker(command: str) -> tuple[int, bool, str]:
+    script = f"""
+set -e
+rm -rf /tmp/gfal-src
+rm -f /tmp/gfal-copy-src /tmp/gfal-copy-dst
+printf 'mtime test\\n' >/tmp/gfal-copy-src
+touch -t 200001010000 /tmp/gfal-copy-src
+{command}
+python3 - <<'PY'
+from pathlib import Path
+
+src = Path('/tmp/gfal-copy-src')
+dst = Path('/tmp/gfal-copy-dst')
+print(int(src.stat().st_mtime) == int(dst.stat().st_mtime))
+PY
+"""
+    rc, out, err = _docker_run_command(script)
+    preserved = (
+        out.strip().splitlines()[-1] == "True" if rc == 0 and out.strip() else False
+    )
+    return rc, preserved, err or out
+
+
 requires_docker = pytest.mark.skipif(
     not docker_available(), reason="Docker image xrootd-cern-test not available"
 )
@@ -77,6 +106,26 @@ class TestLegacyGfal2Runtime:
             pytest.skip("Legacy gfal2-utils are not installed in this Docker image")
         assert "initialization of gfal2 raised unreported exception" in lowered
         assert "boost.python.enum" in lowered
+
+    def test_copy_does_not_preserve_mtime(self):
+        new_cmd = (
+            "cp -r /repo /tmp/gfal-src && "
+            "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
+        )
+        rc_new, new_preserved, err_new = _copy_preserves_mtime_in_docker(new_cmd)
+        assert rc_new == 0, err_new
+        assert not new_preserved
+
+        _xfail_if_legacy_unusable()
+        rc_old, old_preserved, err_old = _copy_preserves_mtime_in_docker(
+            "GFAL_PYTHONBIN=/usr/bin/python3.9 "
+            "gfal-copy file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
+        )
+        if rc_old != 0 and "gfal-copy: command not found" in err_old.lower():
+            pytest.xfail("Legacy gfal2-utils are not installed in this Docker image")
+        assert rc_old == 0, err_old
+        assert not old_preserved
 
 
 @requires_docker

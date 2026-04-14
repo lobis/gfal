@@ -54,6 +54,17 @@ class TestCopyBasic:
         assert rc != 0
         assert not dst.exists()
 
+    def test_copy_preserve_times_file(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        rc, out, err = run_gfal("cp", "--preserve-times", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) == 946684800
+
 
 # ---------------------------------------------------------------------------
 # Copy to directory
@@ -113,6 +124,29 @@ class TestCopyOverwrite:
 
         assert rc == 0
         assert dst.read_bytes() == b"new content"
+
+    def test_skip_if_same_skips_existing_match(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"same content")
+        dst.write_bytes(b"same content")
+
+        rc, out, err = run_gfal("cp", "--skip-if-same", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"same content"
+        assert "matching ADLER32 checksum" in out
+
+    def test_skip_if_same_still_fails_on_mismatch(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new content")
+        dst.write_bytes(b"old content")
+
+        rc, out, err = run_gfal("cp", "--skip-if-same", src.as_uri(), dst.as_uri())
+
+        assert rc != 0
+        assert "exists and --force not set" in err
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +210,31 @@ class TestCopyRecursive:
         assert (dstdir / "sub1" / "b.txt").read_text() == "b"
         assert (dstdir / "sub1" / "sub2" / "c.txt").read_text() == "c"
 
+    def test_recursive_preserve_times(self, tmp_path):
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        subdir = srcdir / "sub"
+        subdir.mkdir()
+        top = srcdir / "top.txt"
+        child = subdir / "child.txt"
+        top.write_text("top")
+        child.write_text("child")
+        os.utime(top, (946688460, 946688460))
+        os.utime(child, (981173100, 981173100))
+        os.utime(subdir, (946684740, 946684740))
+        os.utime(srcdir, (946684680, 946684680))
+        dstdir = tmp_path / "dstdir"
+
+        rc, out, err = run_gfal(
+            "cp", "-r", "--preserve-times", srcdir.as_uri(), dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert int((dstdir / "top.txt").stat().st_mtime) == 946688460
+        assert int((dstdir / "sub" / "child.txt").stat().st_mtime) == 981173100
+        assert int((dstdir / "sub").stat().st_mtime) == 946684740
+        assert int(dstdir.stat().st_mtime) == 946684680
+
     def test_dir_skipped_without_recursive(self, tmp_path):
         """Reference: test_copy_dir — copying a directory without -r is skipped."""
         srcdir = tmp_path / "srcdir"
@@ -187,6 +246,24 @@ class TestCopyRecursive:
         assert rc == 0
         assert not dstdir.exists()
         assert "Skipping directory" in out or "skip" in out.lower()
+
+    def test_recursive_skip_if_same(self, tmp_path):
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        (srcdir / "same.txt").write_bytes(b"same")
+        (srcdir / "new.txt").write_bytes(b"new")
+
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+        (dstdir / "same.txt").write_bytes(b"same")
+
+        rc, out, err = run_gfal(
+            "cp", "-r", "--skip-if-same", srcdir.as_uri(), dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert (dstdir / "same.txt").read_bytes() == b"same"
+        assert (dstdir / "new.txt").read_bytes() == b"new"
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +659,18 @@ class TestCopyCopyMode:
         assert rc == 0
         combined = out + err
         assert "copy-mode" in combined
+
+    def test_preserve_times_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "preserve-times" in combined
+
+    def test_skip_if_same_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "skip-if-same" in combined
 
 
 # ---------------------------------------------------------------------------

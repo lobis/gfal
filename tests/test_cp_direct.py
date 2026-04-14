@@ -5,6 +5,7 @@ SimpleNamespace) to avoid subprocess overhead and ensure coverage is collected
 in the pytest process.
 """
 
+import os
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -42,7 +43,9 @@ def _default_params(**kwargs):
         "parent": False,
         "checksum": None,
         "checksum_mode": "both",
+        "skip_if_same": False,
         "recursive": False,
+        "preserve_times": False,
         "from_file": None,
         "dry_run": False,
         "abort_on_failure": False,
@@ -140,6 +143,65 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
         assert rc == 0
         assert dst.read_bytes() == b"new content"
+
+    def test_copy_skip_if_same_skips_existing_match(self, tmp_path, capsys):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"same content")
+        dst.write_bytes(b"same content")
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            skip_if_same=True,
+        )
+
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert dst.read_bytes() == b"same content"
+        out = capsys.readouterr().out
+        assert "matching ADLER32 checksum" in out
+
+    def test_copy_skip_if_same_still_fails_on_mismatch(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new content")
+        dst.write_bytes(b"old content")
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            skip_if_same=True,
+        )
+
+        rc = cmd.execute_cp()
+
+        assert rc != 0
+
+    def test_copy_recursive_skip_if_same(self, tmp_path):
+        src = tmp_path / "srcdir"
+        src.mkdir()
+        (src / "same.txt").write_bytes(b"same")
+        (src / "new.txt").write_bytes(b"new")
+
+        dst = tmp_path / "dstdir"
+        dst.mkdir()
+        (dst / "same.txt").write_bytes(b"same")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            skip_if_same=True,
+        )
+
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert (dst / "same.txt").read_bytes() == b"same"
+        assert (dst / "new.txt").read_bytes() == b"new"
 
     def test_copy_no_force_fails_if_dst_exists(self, tmp_path):
         src = tmp_path / "src.txt"
@@ -311,6 +373,53 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
         assert rc == 0
         assert dst.read_bytes() == b"hello"
+
+    def test_copy_preserve_times_file(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            preserve_times=True,
+        )
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) == 946684800
+
+    def test_copy_preserve_times_recursive(self, tmp_path):
+        src = tmp_path / "srcdir"
+        src.mkdir()
+        nested = src / "sub"
+        nested.mkdir()
+        top = src / "top.txt"
+        child = nested / "child.txt"
+        top.write_text("top")
+        child.write_text("child")
+        os.utime(top, (946688460, 946688460))
+        os.utime(child, (981173100, 981173100))
+        os.utime(nested, (946684740, 946684740))
+        os.utime(src, (946684680, 946684680))
+
+        dst = tmp_path / "dstdir"
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            preserve_times=True,
+        )
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert int((dst / "top.txt").stat().st_mtime) == 946688460
+        assert int((dst / "sub" / "child.txt").stat().st_mtime) == 981173100
+        assert int((dst / "sub").stat().st_mtime) == 946684740
+        assert int(dst.stat().st_mtime) == 946684680
 
 
 # ---------------------------------------------------------------------------
