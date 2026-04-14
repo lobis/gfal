@@ -86,6 +86,25 @@ PY
     return rc, preserved, err or out
 
 
+def _copy_existing_dst_error_in_docker(command: str) -> tuple[int, str]:
+    script = f"""
+set -e
+rm -f /tmp/gfal-copy-src /tmp/gfal-copy-dst
+printf 'src\\n' >/tmp/gfal-copy-src
+printf 'dst\\n' >/tmp/gfal-copy-dst
+set +e
+{command} >/tmp/copy.out 2>/tmp/copy.err
+rc=$?
+set -e
+printf '%s\\n' "$rc"
+cat /tmp/copy.err
+"""
+    rc, out, err = _docker_run_command(script)
+    assert rc == 0, err or out
+    lines = out.splitlines()
+    return int(lines[0]), "\n".join(lines[1:])
+
+
 requires_docker = pytest.mark.skipif(
     not docker_available(), reason="Docker image xrootd-cern-test not available"
 )
@@ -97,15 +116,11 @@ requires_proxy = pytest.mark.skipif(
 
 @requires_docker
 class TestLegacyGfal2Runtime:
-    def test_legacy_probe_reports_known_alma_runtime_issue(self):
+    def test_legacy_probe_reports_usable_runtime(self):
         ok, reason = _legacy_gfal2_probe()
-        if ok:
-            pytest.skip("Legacy gfal2-utils are usable in this image")
-        lowered = reason.lower()
-        if "gfal-stat: command not found" in lowered:
+        if not ok and "gfal-stat: command not found" in reason.lower():
             pytest.skip("Legacy gfal2-utils are not installed in this Docker image")
-        assert "initialization of gfal2 raised unreported exception" in lowered
-        assert "boost.python.enum" in lowered
+        assert ok, reason
 
     def test_copy_does_not_preserve_mtime(self):
         new_cmd = (
@@ -126,6 +141,23 @@ class TestLegacyGfal2Runtime:
             pytest.xfail("Legacy gfal2-utils are not installed in this Docker image")
         assert rc_old == 0, err_old
         assert not old_preserved
+
+    def test_copy_overwrite_error_matches_legacy(self):
+        rc_new, err_new = _copy_existing_dst_error_in_docker(
+            "cp -r /repo /tmp/gfal-src && "
+            "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
+        )
+        assert rc_new == 17
+        assert "exists and overwrite is not set" in err_new
+
+        _xfail_if_legacy_unusable()
+        rc_old, err_old = _copy_existing_dst_error_in_docker(
+            "GFAL_PYTHONBIN=/usr/bin/python3.9 "
+            "gfal-copy file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
+        )
+        assert rc_old == 17
+        assert "exists and overwrite is not set" in err_old
 
 
 @requires_docker
@@ -292,3 +324,33 @@ class TestCompareEosPilot:
         finally:
             run_gfal("rm", "-E", proxy, "--no-verify", source)
             run_gfal("rm", "-E", proxy, "--no-verify", dest)
+
+    def test_save_and_rm_with_env_proxy_matches_legacy(self):
+        """Guard the env-proxy path used by client-backed commands like rm."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        remote = _unique_pilot_path("compare-gfal2-utils-env-proxy-rm.txt")
+        payload = "remove me via env proxy\n"
+
+        rc_new, out_new, err_new = run_gfal_docker(
+            "save", remote, proxy_cert=proxy, input=payload
+        )
+        assert rc_new == 0, err_new
+
+        try:
+            rc_old_stat, out_old_stat, err_old_stat = run_gfal2_docker(
+                "stat", remote, proxy_cert=proxy
+            )
+            assert rc_old_stat == 0, err_old_stat
+
+            rc_new_rm, out_new_rm, err_new_rm = run_gfal_docker(
+                "rm", remote, proxy_cert=proxy
+            )
+            assert rc_new_rm == 0, err_new_rm
+
+            rc_old_stat2, out_old_stat2, err_old_stat2 = run_gfal2_docker(
+                "stat", remote, proxy_cert=proxy
+            )
+            assert rc_old_stat2 != 0
+        finally:
+            run_gfal_docker("rm", remote, proxy_cert=proxy)

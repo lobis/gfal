@@ -177,7 +177,7 @@ class TestExecuteCp:
 
         rc = cmd.execute_cp()
 
-        assert rc != 0
+        assert rc == 17
 
     def test_copy_recursive_skip_if_same(self, tmp_path):
         src = tmp_path / "srcdir"
@@ -211,7 +211,7 @@ class TestExecuteCp:
         cmd = _make_cmd()
         cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()], force=False)
         rc = cmd.execute_cp()
-        assert rc != 0
+        assert rc == 17
 
     def test_copy_from_file_and_src_returns_error(self, tmp_path):
         src = tmp_path / "src.txt"

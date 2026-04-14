@@ -78,13 +78,8 @@ X509_USER_PROXY=/tmp/gfal-tmp-proxy ./.venv/bin/python -m pytest tests/test_inte
 
 Expected current behavior in the Alma Docker image:
 - new `gfal` CLI runs successfully
-- legacy `gfal2-utils` currently fail during Python module initialization
-- compare tests are therefore expected to `xfail` rather than fail hard
-
-Typical legacy failure mode:
-
-- `SystemError: initialization of gfal2 raised unreported exception`
-- involving `Boost.Python.enum`
+- legacy `gfal2-utils` are usable for the comparison tests in this image
+- the compare suite should exercise both command families directly rather than `xfail`ing
 
 ## How the proxy reaches Docker
 
@@ -107,7 +102,5 @@ That means exporting `X509_USER_PROXY` in the host shell is enough for:
 With `X509_USER_PROXY=/tmp/gfal-tmp-proxy` exported:
 
 ```text
-72 passed, 26 skipped, 9 xfailed
+the compare suite should run real legacy-vs-new command checks in the Docker image
 ```
-
-The `xfail`s are currently due to the legacy `gfal2` runtime in the Alma image, not missing EOSPilot credentials.

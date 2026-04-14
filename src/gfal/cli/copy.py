@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from gfal.cli import base
 from gfal.cli.progress import Progress
 from gfal.core import fs
+from gfal.core.errors import GfalFileExistsError
 
 
 class CommandCopy(base.CommandBase):
@@ -257,8 +258,9 @@ class CommandCopy(base.CommandBase):
                 else:
                     self._do_copy(src, dst, opts)
             except Exception as e:
-                sys.stderr.write(f"ERROR: {e}\n")
-                rc = 1
+                self._print_error(e)
+                ecode = getattr(e, "errno", None)
+                rc = ecode if ecode and 0 < ecode <= 255 else 1
                 if self.params.abort_on_failure:
                     return rc
 
@@ -327,8 +329,8 @@ class CommandCopy(base.CommandBase):
                         src_fs, src_path, dst_fs, dst_path, dst_url
                     ):
                         return
-                    raise FileExistsError(
-                        f"Destination '{dst_url}' exists and --force not set"
+                    raise GfalFileExistsError(
+                        f"Destination {dst_url} exists and overwrite is not set"
                     )
 
             if dst_exists and not dst_isdir and src_isdir:

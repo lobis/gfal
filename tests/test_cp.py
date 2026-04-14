@@ -111,8 +111,9 @@ class TestCopyOverwrite:
 
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
-        assert rc != 0
+        assert rc == 17
         assert dst.read_bytes() == b"old content"
+        assert "exists and overwrite is not set" in err
 
     def test_force_overwrite(self, tmp_path):
         src = tmp_path / "src.txt"
@@ -145,8 +146,8 @@ class TestCopyOverwrite:
 
         rc, out, err = run_gfal("cp", "--skip-if-same", src.as_uri(), dst.as_uri())
 
-        assert rc != 0
-        assert "exists and --force not set" in err
+        assert rc == 17
+        assert "exists and overwrite is not set" in err
 
 
 # ---------------------------------------------------------------------------

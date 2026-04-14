@@ -374,7 +374,7 @@ cat /tmp/rm.err >&2
         assert rc == 0, err
         assert "matching ADLER32 checksum" in out
         assert "MISMATCH_RC=1" in out
-        assert "exists and --force not set" in err
+        assert "exists and overwrite is not set" in err
         assert "same-content" in out
 
 
