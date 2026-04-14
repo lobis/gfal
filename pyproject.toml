@@ -29,7 +29,7 @@ rich-click = [
     "rich-click>=1.7.0",
 ]
 tui = [
-    "textual>=0.50.0",
+    "textual>=8.2.3",
 ]
 xrootd = [
     "fsspec-xrootd>=0.5.1",
@@ -37,7 +37,7 @@ xrootd = [
 ]
 all = [
     "rich-click>=1.7.0",
-    "textual>=0.50.0",
+    "textual>=8.2.3",
     "fsspec-xrootd>=0.5.1",
     "xrootd>=5.9.2",
 ]
