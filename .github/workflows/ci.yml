@@ -469,17 +469,20 @@ jobs:
         - name: PyPI
           container: python:3.12-slim
           install_cmd: |
-            for i in {1..12}; do pip install --no-cache-dir gfal && break || sleep 10; done
+            for i in {1..18}; do \
+              pip install --no-cache-dir "gfal==$EXPECTED_VERSION" && break || sleep 10; \
+            done
     container: ${{ matrix.target.container }}
     steps:
     - name: Install and Verify
       run: |
+        EXPECTED_VERSION=${{ github.ref_name }}
+        EXPECTED_VERSION=${EXPECTED_VERSION#v}
+        export EXPECTED_VERSION
         ${{ matrix.target.install_cmd }}
         export PATH=$PATH:/usr/local/bin
         command -v gfal || exit 1
         INSTALLED_VERSION=$(gfal --version | awk '{print $NF}')
-        EXPECTED_VERSION=${{ github.ref_name }}
-        EXPECTED_VERSION=${EXPECTED_VERSION#v}
         if [ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]; then
           echo "❌ Version mismatch: $INSTALLED_VERSION != $EXPECTED_VERSION"
           exit 1
