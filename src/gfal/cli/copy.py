@@ -4,6 +4,7 @@ gfal cp implementation.
 
 import contextlib
 import hashlib
+import os
 import stat
 import sys
 import threading
@@ -43,7 +44,18 @@ class CommandCopy(base.CommandBase):
         help="which side(s) to verify the checksum on",
     )
     @base.arg(
+        "--skip-if-same",
+        action="store_true",
+        help="when destination exists and --force is not set, compare checksums "
+        "and skip the copy if source and destination already match",
+    )
+    @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
+    )
+    @base.arg(
+        "--preserve-times",
+        action="store_true",
+        help="preserve source access and modification times when supported",
     )
     @base.arg(
         "--from-file",
@@ -206,6 +218,7 @@ class CommandCopy(base.CommandBase):
                 )
 
         opts = fs.build_storage_options(self.params)
+        self._preserve_times_warned = set()
 
         # Build list of (source, destination) pairs
         jobs = []
@@ -310,6 +323,10 @@ class CommandCopy(base.CommandBase):
                 # written to without --force — they don't hold persistent data.
                 _is_special = _is_special_file(dst_path)
                 if not _is_special:
+                    if self._existing_file_matches_source(
+                        src_fs, src_path, dst_fs, dst_path, dst_url
+                    ):
+                        return
                     raise FileExistsError(
                         f"Destination '{dst_url}' exists and --force not set"
                     )
@@ -329,6 +346,7 @@ class CommandCopy(base.CommandBase):
             self._recursive_copy(
                 src_url, src_fs, src_path, dst_url, dst_fs, dst_path, opts
             )
+            self._preserve_times(src_st, dst_url, dst_path)
             return
 
         # Resolve destination if it is a directory
@@ -465,7 +483,7 @@ class CommandCopy(base.CommandBase):
                         dst_url,
                         dst_fs,
                         dst_path,
-                        src_st.st_size,
+                        src_st,
                     )
                 except Exception as e:
                     exc_holder[0] = e
@@ -481,7 +499,7 @@ class CommandCopy(base.CommandBase):
                 raise exc_holder[0]
         else:
             self._copy_file(
-                src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st.st_size
+                src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st
             )
 
     def _recursive_copy(
@@ -506,10 +524,9 @@ class CommandCopy(base.CommandBase):
                 if self.params.abort_on_failure:
                     raise
 
-    def _copy_file(
-        self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_size
-    ):
+    def _copy_file(self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st):
         """Stream a single file from src to dst with optional progress and checksum."""
+        src_size = src_st.st_size
         if self.params.dry_run:
             print(f"Copy {src_url} => {dst_url}")
             return
@@ -600,6 +617,59 @@ class CommandCopy(base.CommandBase):
                     f"Checksum mismatch after transfer: src={src_checksum} dst={dst_checksum}"
                 )
 
+        self._preserve_times(src_st, dst_url, dst_path)
+
+    def _preserve_times(self, src_st, dst_url, dst_path):
+        if not getattr(self.params, "preserve_times", False):
+            return
+
+        dst_local = _local_destination_path(dst_url, dst_path)
+        if dst_local is None:
+            self._warn_preserve_times_unsupported(dst_url)
+            return
+
+        try:
+            os.utime(
+                dst_local,
+                ns=(
+                    int(src_st.st_atime * 1_000_000_000),
+                    int(src_st.st_mtime * 1_000_000_000),
+                ),
+            )
+        except OSError as e:
+            sys.stderr.write(
+                f"{self.prog}: warning: could not preserve times for {dst_url}: {e}\n"
+            )
+
+    def _warn_preserve_times_unsupported(self, dst_url):
+        normalized = fs.normalize_url(dst_url)
+        scheme = urlparse(normalized).scheme.lower() or "unknown"
+        if scheme in self._preserve_times_warned:
+            return
+        self._preserve_times_warned.add(scheme)
+        sys.stderr.write(
+            f"{self.prog}: warning: --preserve-times is only supported for local "
+            f"destinations; skipping for {scheme} targets\n"
+        )
+
+    def _existing_file_matches_source(
+        self, src_fs, src_path, dst_fs, dst_path, dst_url
+    ):
+        if not getattr(self.params, "skip_if_same", False):
+            return False
+
+        alg = "ADLER32"
+        if self.params.checksum:
+            alg, _ = _parse_checksum_arg(self.params.checksum)
+
+        src_checksum = _checksum_fs(src_fs, src_path, alg)
+        dst_checksum = _checksum_fs(dst_fs, dst_path, alg)
+        if src_checksum != dst_checksum:
+            return False
+
+        print(f"Skipping existing file {dst_url} (matching {alg} checksum)")
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Checksum helpers
@@ -679,3 +749,11 @@ def _checksum_fs(fso, path, alg):
                 break
             _update_hasher(h, alg, chunk)
     return _finalise_hasher(h, alg)
+
+
+def _local_destination_path(dst_url, dst_path):
+    """Return a local destination path when *dst_url* targets file://."""
+    normalized = fs.normalize_url(dst_url)
+    if urlparse(normalized).scheme.lower() != "file":
+        return None
+    return Path(dst_path)

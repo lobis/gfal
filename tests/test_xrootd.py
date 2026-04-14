@@ -228,6 +228,25 @@ class TestXRootDCopy:
         assert rc == 0, err
         assert (data / dst_name).read_bytes() == b"server copy"
 
+    def test_copy_recursive_local_to_xrootd(self, xrootd_server, tmp_path):
+        """Recursively copy a nested local directory to the XRootD server."""
+        src = tmp_path / "srcdir"
+        src.mkdir()
+        (src / "top.txt").write_text("top")
+        nested = src / "nested"
+        nested.mkdir()
+        (nested / "child.txt").write_text("child")
+
+        dst_name = _unique(xrootd_server["data_dir"]).name
+        dst_url = xrootd_server["root_url"] + dst_name
+
+        rc, out, err = run_gfal("cp", "-r", src.as_uri(), dst_url)
+
+        assert rc == 0, err
+        remote_root = xrootd_server["data_dir"] / dst_name
+        assert (remote_root / "top.txt").read_text() == "top"
+        assert (remote_root / "nested" / "child.txt").read_text() == "child"
+
     def test_copy_with_checksum(self, xrootd_server, tmp_path):
         """Copy with ADLER32 checksum verification."""
         src = tmp_path / "src.bin"
