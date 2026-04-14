@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import docker_available, run_gfal, run_gfal_docker
+from helpers import _docker_run_command, docker_available, run_gfal, run_gfal_docker
 
 CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
@@ -103,6 +103,10 @@ requires_proxy = pytest.mark.skipif(
     reason="No X.509 proxy found (set X509_USER_PROXY or run voms-proxy-init)",
 )
 
+requires_docker = pytest.mark.skipif(
+    not docker_available(), reason="Docker image xrootd-cern-test not available"
+)
+
 requires_non_ci_for_flaky_pilot_writes = pytest.mark.skipif(
     CI,
     reason=(
@@ -146,6 +150,15 @@ def pilot_dir(proxy_cert):
 def _run(cmd, proxy_cert, *args):
     """Call run_gfal with the proxy cert and --no-verify flags pre-filled."""
     return run_gfal(cmd, "-E", proxy_cert, "--no-verify", *args)
+
+
+def _run_repo_gfal_docker_script(shell_script, proxy_cert):
+    """Run a shell script in the Docker image after installing the current repo copy."""
+    setup = (
+        "cp -r /repo /tmp/gfal-src && "
+        "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+    )
+    return _docker_run_command(f"{setup}{shell_script}", proxy_cert=proxy_cert)
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +317,65 @@ class TestEosPilotStreamingCopy:
         rc, out, err = _run("cp", proxy_cert, dst, dl.as_uri())
         assert rc == 0, err
         assert dl.read_bytes() == data
+
+
+@requires_eospilot
+@requires_proxy
+@requires_docker
+class TestEosPilotStreamingCopyDocker:
+    def test_preserve_times_warns_and_does_not_preserve_remote_https_mtime(
+        self, proxy_cert
+    ):
+        remote = f"{_PILOT_BASE}/pytest-preserve-times-{uuid.uuid4().hex[:8]}.txt"
+        script = f"""
+set -e
+printf 'preserve times\\n' >/tmp/src.txt
+touch -t 200001010101 /tmp/src.txt
+gfal cp -t 20 --preserve-times file:///tmp/src.txt '{remote}' >/tmp/cp.out 2>/tmp/cp.err
+gfal stat -t 20 '{remote}' >/tmp/stat.out 2>/tmp/stat.err
+gfal rm -t 20 '{remote}' >/tmp/rm.out 2>/tmp/rm.err || true
+cat /tmp/cp.out
+cat /tmp/stat.out
+cat /tmp/cp.err >&2
+cat /tmp/stat.err >&2
+cat /tmp/rm.err >&2
+"""
+        rc, out, err = _run_repo_gfal_docker_script(script, proxy_cert)
+
+        assert rc == 0, err
+        assert "--preserve-times is only supported for local destinations" in err
+        assert "2000-01-01" not in out
+
+    def test_skip_if_same_skips_matching_remote_and_fails_on_mismatch(self, proxy_cert):
+        remote = f"{_PILOT_BASE}/pytest-skip-if-same-{uuid.uuid4().hex[:8]}.txt"
+        script = f"""
+set -e
+printf 'same-content\\n' >/tmp/src.txt
+gfal cp -t 20 file:///tmp/src.txt '{remote}'
+gfal cp -t 20 --skip-if-same file:///tmp/src.txt '{remote}' >/tmp/match.out 2>/tmp/match.err
+printf 'different-content\\n' >/tmp/src2.txt
+set +e
+gfal cp -t 20 --skip-if-same file:///tmp/src2.txt '{remote}' >/tmp/mismatch.out 2>/tmp/mismatch.err
+mismatch_rc=$?
+set -e
+gfal cat '{remote}' >/tmp/final.out 2>/tmp/final.err
+gfal rm -t 20 '{remote}' >/tmp/rm.out 2>/tmp/rm.err || true
+echo "MISMATCH_RC=$mismatch_rc"
+cat /tmp/match.out
+cat /tmp/mismatch.out
+cat /tmp/final.out
+cat /tmp/match.err >&2
+cat /tmp/mismatch.err >&2
+cat /tmp/final.err >&2
+cat /tmp/rm.err >&2
+"""
+        rc, out, err = _run_repo_gfal_docker_script(script, proxy_cert)
+
+        assert rc == 0, err
+        assert "matching ADLER32 checksum" in out
+        assert "MISMATCH_RC=1" in out
+        assert "exists and --force not set" in err
+        assert "same-content" in out
 
 
 # ---------------------------------------------------------------------------
