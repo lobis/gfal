@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from gfal.core import fs
@@ -41,14 +42,16 @@ class GfalClient:
     @property
     def storage_options(self) -> dict[str, Any]:
         """Compute storage options for fsspec based on client configuration."""
-        options = {
-            "client_cert": self.cert,
-            "client_key": self.key,
-            "timeout": self.timeout,
-            "ssl_verify": self.ssl_verify,
-        }
-        # Filter out None values to avoid passing them to fsspec backends that don't expect them
-        return {k: v for k, v in options.items() if v is not None}
+        return fs.build_storage_options(
+            SimpleNamespace(
+                cert=self.cert,
+                key=self.key,
+                timeout=self.timeout,
+                ssl_verify=self.ssl_verify,
+                ipv4_only=False,
+                ipv6_only=False,
+            )
+        )
 
     def stat(self, url: str) -> fs.StatInfo:
         """Get file status."""

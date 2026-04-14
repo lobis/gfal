@@ -187,6 +187,9 @@ def build_storage_options(params):
         opts["ipv4_only"] = True
     if getattr(params, "ipv6_only", False):
         opts["ipv6_only"] = True
+    timeout = getattr(params, "timeout", None)
+    if isinstance(timeout, (int, float)) and timeout > 0:
+        opts["timeout"] = timeout
     if not getattr(params, "ssl_verify", True):
         opts["ssl_verify"] = False
     # Bearer token / macaroon: read from standard WLCG env vars.

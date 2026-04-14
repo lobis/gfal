@@ -685,6 +685,45 @@ class TestWebDAVOpenWrite:
         with _vfs_lock:
             assert "/written.txt" in _vfs
 
+    def test_open_write_uses_configured_timeout(self):
+        from unittest.mock import MagicMock
+
+        fs = WebDAVFileSystem({"timeout": 12})
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        fs._session.put = MagicMock(return_value=mock_resp)
+
+        with fs.open("https://server/upload.bin", "wb") as f:
+            f.write(b"payload")
+
+        fs._session.put.assert_called_once()
+        assert fs._session.put.call_args.kwargs["timeout"] == 12
+
+    def test_open_write_403_maps_to_permission_error(self):
+        from unittest.mock import MagicMock
+
+        fs = WebDAVFileSystem()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        fs._session.put = MagicMock(return_value=mock_resp)
+
+        with (
+            pytest.raises(PermissionError),
+            fs.open("https://server/denied.bin", "wb") as f,
+        ):
+            f.write(b"payload")
+
+    def test_open_write_timeout_maps_to_timeout_error(self):
+        from unittest.mock import MagicMock
+
+        import requests
+
+        fs = WebDAVFileSystem({"timeout": 3})
+        fs._session.put = MagicMock(side_effect=requests.exceptions.Timeout("slow"))
+
+        with pytest.raises(TimeoutError), fs.open("https://server/slow.bin", "wb") as f:
+            f.write(b"payload")
+
     def test_open_read_returns_hello(self, dav_server):
         """open(url, 'rb') should GET and return the mock content."""
         with _vfs_lock:

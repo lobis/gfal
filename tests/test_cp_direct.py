@@ -130,7 +130,7 @@ class TestExecuteCp:
         assert rc == 0
         mock_stat.assert_not_called()
         mock_do_copy.assert_called_once_with(
-            src.as_uri(), "https://example.com/dst", {}
+            src.as_uri(), "https://example.com/dst", {"timeout": 1800}
         )
 
     def test_copy_force_overwrites(self, tmp_path, capsys):

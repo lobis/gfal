@@ -822,6 +822,8 @@ class CommandBase:
         try:
             import requests as _requests
 
+            if isinstance(e, _requests.exceptions.Timeout):
+                return f"{path}: Operation timed out" if path else "Operation timed out"
             if isinstance(e, _requests.exceptions.SSLError):
                 cause = str(e)
                 if "WRONG_VERSION_NUMBER" in cause or "UNKNOWN_PROTOCOL" in cause:

@@ -346,8 +346,10 @@ class _RequestsPutFile(io.RawIOBase):
                         resp = self._session.put(
                             self._url, data=data, timeout=self._timeout
                         )
-                        resp.raise_for_status()
+                        _raise_for_status(resp, self._url)
                         break
+                    except _requests.exceptions.Timeout as e:
+                        raise TimeoutError(self._url) from e
                     except (SSLError, ConnectionError):
                         if attempt == 4:
                             raise

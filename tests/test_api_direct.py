@@ -54,11 +54,35 @@ class TestGfalClientInit:
         assert "client_cert" not in opts
         assert "client_key" not in opts
         assert "timeout" in opts
-        assert "ssl_verify" in opts
+        assert "ssl_verify" not in opts
 
     def test_storage_options_with_cert(self):
         client = GfalClient(cert="/tmp/x.pem", key="/tmp/k.pem")
         opts = client.storage_options
+        assert opts["client_cert"] == "/tmp/x.pem"
+        assert opts["client_key"] == "/tmp/k.pem"
+
+    def test_storage_options_use_x509_proxy_from_env(self, monkeypatch, tmp_path):
+        proxy = tmp_path / "proxy.pem"
+        proxy.write_text("proxy")
+        monkeypatch.setenv("X509_USER_PROXY", str(proxy))
+
+        client = GfalClient()
+        opts = client.storage_options
+
+        assert opts["client_cert"] == str(proxy)
+        assert opts["client_key"] == str(proxy)
+
+    def test_storage_options_explicit_cert_overrides_env_proxy(
+        self, monkeypatch, tmp_path
+    ):
+        proxy = tmp_path / "proxy.pem"
+        proxy.write_text("proxy")
+        monkeypatch.setenv("X509_USER_PROXY", str(proxy))
+
+        client = GfalClient(cert="/tmp/x.pem", key="/tmp/k.pem")
+        opts = client.storage_options
+
         assert opts["client_cert"] == "/tmp/x.pem"
         assert opts["client_key"] == "/tmp/k.pem"
 

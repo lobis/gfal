@@ -331,6 +331,24 @@ class TestBuildStorageOptions:
         opts = build_storage_options(params)
         assert opts["ssl_verify"] is False
 
+    def test_timeout_forwarded(self):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True, timeout=45)
+        opts = build_storage_options(params)
+        assert opts["timeout"] == 45
+
+    def test_timeout_zero_not_forwarded(self):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True, timeout=0)
+        opts = build_storage_options(params)
+        assert "timeout" not in opts
+
     def test_x509_proxy_from_env(self, monkeypatch, tmp_path):
         """X509_USER_PROXY env var is used as client cert when no --cert given."""
         from types import SimpleNamespace
