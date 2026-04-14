@@ -340,7 +340,7 @@ jobs:
         enabled=1
         gpgcheck=0
         EOF
-    - uses: actions/upload-pages-artifact@v4
+    - uses: actions/upload-pages-artifact@v5
       with:
         path: ./site/
     - uses: actions/deploy-pages@v5
