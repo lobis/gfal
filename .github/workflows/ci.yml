@@ -223,6 +223,20 @@ jobs:
           /opt/hostedtoolcache/CodeQL || true
         docker system prune -af --volumes || true
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build deployment test runner image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: docker/Dockerfile.integration-runner
+        load: true
+        platforms: linux/amd64
+        tags: gfal-integration-runner:latest
+        cache-from: type=gha,scope=deployment-integration-runner
+        cache-to: type=gha,mode=max,scope=deployment-integration-runner
+
     - name: Set EOS cache key
       id: eos-version
       run: echo "tag=${EOS_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
@@ -256,6 +270,9 @@ jobs:
           "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}"
         docker rmi "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}" || true
 
+    - name: Load test runner image into kind
+      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
+
     - name: Deploy EOS via Helm chart
       run: |
         helm install eos oci://registry.cern.ch/eos/charts/server \
@@ -283,21 +300,12 @@ jobs:
           sleep 10
         done
 
-    - name: Port-forward EOS endpoints
+    - name: Create EOS proxy secret
+      if: env.X509_USER_PROXY != ''
       run: |
-        kubectl port-forward pod/eos-mgm-0 1094:1094 8443:8443 >/tmp/eos-port-forward.log 2>&1 &
-        for i in $(seq 1 12); do
-          if python -c "import socket, sys; ports=(1094, 8443); sys.exit(any(socket.socket().connect_ex(('127.0.0.1', port)) != 0 for port in ports))"
-          then
-            break
-          fi
-          if [ "$i" -eq 12 ]; then
-            cat /tmp/eos-port-forward.log || true
-            echo "Port-forward did not become ready"
-            exit 1
-          fi
-          sleep 5
-        done
+        kubectl create secret generic eos-proxy \
+          --from-file=x509proxy="${X509_USER_PROXY}" \
+          --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Prepare EOS deployment contract
       env:
@@ -309,8 +317,97 @@ jobs:
         EOS_TEST_KUBECTL_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
         ./scripts/prepare-eos-kind-deployment.sh "gha-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
 
-    - name: Run generic deployment integration tests
-      run: pytest -v -rs tests/test_integration_storage_deployment.py
+    - name: Run generic deployment integration tests inside kind
+      run: |
+        kubectl delete job gfal-eos-tests --ignore-not-found=true
+        cat <<EOF | kubectl apply -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-eos-tests
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              volumes:
+              - name: x509proxy
+                secret:
+                  secretName: eos-proxy
+                  optional: true
+              containers:
+              - name: tests
+                image: gfal-integration-runner:latest
+                imagePullPolicy: Never
+                env:
+                - name: GFAL_DEPLOYMENT_NAME
+                  value: "${GFAL_DEPLOYMENT_NAME}"
+                - name: GFAL_DEPLOYMENT_VERIFY_SSL
+                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
+                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
+                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
+                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
+                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
+                - name: GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE
+                  value: "${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}"
+                - name: GFAL_DEPLOYMENT_ROOT_DENIED_BASE
+                  value: "${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}"
+                - name: GFAL_DEPLOYMENT_PROXY
+                  value: "/tmp/x509proxy"
+                - name: X509_USER_PROXY
+                  value: "/tmp/x509proxy"
+                volumeMounts:
+                - name: x509proxy
+                  mountPath: /tmp/x509proxy
+                  subPath: x509proxy
+                  readOnly: true
+        EOF
+
+        (
+          for _ in $(seq 1 240); do
+            POD=$(kubectl get pod -l job-name=gfal-eos-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "${POD}" ]; then
+              echo "Streaming logs from ${POD}"
+              kubectl logs -f "${POD}" --all-containers=true || true
+              exit 0
+            fi
+            sleep 5
+          done
+        ) &
+        LOG_PID=$!
+
+        wait_for_job() {
+          local job_name=$1
+          local deadline=$(( $(date +%s) + 1200 ))
+          while [ "$(date +%s)" -lt "${deadline}" ]; do
+            succeeded=$(kubectl get job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+            failed=$(kubectl get job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
+            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
+              return 0
+            fi
+            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
+              echo "Job ${job_name} failed"
+              return 1
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for job ${job_name} to finish"
+          return 124
+        }
+
+        if ! wait_for_job gfal-eos-tests; then
+          kill "${LOG_PID}" || true
+          kubectl logs job/gfal-eos-tests --all-containers=true --tail=-1 || true
+          kubectl describe job gfal-eos-tests || true
+          kubectl get pods || true
+          kubectl describe pod -l job-name=gfal-eos-tests || true
+          exit 1
+        fi
+
+        kill "${LOG_PID}" || true
+        kubectl logs job/gfal-eos-tests --all-containers=true --tail=-1
 
     - name: Dump EOS state on failure
       if: failure()
@@ -405,6 +502,23 @@ jobs:
     - name: Deploy dCache via Helm chart
       run: helm install --wait -f ci/dcache-values.yaml store dcache/dcache
 
+    - name: Wait for dCache WebDAV door to accept connections
+      run: |
+        echo "Waiting for dCache WebDAV door on port 8083..."
+        for i in $(seq 1 60); do
+          if kubectl exec store-dcache-door-0 -- \
+               bash -c 'echo > /dev/tcp/localhost/8083' 2>/dev/null; then
+            echo "dCache WebDAV door is ready (attempt ${i})"
+            break
+          fi
+          if [ "${i}" -eq 60 ]; then
+            echo "dCache WebDAV door did not become ready after 10 minutes"
+            kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
+            exit 1
+          fi
+          sleep 10
+        done
+
     - name: Prepare dCache deployment contract
       run: |
         chmod +x scripts/prepare-dcache-kind-deployment.sh
@@ -438,10 +552,6 @@ jobs:
                   value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
                 - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
                   value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
-                - name: GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE
-                  value: "${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}"
-                - name: GFAL_DEPLOYMENT_ROOT_DENIED_BASE
-                  value: "${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}"
         EOF
 
         (

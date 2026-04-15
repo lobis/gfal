@@ -22,7 +22,7 @@ dcache:
     webdav.authn.protocol=https
     webdav.authz.anonymous-operations=FULL
     webdav.redirect.on-write=false
-    webdav.redirect.on-read=true
+    webdav.redirect.on-read=false
 
 services:
   nfs:
