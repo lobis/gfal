@@ -13,7 +13,7 @@ if [[ -n "${EOS_TEST_SSH_TARGET:-}" ]]; then
       eos mkdir -p '${DENIED_PATH}'
       eos chmod 777 '${WRITABLE_PATH}'
       eos chmod 755 '${DENIED_PATH}'
-    "
+    " >/dev/null
 elif [[ -n "${EOS_TEST_KUBECTL_TARGET:-}" ]]; then
     KUBECTL_ARGS=()
     if [[ -n "${EOS_TEST_KUBECTL_NAMESPACE:-}" ]]; then
@@ -29,7 +29,7 @@ elif [[ -n "${EOS_TEST_KUBECTL_TARGET:-}" ]]; then
       eos mkdir -p '${DENIED_PATH}'
       eos chmod 777 '${WRITABLE_PATH}'
       eos chmod 755 '${DENIED_PATH}'
-    "
+    " >/dev/null
 else
     echo "Either EOS_TEST_SSH_TARGET or EOS_TEST_KUBECTL_TARGET must be set" >&2
     exit 1
