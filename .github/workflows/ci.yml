@@ -189,6 +189,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
+      EOS_IMAGE_TAG: 5.4.1.el9
     steps:
     - uses: actions/checkout@v6
 
@@ -217,12 +220,9 @@ jobs:
 
     - name: Pull and save EOS Docker image
       if: steps.cache-eos-image.outputs.cache-hit != 'true'
-      env:
-        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
-        EOS_IMAGE_TAG: 5.4.1.el9
       run: |
-        docker pull ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}
-        docker save ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG} -o /tmp/eos-image.tar
+        docker pull "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}"
+        docker save "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}" -o /tmp/eos-image.tar
 
     - name: Load EOS Docker image from cache
       if: steps.cache-eos-image.outputs.cache-hit == 'true'
@@ -234,19 +234,13 @@ jobs:
       uses: helm/kind-action@v1
 
     - name: Load EOS image into kind
-      env:
-        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
-        EOS_IMAGE_TAG: 5.4.1.el9
       run: |
         kind load docker-image \
           --name chart-testing \
-          ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}
-        docker rmi ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG} || true
+          "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}"
+        docker rmi "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}" || true
 
     - name: Deploy EOS via Helm chart
-      env:
-        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
-        EOS_IMAGE_TAG: 5.4.1.el9
       run: |
         helm install eos oci://registry.cern.ch/eos/charts/server \
           --set "global.repository=${EOS_IMAGE_REPO}" \
@@ -309,8 +303,29 @@ jobs:
             -o PrintMotd=no
         "
 
-        kubectl port-forward pod/eos-mgm-0 2222:2222 1094:1094 8443:8443 &
-        sleep 5
+        kubectl port-forward pod/eos-mgm-0 2222:2222 1094:1094 8443:8443 >/tmp/eos-port-forward.log 2>&1 &
+        for i in $(seq 1 12); do
+          if python - <<'PY'
+        import socket
+        import sys
+
+        ports = (2222, 1094, 8443)
+        for port in ports:
+            with socket.socket() as sock:
+                sock.settimeout(1)
+                if sock.connect_ex(("127.0.0.1", port)) != 0:
+                    sys.exit(1)
+        PY
+          then
+            break
+          fi
+          if [ "$i" -eq 12 ]; then
+            cat /tmp/eos-port-forward.log || true
+            echo "Port-forward did not become ready"
+            exit 1
+          fi
+          sleep 5
+        done
 
         cat >> ~/.ssh/config << 'EOF'
         Host eos-mgm

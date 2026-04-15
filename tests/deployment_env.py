@@ -81,7 +81,7 @@ def run_deployment_gfal(
     config: DeploymentConfig,
     cmd: str,
     *args: str,
-    input: Optional[str] = None,
+    stdin_data: Optional[str] = None,
 ):
     cmd_args = []
     auth_cert = config.cert or config.proxy
@@ -96,4 +96,4 @@ def run_deployment_gfal(
     if config.proxy:
         env = {"X509_USER_PROXY": config.proxy}
 
-    return run_gfal(cmd, *cmd_args, *args, input=input, env=env)
+    return run_gfal(cmd, *cmd_args, *args, input=stdin_data, env=env)

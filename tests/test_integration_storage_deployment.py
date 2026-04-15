@@ -192,7 +192,7 @@ def test_permission_denied_paths_reject_writes(
     src.write_bytes(b"denied\n")
     target = join_remote(denied_base, f"denied-{uuid.uuid4().hex}.bin")
 
-    rc, out, err = run_deployment_gfal(deployment, "cp", src.as_uri(), target)
+    rc, _out, err = run_deployment_gfal(deployment, "cp", src.as_uri(), target)
 
     assert rc != 0
     assert any(marker.lower() in err.lower() for marker in error_markers)

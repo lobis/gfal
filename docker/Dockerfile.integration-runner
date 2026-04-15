@@ -4,6 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1
 
+# Tests run as an unprivileged user by default. If a mounted X.509 credential is
+# only readable by root inside the container, callers can override with
+# `--user root`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
@@ -16,11 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN useradd --create-home --shell /bin/bash --uid 1000 testrunner
+
 WORKDIR /app
 
-COPY . /app
+COPY --chown=testrunner:testrunner . /app
 
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir ".[dev,all]"
+
+USER testrunner
 
 ENTRYPOINT ["pytest", "-v", "-rs", "tests/test_integration_storage_deployment.py"]
