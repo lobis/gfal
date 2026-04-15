@@ -185,7 +185,6 @@ jobs:
 
   deployment-integration:
     name: Deployment Integration (EOS kind)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -350,7 +349,7 @@ jobs:
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, xrootd, integration ]
+    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration ]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
