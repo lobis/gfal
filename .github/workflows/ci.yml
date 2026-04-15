@@ -204,6 +204,20 @@ jobs:
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev,all]"
 
+    - name: Set up EOS service account credentials
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: |
+        CERT_TMPDIR=$(mktemp -d)
+        export CERT_TMPDIR
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem /tmp/x509proxy' EXIT
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
+        grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
+        echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
+
     - name: Free disk space
       run: |
         sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
@@ -319,14 +333,44 @@ jobs:
           /opt/hostedtoolcache/CodeQL || true
         docker system prune -af --volumes || true
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Build deployment test runner image
-      run: docker build --platform linux/amd64 -t gfal-integration-runner -f docker/Dockerfile.integration-runner .
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: docker/Dockerfile.integration-runner
+        load: true
+        platforms: linux/amd64
+        tags: gfal-integration-runner:latest
+        cache-from: type=gha,scope=deployment-integration-runner
+        cache-to: type=gha,mode=max,scope=deployment-integration-runner
 
     - name: Create kind cluster
       uses: helm/kind-action@v1
 
     - name: Load test runner image into kind
       run: kind load docker-image --name chart-testing gfal-integration-runner:latest
+
+    - name: Start dCache progress logger
+      run: |
+        cat > /tmp/k8s-progress.sh <<'SH'
+        set -eu
+        tick=0
+        while true; do
+          tick=$((tick + 1))
+          echo "=== $(date -u +'%Y-%m-%dT%H:%M:%SZ') dCache snapshot ${tick} ==="
+          kubectl get pods -A -o wide || true
+          kubectl get jobs -A || true
+          if [ $((tick % 3)) -eq 0 ]; then
+            kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 30 || true
+          fi
+          sleep 20
+        done
+        SH
+        bash /tmp/k8s-progress.sh &
+        echo $! > /tmp/k8s-progress.pid
 
     - name: Add Helm repositories
       run: |
@@ -397,7 +441,40 @@ jobs:
                   value: "${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}"
         EOF
 
-        if ! kubectl wait --for=condition=complete --timeout=20m job/gfal-dcache-tests; then
+        (
+          for _ in $(seq 1 240); do
+            POD=$(kubectl get pod -l job-name=gfal-dcache-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "${POD}" ]; then
+              echo "Streaming logs from ${POD}"
+              kubectl logs -f "${POD}" --all-containers=true || true
+              exit 0
+            fi
+            sleep 5
+          done
+        ) &
+        LOG_PID=$!
+
+        wait_for_job() {
+          local job_name=$1
+          local deadline=$(( $(date +%s) + 1200 ))
+          while [ "$(date +%s)" -lt "${deadline}" ]; do
+            succeeded=$(kubectl get job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+            failed=$(kubectl get job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
+            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
+              return 0
+            fi
+            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
+              echo "Job ${job_name} failed"
+              return 1
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for job ${job_name} to finish"
+          return 124
+        }
+
+        if ! wait_for_job gfal-dcache-tests; then
+          kill "${LOG_PID}" || true
           kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1 || true
           kubectl describe job gfal-dcache-tests || true
           kubectl get pods || true
@@ -405,6 +482,7 @@ jobs:
           exit 1
         fi
 
+        kill "${LOG_PID}" || true
         kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1
 
     - name: Dump dCache state on failure
@@ -414,6 +492,13 @@ jobs:
         kubectl get svc || true
         kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
         kubectl logs statefulset/store-pool-a --all-containers=true --tail=100 || true
+
+    - name: Stop dCache progress logger
+      if: always()
+      run: |
+        if [ -f /tmp/k8s-progress.pid ]; then
+          kill "$(cat /tmp/k8s-progress.pid)" || true
+        fi
 
   deployment-integration-storm:
     name: Deployment Integration (StoRM kind)
@@ -431,14 +516,44 @@ jobs:
           /opt/hostedtoolcache/CodeQL || true
         docker system prune -af --volumes || true
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Build deployment test runner image
-      run: docker build --platform linux/amd64 -t gfal-integration-runner -f docker/Dockerfile.integration-runner .
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: docker/Dockerfile.integration-runner
+        load: true
+        platforms: linux/amd64
+        tags: gfal-integration-runner:latest
+        cache-from: type=gha,scope=deployment-integration-runner
+        cache-to: type=gha,mode=max,scope=deployment-integration-runner
 
     - name: Create kind cluster
       uses: helm/kind-action@v1
 
     - name: Load test runner image into kind
       run: kind load docker-image --name chart-testing gfal-integration-runner:latest
+
+    - name: Start StoRM progress logger
+      run: |
+        cat > /tmp/k8s-progress.sh <<'SH'
+        set -eu
+        tick=0
+        while true; do
+          tick=$((tick + 1))
+          echo "=== $(date -u +'%Y-%m-%dT%H:%M:%SZ') StoRM snapshot ${tick} ==="
+          kubectl get pods -A -o wide || true
+          kubectl get jobs -A || true
+          if [ $((tick % 3)) -eq 0 ]; then
+            kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 30 || true
+          fi
+          sleep 20
+        done
+        SH
+        bash /tmp/k8s-progress.sh &
+        echo $! > /tmp/k8s-progress.pid
 
     - name: Clone StoRM WebDAV deployment chart
       run: git clone --depth=1 https://gitlab.com/ska-telescope/src/src-dm/ska-src-dm-storm-webdav-deployment.git /tmp/storm-webdav-deployment
@@ -461,6 +576,7 @@ jobs:
         helm install storm /tmp/storm-webdav-deployment/etc/helm \
           --namespace storm \
           --values ci/storm-values.yaml \
+          --debug \
           --timeout 20m \
           --wait
 
@@ -500,7 +616,41 @@ jobs:
                   value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
         EOF
 
-        if ! kubectl wait -n storm --for=condition=complete --timeout=20m job/gfal-storm-tests; then
+        (
+          for _ in $(seq 1 240); do
+            POD=$(kubectl get pod -n storm -l job-name=gfal-storm-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "${POD}" ]; then
+              echo "Streaming logs from ${POD}"
+              kubectl logs -n storm -f "${POD}" --all-containers=true || true
+              exit 0
+            fi
+            sleep 5
+          done
+        ) &
+        LOG_PID=$!
+
+        wait_for_job() {
+          local namespace=$1
+          local job_name=$2
+          local deadline=$(( $(date +%s) + 1200 ))
+          while [ "$(date +%s)" -lt "${deadline}" ]; do
+            succeeded=$(kubectl get -n "${namespace}" job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+            failed=$(kubectl get -n "${namespace}" job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
+            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
+              return 0
+            fi
+            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
+              echo "Job ${namespace}/${job_name} failed"
+              return 1
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for job ${namespace}/${job_name} to finish"
+          return 124
+        }
+
+        if ! wait_for_job storm gfal-storm-tests; then
+          kill "${LOG_PID}" || true
           kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1 || true
           kubectl describe -n storm job gfal-storm-tests || true
           kubectl get pods -n storm || true
@@ -508,6 +658,7 @@ jobs:
           exit 1
         fi
 
+        kill "${LOG_PID}" || true
         kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1
 
     - name: Dump StoRM state on failure
@@ -515,7 +666,22 @@ jobs:
       run: |
         kubectl get pods -n storm || true
         kubectl get svc -n storm || true
-        kubectl logs -n storm deployment/storm-webdav --all-containers=true --tail=100 || true
+        kubectl get events -n storm --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+        kubectl describe pod -n storm -l app=storm-webdav || true
+        POD=$(kubectl get pod -n storm -l app=storm-webdav -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        if [ -n "${POD}" ]; then
+          kubectl logs -n storm "${POD}" -c storm-webdav --tail=200 || true
+          kubectl logs -n storm "${POD}" -c storm-webdav --previous --tail=200 || true
+          kubectl logs -n storm "${POD}" -c prepare-ca-certificates --tail=200 || true
+          kubectl logs -n storm "${POD}" -c change-ownership-of-sa-to-storm-user --tail=200 || true
+        fi
+
+    - name: Stop StoRM progress logger
+      if: always()
+      run: |
+        if [ -f /tmp/k8s-progress.pid ]; then
+          kill "$(cat /tmp/k8s-progress.pid)" || true
+        fi
 
   # ---------------------------------------------------------------------------
   # 2. Packaging

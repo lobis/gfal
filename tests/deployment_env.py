@@ -84,10 +84,9 @@ def run_deployment_gfal(
     stdin_data: Optional[str] = None,
 ):
     cmd_args = []
-    auth_cert = config.cert or config.proxy
-    if auth_cert:
-        cmd_args.extend(["-E", auth_cert])
-    if config.key and config.key != auth_cert:
+    if config.cert:
+        cmd_args.extend(["-E", config.cert])
+    if config.key and config.key != config.cert:
         cmd_args.extend(["--key", config.key])
     if not config.verify_ssl:
         cmd_args.append("--no-verify")
