@@ -6,6 +6,7 @@ This document describes the deployment-backed integration contract used by
 The goal is to let the same `gfal` integration suite run against:
 
 - EOS deployments that we stand up ourselves in CI
+- StoRM WebDAV deployments that we stand up ourselves in CI
 - dCache deployments run by the dCache team in their GitLab/Kubernetes setup
 - local or ad-hoc deployment environments
 
@@ -26,6 +27,11 @@ For EOS we also want our own CI path, so the repo includes an EOS-specific
 job in the main CI workflow that follows the same general pattern used in
 `eos-tui`: deploy EOS via the official Helm chart on a local `kind` cluster,
 expose the storage endpoints, then run the generic deployment suite.
+
+For StoRM WebDAV we take a similar approach, but keep the first version
+HTTP-only and entirely in-cluster: clone the public Helm deployment repo,
+install it on `kind` with a CI-specific no-auth storage area, then run the
+generic deployment suite from an in-cluster pod against the service DNS name.
 
 For dCache the repo now also includes a dedicated CI job in the main workflow.
 It deploys PostgreSQL, Zookeeper, Kafka, and dCache itself on a local `kind`
@@ -88,6 +94,10 @@ The deployment suite currently checks:
 This keeps the contract focused on the common EOS/dCache behavior that matters
 for `gfal`, without baking in provider-specific path assumptions like
 `/eos/...` or `/pnfs/...`.
+
+For HTTP-only backends such as StoRM WebDAV, the same suite still works with
+only the `GFAL_DEPLOYMENT_HTTP_*` variables populated. The XRootD-specific
+cases are skipped automatically.
 
 ## Container Runner
 
@@ -182,3 +192,22 @@ The dCache team indicated the following preferred integration path:
 
 The generic deployment suite plus `docker/Dockerfile.integration-runner` is the
 artifact intended for that collaboration.
+
+## StoRM Workflow
+
+For StoRM WebDAV we provide `ci/storm-values.yaml` and
+`scripts/prepare-storm-kind-deployment.sh`.
+
+The CI job:
+
+- clones the public SKAO StoRM WebDAV deployment repo
+- creates a short-lived TLS secret required by the chart, even though the test
+  traffic itself uses the in-cluster HTTP endpoint
+- disables ingress, persistence, cert-manager, and OIDC for a simpler CI shape
+- configures a single anonymous `/sa` storage area rooted in `/data/sa`
+- creates writable and denied directories under `/data/sa/gfal-tests/<run-id>`
+- runs `tests/test_integration_storage_deployment.py` from an in-cluster pod
+
+This keeps the first StoRM integration focused on the WebDAV surface that
+`gfal` actually exercises, while avoiding extra ingress or token plumbing in
+the initial CI path.

@@ -1,0 +1,49 @@
+ingress:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+tls:
+  enabled: true
+  certManager:
+    enabled: false
+
+extraEnv:
+  STORM_WEBDAV_HOSTNAME_0: "storm-webdav.storm.svc.cluster.local"
+  STORM_WEBDAV_VOMS_TRUST_STORE_DIR: "/etc/grid-security/certificates"
+  STORM_WEBDAV_REQUIRE_CLIENT_CERT: "false"
+  STORM_WEBDAV_CERTIFICATE_PATH: "/etc/grid-security/storm-webdav/tls.crt"
+  STORM_WEBDAV_PRIVATE_KEY_PATH: "/etc/grid-security/storm-webdav/tls.key"
+  X509_CERT_DIR: "/etc/grid-security/certificates"
+
+healthcheck:
+  enabled: true
+  test: >
+    curl -ks -o /dev/null -w '%{http_code}' http://localhost:8085/sa/ |
+    grep -Eq '20[0-9]|40[01]'
+  interval: 30
+  timeout: 10
+  retries: 5
+  startPeriod: 60
+
+persistence:
+  enabled: false
+
+config:
+  additionalCAs: []
+  application:
+    oidc:
+      enabled: false
+  storageAreas:
+    - name: sa
+      rootPath: /data/sa
+      accessPoints:
+        - /sa
+      orgs: []
+      anonymousReadEnabled: true
+      voMapEnabled: false
+      orgsGrantReadPermission: false
+      orgsGrantWritePermission: false
+      wlcgScopeAuthzEnabled: false
+      fineGrainedAuthzEnabled: false

@@ -425,13 +425,115 @@ jobs:
         kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
         kubectl logs statefulset/store-pool-a --all-containers=true --tail=100 || true
 
+  deployment-integration-storm:
+    name: Deployment Integration (StoRM kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+          /opt/ghc /usr/local/share/boost /usr/share/swift \
+          /opt/hostedtoolcache/CodeQL || true
+        docker system prune -af --volumes || true
+
+    - name: Build deployment test runner image
+      run: docker build --platform linux/amd64 -t gfal-integration-runner -f docker/Dockerfile.integration-runner .
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1
+
+    - name: Load test runner image into kind
+      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
+
+    - name: Clone StoRM WebDAV deployment chart
+      run: git clone --depth=1 https://gitlab.com/ska-telescope/src/src-dm/ska-src-dm-storm-webdav-deployment.git /tmp/storm-webdav-deployment
+
+    - name: Create StoRM TLS secret
+      run: |
+        kubectl create namespace storm
+        openssl req -x509 -nodes -newkey rsa:2048 -days 2 \
+          -subj "/CN=storm-webdav.storm.svc.cluster.local" \
+          -addext "subjectAltName=DNS:storm-webdav.storm.svc.cluster.local,DNS:storm-webdav,DNS:localhost" \
+          -keyout /tmp/storm-tls.key \
+          -out /tmp/storm-tls.crt
+        kubectl create secret tls storm-tls-secret \
+          --namespace storm \
+          --cert=/tmp/storm-tls.crt \
+          --key=/tmp/storm-tls.key
+
+    - name: Deploy StoRM WebDAV via Helm chart
+      run: |
+        helm install storm /tmp/storm-webdav-deployment/etc/helm \
+          --namespace storm \
+          --values ci/storm-values.yaml \
+          --timeout 20m \
+          --wait
+
+    - name: Prepare StoRM deployment contract
+      run: |
+        chmod +x scripts/prepare-storm-kind-deployment.sh
+        ./scripts/prepare-storm-kind-deployment.sh "gha-${GITHUB_RUN_ID}" storm >> "$GITHUB_ENV"
+
+    - name: Run generic deployment integration tests inside kind
+      run: |
+        kubectl delete -n storm job gfal-storm-tests --ignore-not-found=true
+        cat <<EOF | kubectl apply -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-storm-tests
+          namespace: storm
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: tests
+                image: gfal-integration-runner:latest
+                imagePullPolicy: Never
+                env:
+                - name: GFAL_DEPLOYMENT_NAME
+                  value: "${GFAL_DEPLOYMENT_NAME}"
+                - name: GFAL_DEPLOYMENT_VERIFY_SSL
+                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
+                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
+                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
+                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
+                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
+        EOF
+
+        if ! kubectl wait -n storm --for=condition=complete --timeout=20m job/gfal-storm-tests; then
+          kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1 || true
+          kubectl describe -n storm job gfal-storm-tests || true
+          kubectl get pods -n storm || true
+          kubectl describe -n storm pod -l job-name=gfal-storm-tests || true
+          exit 1
+        fi
+
+        kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1
+
+    - name: Dump StoRM state on failure
+      if: failure()
+      run: |
+        kubectl get pods -n storm || true
+        kubectl get svc -n storm || true
+        kubectl logs -n storm deployment/storm-webdav --all-containers=true --tail=100 || true
+
   # ---------------------------------------------------------------------------
   # 2. Packaging
   # ---------------------------------------------------------------------------
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration, deployment-integration-dcache ]
+    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration, deployment-integration-dcache, deployment-integration-storm ]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
