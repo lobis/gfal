@@ -34,15 +34,23 @@ class TestGfalClientInit:
         assert client.key is None
         assert client.timeout == 1800
         assert client.ssl_verify is True
+        assert client.ipv4_only is False
+        assert client.ipv6_only is False
 
     def test_custom_init(self):
         client = GfalClient(
-            cert="/tmp/x.pem", key="/tmp/k.pem", timeout=60, ssl_verify=False
+            cert="/tmp/x.pem",
+            key="/tmp/k.pem",
+            timeout=60,
+            ssl_verify=False,
+            ipv4_only=True,
         )
         assert client.cert == "/tmp/x.pem"
         assert client.key == "/tmp/k.pem"
         assert client.timeout == 60
         assert client.ssl_verify is False
+        assert client.ipv4_only is True
+        assert client.ipv6_only is False
 
     def test_key_defaults_to_cert(self):
         client = GfalClient(cert="/tmp/x.pem")
@@ -61,6 +69,18 @@ class TestGfalClientInit:
         opts = client.storage_options
         assert opts["client_cert"] == "/tmp/x.pem"
         assert opts["client_key"] == "/tmp/k.pem"
+
+    def test_storage_options_with_ipv4_only(self):
+        client = GfalClient(ipv4_only=True)
+        opts = client.storage_options
+        assert opts["ipv4_only"] is True
+        assert "ipv6_only" not in opts
+
+    def test_storage_options_with_ipv6_only(self):
+        client = GfalClient(ipv6_only=True)
+        opts = client.storage_options
+        assert opts["ipv6_only"] is True
+        assert "ipv4_only" not in opts
 
     def test_storage_options_use_x509_proxy_from_env(self, monkeypatch, tmp_path):
         proxy = tmp_path / "proxy.pem"

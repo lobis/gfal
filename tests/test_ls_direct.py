@@ -7,6 +7,7 @@ in the pytest process.
 
 import stat
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from gfal.cli.ls import (
     CommandLs,
@@ -44,6 +45,8 @@ def _default_params(**kwargs):
         "full_time": False,
         "color": "never",
         "xattr": None,
+        "ipv4_only": False,
+        "ipv6_only": False,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -335,6 +338,30 @@ class TestExecuteLs:
         cmd.params = _default_params(file=[d.as_uri()])
         rc = cmd.execute_ls()
         assert rc == 0
+
+    def test_ls_passes_ipv6_only_to_client(self, monkeypatch):
+        monkeypatch.setenv("GFAL_CLI_GFAL2", "1")
+        cmd = _make_cmd()
+        cmd.params = _default_params(file=["file:///tmp"], ipv6_only=True)
+        fake_stat = SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o755,
+            st_size=0,
+            st_uid=0,
+            st_gid=0,
+            st_atime=0,
+            st_mtime=0,
+            st_ctime=0,
+            info={"name": "/tmp", "type": "directory"},
+        )
+
+        with patch("gfal.cli.ls.GfalClient") as mock_client_cls:
+            mock_client_cls.return_value.stat.return_value = fake_stat
+            mock_client_cls.return_value.ls.return_value = []
+            rc = cmd.execute_ls()
+
+        assert rc == 0
+        assert mock_client_cls.call_args.kwargs["ipv6_only"] is True
+        assert mock_client_cls.call_args.kwargs["ipv4_only"] is False
 
 
 # ---------------------------------------------------------------------------

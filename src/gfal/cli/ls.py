@@ -193,12 +193,7 @@ class CommandLs(base.CommandBase):
         if self.params.full_time:
             self.params.time_style = "long-iso"
 
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
 
         multi = len(self.params.file) > 1
         rc = 0

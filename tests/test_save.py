@@ -34,6 +34,15 @@ class TestSaveBasic:
         assert rc == 0
         assert f.read_bytes() == b""
 
+    def test_save_text_with_ipv4_flag(self, tmp_path):
+        f = tmp_path / "out.txt"
+        content = "hello over ipv4\n"
+
+        rc, out, err = run_gfal("save", "-4", f.as_uri(), input=content)
+
+        assert rc == 0
+        assert f.read_text() == content
+
 
 # ---------------------------------------------------------------------------
 # Binary save

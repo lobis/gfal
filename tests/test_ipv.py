@@ -3,7 +3,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from gfal.cli.base import CommandBase
+from gfal.cli.base import CommandBase, build_client_kwargs
 from gfal.core.fs import _verify_get_client, build_storage_options
 
 
@@ -47,6 +47,23 @@ def test_build_storage_options_ipv():
     opts = build_storage_options(params)
     assert opts["ipv6_only"] is True
     assert "ipv4_only" not in opts or opts["ipv4_only"] is False
+
+
+def test_build_client_kwargs_ipv():
+    """Verify that build_client_kwargs forwards IP family flags."""
+    params = MagicMock()
+    params.cert = None
+    params.key = None
+    params.timeout = 30
+    params.ssl_verify = True
+    params.ipv4_only = True
+    params.ipv6_only = False
+
+    kwargs = build_client_kwargs(params)
+
+    assert kwargs["timeout"] == 30
+    assert kwargs["ipv4_only"] is True
+    assert kwargs["ipv6_only"] is False
 
 
 @pytest.mark.asyncio

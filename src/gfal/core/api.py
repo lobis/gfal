@@ -24,6 +24,8 @@ class GfalClient:
         key: Optional[str] = None,
         timeout: int = 1800,
         ssl_verify: bool = True,
+        ipv4_only: bool = False,
+        ipv6_only: bool = False,
     ):
         """
         Initialize the GFAL client.
@@ -33,11 +35,15 @@ class GfalClient:
             key: Path to private key (defaults to cert if omitted).
             timeout: Operation timeout in seconds.
             ssl_verify: Whether to verify SSL certificates.
+            ipv4_only: Whether to prefer IPv4-only network connections.
+            ipv6_only: Whether to prefer IPv6-only network connections.
         """
         self.cert = cert
         self.key = key or cert
         self.timeout = timeout
         self.ssl_verify = ssl_verify
+        self.ipv4_only = ipv4_only
+        self.ipv6_only = ipv6_only
 
     @property
     def storage_options(self) -> dict[str, Any]:
@@ -48,8 +54,8 @@ class GfalClient:
                 key=self.key,
                 timeout=self.timeout,
                 ssl_verify=self.ssl_verify,
-                ipv4_only=False,
-                ipv6_only=False,
+                ipv4_only=self.ipv4_only,
+                ipv6_only=self.ipv6_only,
             )
         )
 

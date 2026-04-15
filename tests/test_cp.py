@@ -765,7 +765,7 @@ class TestCopyCommonIgnoredArgs:
         assert dst.read_bytes() == b"ci"
 
     def test_ipv4_flag(self, tmp_path):
-        """-4 is accepted and ignored."""
+        """-4 is accepted and the copy still succeeds."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"ipv4")
@@ -776,7 +776,7 @@ class TestCopyCommonIgnoredArgs:
         assert dst.read_bytes() == b"ipv4"
 
     def test_ipv6_flag(self, tmp_path):
-        """-6 is accepted and ignored."""
+        """-6 is accepted and the copy still succeeds."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"ipv6")
