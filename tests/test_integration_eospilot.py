@@ -41,8 +41,6 @@ import pytest
 
 from helpers import _docker_run_command, docker_available, run_gfal, run_gfal_docker
 
-CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
-
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 # ---------------------------------------------------------------------------
@@ -109,14 +107,6 @@ requires_docker = pytest.mark.skipif(
     not docker_available(), reason="Docker image xrootd-cern-test not available"
 )
 
-requires_non_ci_for_flaky_pilot_writes = pytest.mark.skipif(
-    CI,
-    reason=(
-        "Skipped in CI: eospilot write/identity paths are intermittently hanging; "
-        "covered manually/outside CI until stabilized"
-    ),
-)
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -181,20 +171,29 @@ def _preserve_times_setup(kind, url):
             f"""
             python3.12 - <<'PY'
             import ssl
+            import urllib.error
             import urllib.request
             proxy = "/tmp/x509proxy"
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             ctx.load_cert_chain(proxy, proxy)
-            req = urllib.request.Request(
-                "{url}?eos.mtime=946684800",
-                data=b"preserve-times\\n",
-                method="PUT",
-            )
-            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
-                if resp.status not in (200, 201, 204):
-                    raise SystemExit(f"https source setup failed: {{resp.status}}")
+            data = b"preserve-times\\n"
+            url = "{url}?eos.mtime=946684800"
+            for _ in range(5):
+                req = urllib.request.Request(url, data=data, method="PUT")
+                try:
+                    with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+                        if resp.status not in (200, 201, 204):
+                            raise SystemExit(f"https source setup failed: {{resp.status}}")
+                        break
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (307, 308):
+                        url = exc.headers.get("Location", url)
+                        continue
+                    raise
+            else:
+                raise SystemExit("Too many redirects setting up https source")
             PY
             """
         )
@@ -635,7 +634,6 @@ class TestEosPilotLs:
 
 @requires_eospilot
 @requires_proxy
-@requires_non_ci_for_flaky_pilot_writes
 class TestEosPilotMkdirRm:
     def test_mkdir(self, proxy_cert, pilot_dir):
         """Create a subdirectory and verify it exists with stat."""
