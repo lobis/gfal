@@ -99,9 +99,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install --no-cache-dir ".[dev]"
+        pip install --no-cache-dir ".[dev,all]"
         sudo apt-get update
         sudo apt-get install -y globus-proxy-utils
+    - name: Build Docker integration image
+      run: docker build --platform linux/amd64 -t xrootd-cern-test -f docker/Dockerfile.xrootd-cern-test .
     - name: Set up EOS service account credentials
       if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
       run: |
@@ -128,19 +130,11 @@ jobs:
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
     - name: Run integration tests
-      # Keep this CI job focused on the core EOS coverage and avoid the long tail
-      # of slower pilot/xrootd cases that can make the workflow appear stuck near
-      # completion. The dedicated Alma compare job covers legacy/new parity
-      # separately.
-      #
-      # These CERN-backed network tests are occasionally flaky at the job level
-      # even when the exact same commit passes on main. Add explicit reruns here
-      # so transient EOS / proxy / network hiccups do not fail a release tag.
       run: |
         timeout 30m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
           tests/test_integration_eospublic.py \
-          tests/test_integration_eospilot.py -k "not TestEosPilotTpc and not TestEosPilotXrootd and not TestEosPilotMkdirRm and not test_copy_large_file"
+          tests/test_integration_eospilot.py
 
   integration-compare-gfal2:
     name: Integration Compare Tests (Alma Docker)
