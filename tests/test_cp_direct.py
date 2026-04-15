@@ -7,6 +7,7 @@ in the pytest process.
 
 import errno
 import os
+import stat
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ import pytest
 
 from gfal.cli.copy import (
     CommandCopy,
+    CopyOptions,
     _checksum_fs,
     _eos_mtime_url,
     _finalise_hasher,
@@ -703,6 +705,52 @@ class TestCliUsesLibraryCopy:
             mock_client = mock_client_cls.return_value
 
             cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        mock_client.copy.assert_called_once()
+        _, kwargs = mock_client.copy.call_args
+        assert kwargs["options"] == CopyOptions()
+        assert callable(kwargs["progress_callback"])
+        assert callable(kwargs["start_callback"])
+
+    def test_do_copy_skip_if_same_ignores_special_destination_precheck(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_text("hello")
+        src_stat = SimpleNamespace(st_size=src.stat().st_size, is_dir=lambda: False)
+        dst_info = {
+            "name": "/tmp/fifo",
+            "size": 0,
+            "mode": stat.S_IFIFO,
+            "type": "other",
+        }
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=["file:///tmp/fifo"],
+            skip_if_same=True,
+        )
+
+        with (
+            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
+            patch("gfal.cli.copy.fs.url_to_fs") as mock_url_to_fs,
+            patch(
+                "gfal.cli.copy._checksum_fs",
+                side_effect=AssertionError("checksum precheck should not run"),
+            ),
+            patch("sys.stdout.isatty", return_value=False),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [src_stat, FileNotFoundError(), src_stat]
+
+            src_fs = MagicMock()
+            dst_fs = MagicMock()
+            dst_fs.info.return_value = dst_info
+            mock_url_to_fs.side_effect = [
+                (src_fs, str(src)),
+                (dst_fs, "/tmp/fifo"),
+            ]
+
+            cmd._do_copy(src.as_uri(), "file:///tmp/fifo", {"timeout": 1800})
 
         mock_client.copy.assert_called_once()
 

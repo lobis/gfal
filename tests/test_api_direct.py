@@ -5,9 +5,12 @@ collected in the pytest process.
 """
 
 import errno
+import io
 import stat
 import sys
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -677,6 +680,68 @@ class TestGfalClientLibraryHelpers:
 
         assert handle.done() is True
         assert dst.read_text() == "hello"
+
+    def test_copy_directory_over_existing_file_raises_even_with_overwrite(
+        self, tmp_path
+    ):
+        src = tmp_path / "srcdir"
+        src.mkdir()
+        (src / "child.txt").write_text("payload")
+        dst = tmp_path / "dst.txt"
+        dst.write_text("existing")
+
+        client = GfalClient()
+
+        with pytest.raises(GfalIsADirectoryError, match="directory over a file"):
+            client.copy(
+                src.as_uri(),
+                dst.as_uri(),
+                options=CopyOptions(recursive=True, overwrite=True),
+            )
+
+    def test_copy_with_tpc_never_does_not_attempt_tpc(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+            def open(self, path, mode):
+                if "r" in mode:
+                    return nullcontext(io.BytesIO(b"payload"))
+                return nullcontext(io.BytesIO())
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch(
+                "gfal.core.tpc.do_tpc",
+                side_effect=AssertionError("TPC should not run"),
+            ),
+        ):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="never"),
+            )
 
 
 class TestAsyncGfalClient:

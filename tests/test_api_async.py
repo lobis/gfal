@@ -10,7 +10,12 @@ import pytest
 
 from gfal.core import fs
 from gfal.core.api import AsyncGfalClient, CopyOptions, GfalClient
-from gfal.core.errors import GfalError, GfalFileExistsError, GfalTimeoutError
+from gfal.core.errors import (
+    GfalError,
+    GfalFileExistsError,
+    GfalFileNotFoundError,
+    GfalTimeoutError,
+)
 
 
 @pytest.mark.asyncio
@@ -147,7 +152,7 @@ async def test_async_copy_remote_preserve_times_warns(monkeypatch, tmp_path):
     def _url_to_fs_side_effect(url, storage_options=None, **kwargs):
         if url.startswith("https://example.com/"):
             return _RemoteWriteFs(), "/remote/file.txt"
-        return original_url_to_fs(url, storage_options, **kwargs)
+        return original_url_to_fs(url, storage_options=storage_options, **kwargs)
 
     monkeypatch.setattr("gfal.core.api.fs.url_to_fs", _url_to_fs_side_effect)
 
@@ -173,6 +178,49 @@ async def test_async_copy_tpc_only_preflight_rejects_unsupported_pair(tmp_path):
             "https://example.com/file.txt",
             options=CopyOptions(tpc="only"),
         )
+
+
+@pytest.mark.asyncio
+async def test_async_copy_maps_backend_exceptions(monkeypatch):
+    client = AsyncGfalClient()
+
+    def _failing_copy(
+        src_url,
+        dst_url,
+        options,
+        progress_callback,
+        start_callback,
+        warn_callback,
+        cancel_event,
+    ):
+        raise FileExistsError("already exists")
+
+    monkeypatch.setattr(client, "_copy_sync", _failing_copy)
+
+    with pytest.raises(GfalFileExistsError, match="already exists"):
+        await client.copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
+
+
+@pytest.mark.asyncio
+async def test_async_start_copy_maps_background_exception(monkeypatch):
+    client = AsyncGfalClient()
+
+    def _failing_copy(
+        src_url,
+        dst_url,
+        options,
+        progress_callback,
+        start_callback,
+        warn_callback,
+        cancel_event,
+    ):
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(client, "_copy_sync", _failing_copy)
+    handle = client.start_copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
+
+    with pytest.raises(GfalFileNotFoundError, match="missing"):
+        await handle.wait_async(timeout=1)
 
 
 @pytest.mark.asyncio

@@ -279,16 +279,21 @@ class AsyncGfalClient:
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
     ) -> Any:
-        return await asyncio.to_thread(
-            self._copy_sync,
-            src_url,
-            dst_url,
-            options or CopyOptions(),
-            progress_callback,
-            start_callback,
-            warn_callback,
-            None,
-        )
+        def _runner() -> Any:
+            try:
+                return self._copy_sync(
+                    src_url,
+                    dst_url,
+                    options or CopyOptions(),
+                    progress_callback,
+                    start_callback,
+                    warn_callback,
+                    None,
+                )
+            except Exception as e:
+                raise self._map_error(e, src_url) from e
+
+        return await asyncio.to_thread(_runner)
 
     def start_copy(
         self,
@@ -315,7 +320,9 @@ class AsyncGfalClient:
                     warn_callback,
                     cancel_event,
                 )
-            except BaseException as exc:  # pragma: no cover - exercised via handle.wait
+            except Exception as exc:  # pragma: no cover - exercised via handle.wait
+                exc_holder["error"] = self._map_error(exc, src_url)
+            except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
 
         thread = threading.Thread(target=_runner, daemon=True)
@@ -499,6 +506,9 @@ class AsyncGfalClient:
         except Exception:
             pass
 
+        if dst_exists and not dst_isdir and src_isdir:
+            raise IsADirectoryError("Cannot copy a directory over a file")
+
         if (
             not options.just_copy
             and dst_exists
@@ -519,9 +529,6 @@ class AsyncGfalClient:
             raise GfalFileExistsError(
                 f"Destination {dst_url} exists and overwrite is not set"
             )
-
-            if dst_exists and not dst_isdir and src_isdir:
-                raise IsADirectoryError("Cannot copy a directory over a file")
 
         if src_isdir:
             if not options.recursive:
@@ -558,9 +565,10 @@ class AsyncGfalClient:
             dst_url = dst_url.rstrip("/") + "/" + Path(src_path.rstrip("/")).name
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
 
-        explicit_tpc = options.tpc in {"auto", "only"}
-        auto_tpc = options.tpc == "never" and tpc_applicable(src_url, dst_url)
-        if explicit_tpc or auto_tpc:
+        tpc_supported = tpc_applicable(src_url, dst_url)
+        explicit_tpc = options.tpc in {"auto", "only"} and tpc_supported
+        auto_tpc = options.tpc == "auto" and tpc_supported
+        if explicit_tpc:
             tpc_dst_url = self._transfer_destination_url(dst_url, src_st, options)
             try:
                 from gfal.core import tpc as tpc_module  # noqa: PLC0415

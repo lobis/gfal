@@ -391,7 +391,12 @@ class CommandCopy(base.CommandBase):
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
             try:
                 dst_info = dst_fs.info(dst_path)
-                if not stat.S_ISDIR(fs.StatInfo(dst_info).st_mode):
+                dst_mode = fs.StatInfo(dst_info).st_mode
+                if (
+                    stat.S_ISREG(dst_mode)
+                    and not _is_special_file(src_path)
+                    and not _is_special_file(dst_path)
+                ):
                     algorithm = "ADLER32"
                     if self.params.checksum:
                         algorithm, _ = _parse_checksum_arg(self.params.checksum)
