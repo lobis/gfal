@@ -70,6 +70,15 @@ class TestStatRegularFile:
             assert rc == 0
             assert str(size) in out
 
+    def test_regular_file_with_ipv4_flag(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("x")
+
+        rc, out, err = run_gfal("stat", "--ipv4", f.as_uri())
+
+        assert rc == 0
+        assert "File:" in out
+
 
 # ---------------------------------------------------------------------------
 # Directories

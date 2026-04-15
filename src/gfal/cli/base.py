@@ -129,6 +129,18 @@ def get_console(stderr=False):
     return Console(stderr=stderr)
 
 
+def build_client_kwargs(params):
+    """Build common ``GfalClient`` kwargs from parsed CLI params."""
+    return {
+        "cert": getattr(params, "cert", None),
+        "key": getattr(params, "key", None),
+        "timeout": getattr(params, "timeout", 1800),
+        "ssl_verify": getattr(params, "ssl_verify", True),
+        "ipv4_only": getattr(params, "ipv4_only", False),
+        "ipv6_only": getattr(params, "ipv6_only", False),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Argparse → Click translator
 # ---------------------------------------------------------------------------
@@ -740,6 +752,10 @@ class CommandBase:
         ):
             params_dict["dst"] = [params_dict["src"]]
             params_dict["src"] = None
+
+        if params_dict.get("ipv4_only") and params_dict.get("ipv6_only"):
+            sys.stderr.write(f"{prog}: --ipv4 and --ipv6 are mutually exclusive\n")
+            sys.exit(2)
 
         self.params = SimpleNamespace(**params_dict)
 

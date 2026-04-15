@@ -184,7 +184,7 @@ class TestCommonIgnoredArgs:
 
         f = tmp_path / "f.txt"
         f.write_text("x")
-        rc, out, err = run_gfal("ls", "-4", tmp_path.as_uri())
+        rc, out, err = run_gfal("ls", "--ipv4", tmp_path.as_uri())
         assert rc == 0
 
     def test_ipv6_on_ls(self, tmp_path):
@@ -192,5 +192,14 @@ class TestCommonIgnoredArgs:
 
         f = tmp_path / "f.txt"
         f.write_text("x")
-        rc, out, err = run_gfal("ls", "-6", tmp_path.as_uri())
+        rc, out, err = run_gfal("ls", "--ipv6", tmp_path.as_uri())
         assert rc == 0
+
+    def test_ipv4_and_ipv6_conflict_on_ls(self, tmp_path):
+        from helpers import run_gfal
+
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("ls", "--ipv4", "--ipv6", tmp_path.as_uri())
+        assert rc == 2
+        assert "--ipv4 and --ipv6 are mutually exclusive" in err

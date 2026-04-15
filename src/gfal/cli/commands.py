@@ -45,12 +45,7 @@ class GfalCommands(base.CommandBase):
                 self.err_console.print(f"[bold red]{self.prog}[/]: {msg}")
             return 1
 
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
 
         rc = 0
         for d in self.params.directory:
@@ -69,12 +64,7 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", type=base.surl, help="URI of the file to write")
     def execute_save(self):
         """Read from stdin and write to a remote file."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
         with client.open(self.params.file, "wb") as f:
             while True:
                 chunk = sys.stdin.buffer.read(fs.CHUNK_SIZE)
@@ -95,12 +85,7 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to display")
     def execute_cat(self):
         """Print file contents to stdout."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
         rc = 0
         for url in self.params.file:
             try:
@@ -125,12 +110,7 @@ class GfalCommands(base.CommandBase):
     @base.arg("file", nargs="+", type=base.surl, help="URI(s) to stat")
     def execute_stat(self):
         """Display file status."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
         rc = 0
         first = True
         for url in self.params.file:
@@ -214,12 +194,7 @@ class GfalCommands(base.CommandBase):
     @base.arg("destination", type=base.surl, help="new URI")
     def execute_rename(self):
         """Rename a file or directory."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
         with self.spinner(f"Renaming {self.params.source}..."):
             client.rename(self.params.source, self.params.destination)
 
@@ -241,12 +216,7 @@ class GfalCommands(base.CommandBase):
                 self.err_console.print(f"[bold red]{self.prog}[/]: {msg}")
             return 1
 
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
 
         rc = 0
         for url in self.params.file:
@@ -270,12 +240,7 @@ class GfalCommands(base.CommandBase):
     )
     def execute_sum(self):
         """Compute a file checksum."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
         alg = self.params.checksum_type.upper()
 
         try:
@@ -299,12 +264,7 @@ class GfalCommands(base.CommandBase):
     )
     def execute_xattr(self):
         """Get or set extended attributes."""
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
 
         try:
             if self.params.attribute is not None:
