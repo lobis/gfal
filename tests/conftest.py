@@ -18,6 +18,13 @@ _NETWORK_RERUNS_DELAY = 5  # seconds between retries
 def pytest_collection_modifyitems(items):
     """Add rerun-failure markers to all tests tagged with ``network``."""
     for item in items:
+        if item.path.name.startswith("test_tui"):
+            item.add_marker(
+                pytest.mark.skip(
+                    reason="TUI tests are temporarily disabled while the TUI is moved to a dedicated project."
+                ),
+                append=False,
+            )
         if item.get_closest_marker("network"):
             item.add_marker(
                 pytest.mark.flaky(
