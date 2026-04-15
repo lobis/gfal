@@ -2,10 +2,19 @@
 
 import stat as stat_module
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from gfal.core.fs import StatInfo, isdir, normalize_url, stat, url_to_fs
+from gfal.core.fs import (
+    RootProtocolFallbackWarning,
+    StatInfo,
+    _root_url_to_https,
+    isdir,
+    normalize_url,
+    stat,
+    url_to_fs,
+)
 
 # ---------------------------------------------------------------------------
 # normalize_url
@@ -228,6 +237,33 @@ class TestUrlToFs:
         f.write_text("x")
         fso, path = url_to_fs(f.as_uri(), {"ssl_verify": True})
         assert Path(path) == f
+
+    def test_root_url_to_https_preserves_absolute_path(self):
+        assert (
+            _root_url_to_https("root://eospublic.cern.ch//eos/opendata/file.root")
+            == "https://eospublic.cern.ch/eos/opendata/file.root"
+        )
+
+    def test_root_falls_back_to_https_when_xrootd_deps_missing(self):
+        with (
+            patch(
+                "gfal.core.fs.fsspec.url_to_fs",
+                side_effect=ModuleNotFoundError("No module named 'fsspec_xrootd'"),
+            ),
+            pytest.warns(
+                RootProtocolFallbackWarning,
+                match=(
+                    "retrying root://eospublic.cern.ch//eos/opendata/file.root "
+                    "via HTTPS as https://eospublic.cern.ch/eos/opendata/file.root"
+                ),
+            ),
+        ):
+            fso, path = url_to_fs("root://eospublic.cern.ch//eos/opendata/file.root")
+
+        from gfal.core.webdav import WebDAVFileSystem
+
+        assert isinstance(fso, WebDAVFileSystem)
+        assert path == "https://eospublic.cern.ch/eos/opendata/file.root"
 
 
 # ---------------------------------------------------------------------------
