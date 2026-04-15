@@ -120,7 +120,7 @@ pipeline.
 For EOS we provide `scripts/prepare-eos-kind-deployment.sh`, which assumes:
 
 - an EOS cluster is already running
-- the runner has SSH access to the MGM pod
+- either SSH access to the MGM pod or `kubectl exec` access to it
 - ports `1094` and `8443` are port-forwarded to `127.0.0.1`
 
 The script:
@@ -133,6 +133,15 @@ Example:
 
 ```bash
 export EOS_TEST_SSH_TARGET=eos-mgm
+./scripts/prepare-eos-kind-deployment.sh run-123
+```
+
+Or without SSH:
+
+```bash
+export EOS_TEST_KUBECTL_TARGET=eos-mgm-0
+export EOS_TEST_KUBECTL_NAMESPACE=default
+export EOS_TEST_KUBECTL_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
 ./scripts/prepare-eos-kind-deployment.sh run-123
 ```
 

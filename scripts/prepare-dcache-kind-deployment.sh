@@ -15,7 +15,7 @@ dcache_chimera() {
     kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
 }
 
-kubectl wait -n "${NAMESPACE}" --for=condition=Ready "pod/${DOOR_POD}" --timeout=10m
+kubectl wait -n "${NAMESPACE}" --for=condition=Ready "pod/${DOOR_POD}" --timeout=10m >/dev/null
 
 dcache_chimera mkdir /data/gfal-tests || true
 dcache_chimera chmod 0777 /data/gfal-tests || true
