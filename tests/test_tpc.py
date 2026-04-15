@@ -327,20 +327,32 @@ class TestHttpTpc:
 
 
 class TestBuildSession:
-    def test_cert_set(self, tmp_path):
+    def test_cert_set(self, monkeypatch, tmp_path):
+        fake_context = MagicMock()
+        monkeypatch.setattr(
+            "gfal.core.webdav._make_ssl_context", lambda verify: fake_context
+        )
+
         cert = tmp_path / "cert.pem"
         cert.write_text("cert")
         key = tmp_path / "key.pem"
         key.write_text("key")
         opts = {"client_cert": str(cert), "client_key": str(key)}
         session = tpc_mod._build_session(opts)
+        fake_context.load_cert_chain.assert_called_once_with(str(cert), str(key))
         assert session.cert == (str(cert), str(key))
 
-    def test_cert_without_key_uses_cert_as_key(self, tmp_path):
+    def test_cert_without_key_uses_cert_as_key(self, monkeypatch, tmp_path):
+        fake_context = MagicMock()
+        monkeypatch.setattr(
+            "gfal.core.webdav._make_ssl_context", lambda verify: fake_context
+        )
+
         cert = tmp_path / "proxy.pem"
         cert.write_text("proxy")
         opts = {"client_cert": str(cert)}
         session = tpc_mod._build_session(opts)
+        fake_context.load_cert_chain.assert_called_once_with(str(cert), str(cert))
         assert session.cert == (str(cert), str(cert))
 
     def test_ssl_verify_false(self):
@@ -784,7 +796,12 @@ class TestBuildSessionBearerToken:
         session = tpc_mod._build_session({})
         assert "Authorization" not in session.headers
 
-    def test_bearer_token_and_cert_coexist(self, tmp_path):
+    def test_bearer_token_and_cert_coexist(self, monkeypatch, tmp_path):
+        fake_context = MagicMock()
+        monkeypatch.setattr(
+            "gfal.core.webdav._make_ssl_context", lambda verify: fake_context
+        )
+
         cert = tmp_path / "cert.pem"
         cert.write_text("cert")
         key = tmp_path / "key.pem"
@@ -795,5 +812,6 @@ class TestBuildSessionBearerToken:
             "bearer_token": "scitoken-abc",
         }
         session = tpc_mod._build_session(opts)
+        fake_context.load_cert_chain.assert_called_once_with(str(cert), str(key))
         assert session.cert == (str(cert), str(key))
         assert session.headers.get("Authorization") == "Bearer scitoken-abc"
