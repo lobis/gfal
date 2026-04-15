@@ -8,6 +8,7 @@ in the pytest process.
 import sys
 import zlib
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -30,6 +31,8 @@ def _default_params(**kwargs):
         "ssl_verify": True,
         "verbose": 0,
         "log_file": None,
+        "ipv4_only": False,
+        "ipv6_only": False,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -143,6 +146,24 @@ class TestExecuteCat:
         rc = cmd.execute_cat()
         assert rc != 0
 
+    def test_cat_passes_ipv6_only_to_client(self):
+        cmd = _make_cmd("gfal-cat")
+        cmd.params = _default_params(
+            file=["file:///tmp/test.txt"],
+            bytes=False,
+            ipv6_only=True,
+        )
+        fake_file = MagicMock()
+        fake_file.__enter__.return_value.read.side_effect = [b"", b""]
+
+        with patch("gfal.cli.commands.GfalClient") as mock_client_cls:
+            mock_client_cls.return_value.open.return_value = fake_file
+            rc = cmd.execute_cat()
+
+        assert rc is None or rc == 0
+        assert mock_client_cls.call_args.kwargs["ipv6_only"] is True
+        assert mock_client_cls.call_args.kwargs["ipv4_only"] is False
+
 
 # ---------------------------------------------------------------------------
 # execute_stat
@@ -199,6 +220,28 @@ class TestExecuteStat:
         cmd.params = _default_params(file=[f.as_uri()])
         rc = cmd.execute_stat()
         assert rc is None or rc == 0
+
+    def test_stat_passes_ipv4_only_to_client(self, monkeypatch):
+        monkeypatch.setenv("GFAL_CLI_GFAL2", "1")
+        cmd = _make_cmd("gfal-stat")
+        cmd.params = _default_params(file=["file:///tmp/test.txt"], ipv4_only=True)
+        fake_stat = SimpleNamespace(
+            st_size=1,
+            st_mode=0o100644,
+            st_uid=0,
+            st_gid=0,
+            st_atime=0,
+            st_mtime=0,
+            st_ctime=0,
+        )
+
+        with patch("gfal.cli.commands.GfalClient") as mock_client_cls:
+            mock_client_cls.return_value.stat.return_value = fake_stat
+            rc = cmd.execute_stat()
+
+        assert rc == 0
+        assert mock_client_cls.call_args.kwargs["ipv4_only"] is True
+        assert mock_client_cls.call_args.kwargs["ipv6_only"] is False
 
 
 # ---------------------------------------------------------------------------

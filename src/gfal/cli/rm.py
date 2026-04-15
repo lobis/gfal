@@ -63,12 +63,7 @@ class CommandRm(base.CommandBase):
             sys.stderr.write("No URI specified\n")
             return errno.EINVAL
 
-        client = GfalClient(
-            cert=self.params.cert,
-            key=self.params.key,
-            timeout=self.params.timeout,
-            ssl_verify=getattr(self.params, "ssl_verify", True),
-        )
+        client = GfalClient(**base.build_client_kwargs(self.params))
 
         for url in urls:
             self._do_rm(url, client)

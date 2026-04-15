@@ -7,6 +7,7 @@ in the pytest process.
 
 import errno
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -32,6 +33,8 @@ def _default_params(**kwargs):
         "just_delete": False,
         "from_file": None,
         "bulk": False,
+        "ipv4_only": False,
+        "ipv6_only": False,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -142,6 +145,19 @@ class TestExecuteRm:
         assert rc == 0
         assert not f1.exists()
         assert not f2.exists()
+
+    def test_rm_passes_ipv4_only_to_client(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(file=["file:///tmp/test.txt"], ipv4_only=True)
+
+        with patch("gfal.cli.rm.GfalClient") as mock_client_cls:
+            mock_client_cls.return_value.stat.side_effect = errno.ENOENT
+            cmd._do_rm = lambda *args, **kwargs: None
+            rc = cmd.execute_rm()
+
+        assert rc == 0
+        assert mock_client_cls.call_args.kwargs["ipv4_only"] is True
+        assert mock_client_cls.call_args.kwargs["ipv6_only"] is False
 
 
 # ---------------------------------------------------------------------------

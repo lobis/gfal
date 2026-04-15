@@ -29,6 +29,15 @@ class TestRmSingleFile:
         assert rc == 0
         assert not f.exists()
 
+    def test_rm_single_file_with_ipv6_flag(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("content")
+
+        rc, out, err = run_gfal("rm", "--ipv6", f.as_uri())
+
+        assert rc == 0
+        assert not f.exists()
+
 
 # ---------------------------------------------------------------------------
 # Multiple files

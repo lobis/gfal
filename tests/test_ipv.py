@@ -3,7 +3,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from gfal.cli.base import CommandBase
+from gfal.cli.base import CommandBase, build_client_kwargs
 from gfal.core.fs import _verify_get_client, build_storage_options
 
 
@@ -33,6 +33,36 @@ def test_ipv4_v6_parsing():
     assert cmd.params.ipv6_only is True
 
 
+def test_ipv4_and_ipv6_mutually_exclusive_long_options(capsys):
+    """Verify that the preferred long options are mutually exclusive."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self):
+            return 0
+
+    cmd = DummyCommand()
+    with pytest.raises(SystemExit) as excinfo:
+        cmd.parse(cmd.execute_test, ["gfal-test", "--ipv4", "--ipv6"])
+
+    assert excinfo.value.code == 2
+    assert "--ipv4 and --ipv6 are mutually exclusive" in capsys.readouterr().err
+
+
+def test_ipv4_and_ipv6_mutually_exclusive_mixed_aliases(capsys):
+    """Short aliases should also be rejected when combined with long options."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self):
+            return 0
+
+    cmd = DummyCommand()
+    with pytest.raises(SystemExit) as excinfo:
+        cmd.parse(cmd.execute_test, ["gfal-test", "-4", "--ipv6"])
+
+    assert excinfo.value.code == 2
+    assert "--ipv4 and --ipv6 are mutually exclusive" in capsys.readouterr().err
+
+
 def test_build_storage_options_ipv():
     """Verify that build_storage_options captures IP flags."""
     params = MagicMock()
@@ -47,6 +77,23 @@ def test_build_storage_options_ipv():
     opts = build_storage_options(params)
     assert opts["ipv6_only"] is True
     assert "ipv4_only" not in opts or opts["ipv4_only"] is False
+
+
+def test_build_client_kwargs_ipv():
+    """Verify that build_client_kwargs forwards IP family flags."""
+    params = MagicMock()
+    params.cert = None
+    params.key = None
+    params.timeout = 30
+    params.ssl_verify = True
+    params.ipv4_only = True
+    params.ipv6_only = False
+
+    kwargs = build_client_kwargs(params)
+
+    assert kwargs["timeout"] == 30
+    assert kwargs["ipv4_only"] is True
+    assert kwargs["ipv6_only"] is False
 
 
 @pytest.mark.asyncio

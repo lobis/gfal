@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from gfal.core.webdav import WebDAVFileSystem, _parse_propfind
+from gfal.core.webdav import WebDAVFileSystem, _http_fs_opts, _parse_propfind
 
 # ---------------------------------------------------------------------------
 # Minimal mock WebDAV server
@@ -293,6 +293,34 @@ class TestParsePropfind:
   </D:response>
 </D:multistatus>"""
         assert _parse_propfind(xml, "http://server/") == []
+
+
+class TestHttpFsOpts:
+    def test_http_fs_opts_passes_ipv4_only(self):
+        opts = _http_fs_opts(
+            {
+                "ssl_verify": True,
+                "client_cert": "/tmp/cert.pem",
+                "client_key": "/tmp/key.pem",
+                "timeout": 12,
+                "ipv4_only": True,
+            }
+        )
+
+        get_client = opts["get_client"]
+        assert get_client.keywords["client_cert"] == "/tmp/cert.pem"
+        assert get_client.keywords["client_key"] == "/tmp/key.pem"
+        assert get_client.keywords["timeout"] == 12
+        assert get_client.keywords["ipv4_only"] is True
+        assert get_client.keywords["ipv6_only"] is False
+
+    def test_http_fs_opts_passes_ipv6_only_without_verify(self):
+        opts = _http_fs_opts({"ssl_verify": False, "ipv6_only": True})
+
+        get_client = opts["get_client"]
+        assert get_client.func.__name__ == "_no_verify_get_client"
+        assert get_client.keywords["ipv4_only"] is False
+        assert get_client.keywords["ipv6_only"] is True
 
 
 # ---------------------------------------------------------------------------
