@@ -5,7 +5,11 @@ from __future__ import annotations
 import deployment_env
 
 
-def test_run_deployment_gfal_uses_proxy_env_without_cert_flag(tmp_path, monkeypatch):
+def test_run_deployment_gfal_passes_proxy_as_cert_for_https(tmp_path, monkeypatch):
+    """When only a proxy is available (no explicit cert/key), the proxy file
+    must be forwarded as -E/--key so that gfal's WebDAV layer uses it for
+    mutual-TLS auth (e.g. EOS XrdHttp).  X509_USER_PROXY alone is only
+    consumed by fsspec-xrootd, not by the HTTP stack."""
     proxy = tmp_path / "proxy.pem"
     proxy.write_text("proxy")
 
@@ -36,7 +40,15 @@ def test_run_deployment_gfal_uses_proxy_env_without_cert_flag(tmp_path, monkeypa
     deployment_env.run_deployment_gfal(config, "cp", "file:///tmp/src", "root://dst")
 
     assert calls["cmd"] == "cp"
-    assert calls["args"] == ("--no-verify", "file:///tmp/src", "root://dst")
+    assert calls["args"] == (
+        "-E",
+        str(proxy),
+        "--key",
+        str(proxy),
+        "--no-verify",
+        "file:///tmp/src",
+        "root://dst",
+    )
     assert calls["env"] == {"X509_USER_PROXY": str(proxy)}
 
 

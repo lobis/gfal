@@ -86,8 +86,13 @@ def run_deployment_gfal(
     cmd_args = []
     if config.cert:
         cmd_args.extend(["-E", config.cert])
-    if config.key and config.key != config.cert:
-        cmd_args.extend(["--key", config.key])
+        if config.key and config.key != config.cert:
+            cmd_args.extend(["--key", config.key])
+    elif config.proxy:
+        # Use the proxy as the client certificate for HTTPS mutual-TLS auth
+        # (e.g. EOS XrdHttp).  X509_USER_PROXY alone is only picked up by
+        # fsspec-xrootd; the WebDAV layer needs -E / --key explicitly.
+        cmd_args.extend(["-E", config.proxy, "--key", config.proxy])
     if not config.verify_ssl:
         cmd_args.append("--no-verify")
 
