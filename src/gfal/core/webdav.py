@@ -11,22 +11,23 @@ matching the convention used by fsspec's HTTPFileSystem.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import re
 import ssl
 import stat as stat_module
 import tempfile
+import threading
 from email.utils import parsedate_to_datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
+import aiohttp
 import fsspec
-import requests as _requests
 from fsspec import AbstractFileSystem
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from yarl import URL
 
 _DAV = "{DAV:}"
 
@@ -56,7 +57,7 @@ _PROPFIND_BODY = (
 
 
 def _make_ssl_context(verify: bool) -> ssl.SSLContext:
-    """Return an SSL context for the requests session.
+    """Return an SSL context for synchronous HTTP/WebDAV requests.
 
     Sets ``ssl.OP_IGNORE_UNEXPECTED_EOF`` (Python 3.12+) so that servers
     like EOS HTTPS that close the TLS connection without a proper
@@ -74,18 +75,6 @@ def _make_ssl_context(verify: bool) -> ssl.SSLContext:
     with contextlib.suppress(AttributeError):
         ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF  # type: ignore[attr-defined]
     return ctx
-
-
-class _SSLContextAdapter(HTTPAdapter):
-    """HTTPAdapter that injects a custom SSL context into urllib3's pool manager."""
-
-    def __init__(self, ssl_context: ssl.SSLContext, **kwargs):
-        self._ssl_context = ssl_context
-        super().__init__(**kwargs)
-
-    def init_poolmanager(self, *args, **kwargs):
-        kwargs["ssl_context"] = self._ssl_context
-        return super().init_poolmanager(*args, **kwargs)
 
 
 # WebDAV methods that are safe to retry on connection errors.
@@ -106,50 +95,194 @@ _RETRY_METHODS = frozenset(
 )
 
 
+class HttpStatusError(Exception):
+    """Simple HTTP status error carrying the attributes our callers inspect."""
+
+    def __init__(self, status: int, url: str, headers: Optional[dict[str, str]] = None):
+        self.status = status
+        self.headers = headers or {}
+        self.request_info = type(
+            "RequestInfo",
+            (),
+            {"url": URL(url), "real_url": URL(url)},
+        )()
+        super().__init__(f"{status}, message='HTTP error', url='{url}'")
+
+
+class _SyncAiohttpResponse:
+    """Requests-like response wrapper backed by fully-buffered aiohttp data."""
+
+    def __init__(
+        self,
+        *,
+        method: str,
+        url: str,
+        status_code: int,
+        headers: dict[str, str],
+        content: bytes,
+    ) -> None:
+        self.method = method
+        self.url = url
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise HttpStatusError(self.status_code, self.url, self.headers)
+
+    def iter_lines(self, decode_unicode: bool = False):
+        for line in self.content.splitlines():
+            yield line.decode("utf-8", "replace") if decode_unicode else line
+
+
+class _SyncAiohttpSession:
+    """Small synchronous wrapper around aiohttp for the sync WebDAV code paths."""
+
+    def __init__(self, storage_options: dict[str, Any]) -> None:
+        self._verify = storage_options.get("ssl_verify", True)
+        self._ssl_context = _make_ssl_context(self._verify)
+        self._timeout = storage_options.get("timeout")
+        self._cert = storage_options.get("client_cert")
+        self._key = storage_options.get("client_key")
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+
+        self.verify = self._verify
+        self.cert = (self._cert, self._key or self._cert) if self._cert else None
+        self.headers: dict[str, str] = {}
+        bearer_token = storage_options.get("bearer_token")
+        if bearer_token:
+            self.headers["Authorization"] = f"Bearer {bearer_token}"
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is not None:
+            return self._loop
+
+        ready = threading.Event()
+
+        def _runner() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            ready.set()
+            loop.run_forever()
+
+        self._thread = threading.Thread(target=_runner, daemon=True)
+        self._thread.start()
+        ready.wait()
+        assert self._loop is not None
+        return self._loop
+
+    def _run(self, coro):
+        loop = self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
+
+    async def _request_async(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[dict[str, str]] = None,
+        data: Any = None,
+        timeout: Optional[float] = None,
+    ) -> _SyncAiohttpResponse:
+        request_headers = dict(self.headers)
+        if headers:
+            request_headers.update(headers)
+
+        attempts = 5 if method.upper() in _RETRY_METHODS else 1
+        for attempt in range(attempts):
+            connector = aiohttp.TCPConnector(ssl=self._ssl_context)
+            client_timeout = (
+                aiohttp.ClientTimeout(total=timeout)
+                if timeout is not None
+                else aiohttp.ClientTimeout(total=self._timeout)
+                if self._timeout is not None
+                else None
+            )
+            try:
+                async with (
+                    aiohttp.ClientSession(
+                        connector=connector,
+                        timeout=client_timeout,
+                    ) as session,
+                    session.request(
+                        method,
+                        url,
+                        headers=request_headers,
+                        data=data,
+                    ) as resp,
+                ):
+                    body = await resp.read()
+                    return _SyncAiohttpResponse(
+                        method=method.upper(),
+                        url=str(resp.url),
+                        status_code=resp.status,
+                        headers=dict(resp.headers),
+                        content=body,
+                    )
+            except asyncio.TimeoutError as e:
+                raise TimeoutError(url) from e
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientSSLError,
+                ssl.SSLError,
+            ):
+                if attempt == attempts - 1:
+                    raise
+                await asyncio.sleep((attempt + 1) * 0.5)
+
+        raise RuntimeError("unreachable")
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[dict[str, str]] = None,
+        data: Any = None,
+        timeout: Optional[float] = None,
+        stream: bool = False,
+    ) -> _SyncAiohttpResponse:
+        del stream
+        return self._run(
+            self._request_async(
+                method,
+                url,
+                headers=headers,
+                data=data,
+                timeout=timeout,
+            )
+        )
+
+    def delete(self, url: str, *, timeout: Optional[float] = None):
+        return self.request("DELETE", url, timeout=timeout)
+
+    def head(
+        self,
+        url: str,
+        *,
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[float] = None,
+    ):
+        return self.request("HEAD", url, headers=headers, timeout=timeout)
+
+    def put(
+        self,
+        url: str,
+        *,
+        data: Any = None,
+        timeout: Optional[float] = None,
+        headers: Optional[dict[str, str]] = None,
+    ):
+        return self.request("PUT", url, headers=headers, data=data, timeout=timeout)
+
+
 def _make_session(storage_options):
-    """Build a ``requests.Session`` with cert / SSL-verify config.
-
-    A ``Retry`` adapter is mounted for both http:// and https:// to
-    transparently retry transient connection errors (e.g. WinError 10053 /
-    ECONNABORTED on Windows when the server closes a keep-alive socket before
-    the client reuses it).  HTTP error status codes are *not* retried so that
-    real 4xx/5xx responses are never silently hidden.
-    """
-    verify = storage_options.get("ssl_verify", True)
-    ssl_ctx = _make_ssl_context(verify)
-    _retry = Retry(
-        total=10,
-        connect=5,
-        read=5,
-        status=0,
-        backoff_factor=0.5,
-        raise_on_status=False,
-        allowed_methods=_RETRY_METHODS,
-    )
-    _adapter = _SSLContextAdapter(ssl_context=ssl_ctx, max_retries=_retry)
-    session = _requests.Session()
-    session.mount("http://", _adapter)
-    session.mount("https://", _adapter)
-
-    # Note: We do NOT set session.verify = False even when verify is False.
-    # Instead, we rely on the custom SSLContext (with verify_mode=CERT_NONE
-    # and the OP_IGNORE_UNEXPECTED_EOF flag) to handle the connection correctly.
-    session.verify = True
-
-    cert = storage_options.get("client_cert")
-    key = storage_options.get("client_key")
-    if cert:
-        session.cert = (cert, key) if key else cert
-
-    if not verify:
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    bearer_token = storage_options.get("bearer_token")
-    if bearer_token:
-        session.headers.update({"Authorization": f"Bearer {bearer_token}"})
-    return session
+    """Build a synchronous aiohttp-backed session wrapper."""
+    return _SyncAiohttpSession(storage_options)
 
 
 def _http_fs_opts(storage_options):
@@ -330,16 +463,13 @@ class _RequestsPutFile(io.RawIOBase):
             try:
                 self._buf.seek(0)
                 # Read the entire buffer. Since we use SpooledTemporaryFile with
-                # max_size=64MiB, this is safe and allows requests/urllib3 to
-                # perform retries automatically (which it cannot easily do with
-                # a raw file-like object that doesn't support automatic rewinding).
+                # max_size=64MiB, this is safe and lets us retry the upload with
+                # a fresh aiohttp request if the connection drops mid-transfer.
                 data = self._buf.read()
-                # Manual retry for SSL/Connection errors that urllib3 might not
-                # catch or retry aggressively enough (e.g. some SSLEOFError cases).
+                # Manual retry for SSL/connection errors (e.g. some SSLEOFError
+                # cases) where reopening the request is the safest recovery.
                 import random
                 import time
-
-                from requests.exceptions import ConnectionError, SSLError
 
                 for attempt in range(5):
                     try:
@@ -348,14 +478,16 @@ class _RequestsPutFile(io.RawIOBase):
                         )
                         _raise_for_status(resp, self._url)
                         break
-                    except _requests.exceptions.Timeout as e:
-                        raise TimeoutError(self._url) from e
-                    except (SSLError, ConnectionError):
+                    except TimeoutError:
+                        raise
+                    except (
+                        aiohttp.ClientConnectionError,
+                        aiohttp.ClientSSLError,
+                        ssl.SSLError,
+                    ):
                         if attempt == 4:
                             raise
                         delay = (attempt + 1) * 0.5 + random.random()
-                        # session.close() is a bit too harsh; it closes the entire adapter.
-                        # We just want to allow a retry on a fresh connection.
                         time.sleep(delay)
             finally:
                 self._buf.close()
@@ -418,7 +550,7 @@ class WebDAVFileSystem(AbstractFileSystem):
             entries = self._propfind(path, depth=0)
             if entries:
                 return entries[0]
-        except (_requests.exceptions.SSLError, _requests.exceptions.ConnectionError):
+        except (aiohttp.ClientSSLError, aiohttp.ClientConnectionError, ssl.SSLError):
             # Re-raise only when the user has NOT opted out of SSL verification.
             # With --no-verify (ssl_verify=False) fall through to _http_fs.info()
             # which uses aiohttp with a fully-disabled SSL context.
