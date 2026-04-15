@@ -25,6 +25,11 @@ def pytest_collection_modifyitems(items):
                 ),
                 append=False,
             )
+        if item.get_closest_marker("xrootd"):
+            # Keep all local XRootD-backed tests on the same worker. Running several
+            # independent XRootD HTTPS fixtures in parallel is the main source of the
+            # late-suite xdist hangs we see locally.
+            item.add_marker(pytest.mark.xdist_group(name="xrootd"), append=False)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +255,29 @@ def _wait_for_port(host, port, timeout=10.0):
     return False
 
 
+def _wait_for_https(url, timeout=10.0, method="HEAD"):
+    """Block until an HTTPS endpoint responds or timeout expires."""
+    import time
+    import urllib.error
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        req = urllib.request.Request(url, method=method)
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=1):  # noqa: S310
+                return True
+        except urllib.error.HTTPError:
+            # A real HTTP response (even 4xx/5xx) proves the HTTPS listener is up.
+            return True
+        except (urllib.error.URLError, OSError):
+            time.sleep(0.1)
+    return False
+
+
 @pytest.fixture(scope="session")
 def xrootd_server(tmp_path_factory):
     """Start a local XRootD server (root:// + https://) for integration tests.
@@ -337,12 +365,22 @@ def xrootd_server(tmp_path_factory):
         proc.kill()
         pytest.skip("XRootD server did not start in time")
 
+    https_url = None
+    if has_tls:
+        candidate_https_url = f"https://127.0.0.1:{http_port}/"
+        health_name = ".gfal_https_healthcheck.txt"
+        (data_dir / health_name).write_text("ok")
+        if _wait_for_https(
+            candidate_https_url + health_name, timeout=10.0, method="HEAD"
+        ):
+            https_url = candidate_https_url
+
     yield {
         "data_dir": data_dir,
         # XRootD requires double-slash for absolute paths: root://host//abs/path
         # Single-slash would be a relative path (disallowed by the server config).
         "root_url": f"root://localhost:{xroot_port}//",
-        "https_url": f"https://localhost:{http_port}/" if has_tls else None,
+        "https_url": https_url,
         "cert_pem": str(cert_pem) if has_tls else None,
     }
 

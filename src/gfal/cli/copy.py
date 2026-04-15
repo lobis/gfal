@@ -3,6 +3,7 @@ gfal cp implementation.
 """
 
 import contextlib
+import errno
 import hashlib
 import os
 import stat
@@ -16,7 +17,7 @@ from urllib.parse import urlparse
 from gfal.cli import base
 from gfal.cli.progress import Progress
 from gfal.core import fs
-from gfal.core.errors import GfalFileExistsError
+from gfal.core.errors import GfalFileExistsError, is_xrootd_permission_message
 
 
 class CommandCopy(base.CommandBase):
@@ -260,6 +261,10 @@ class CommandCopy(base.CommandBase):
             except Exception as e:
                 self._print_error(e)
                 ecode = getattr(e, "errno", None)
+                if (
+                    not isinstance(ecode, int) or ecode == 0
+                ) and is_xrootd_permission_message(str(e)):
+                    ecode = errno.EACCES
                 rc = ecode if ecode and 0 < ecode <= 255 else 1
                 if self.params.abort_on_failure:
                     return rc

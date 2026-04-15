@@ -15,6 +15,7 @@ or as part of the normal suite (they auto-skip when prerequisites are missing).
 """
 
 import os
+import sys
 import uuid
 import zlib
 from pathlib import Path
@@ -23,7 +24,10 @@ import pytest
 
 from helpers import run_gfal
 
-pytestmark = pytest.mark.xrootd
+pytestmark = [
+    pytest.mark.xrootd,
+    pytest.mark.xdist_group("xrootd"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +551,11 @@ class TestXRootDSave:
 
 
 class TestXRootDHttps:
+    pytestmark = pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="Local XRootD HTTPS fixture is unreliable on macOS; covered by WebDAV tests and Linux CI",
+    )
+
     def test_https_stat(self, xrootd_server):
         """gfal-stat works over the HTTPS interface with --no-verify."""
         if xrootd_server["https_url"] is None:
