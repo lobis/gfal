@@ -61,23 +61,20 @@ RUN mkdir -p /etc/grid-security/certificates \
     && update-ca-trust \
     && rm -f /tmp/cern-*.pem /tmp/cern-*.der
 
-COPY pyproject.toml /tmp/gfal-pyproject.toml
-
-# Install the runtime dependencies declared in pyproject.toml, including the
-# temporary fsspec-xrootd fork used by gfal's xrootd extra. gfal itself is
-# installed at container run time so code changes do not require an image
-# rebuild.
-RUN python3.12 - <<'PY'
-import subprocess
-import tomllib
-from pathlib import Path
-
-data = tomllib.loads(Path("/tmp/gfal-pyproject.toml").read_text())
-deps = data["project"]["dependencies"] + data["project"]["optional-dependencies"]["xrootd"]
-subprocess.check_call(
-    ["python3.12", "-m", "pip", "install", "--no-cache-dir", *deps]
-)
-PY
+# Install xrootd Python bindings, gfal runtime deps, and the temporary
+# fsspec-xrootd fork explicitly. The package metadata must stay PyPI-safe, so
+# the test image owns the fork installation instead of relying on pyproject
+# direct references.
+RUN python3.12 -m pip install --no-cache-dir \
+        xrootd \
+        "fsspec>=2023.1.0" \
+        "aiohttp>=3.8.0" \
+        "requests>=2.28.0" \
+        truststore \
+        "rich>=13.0.0" \
+        "click>=8.0.0" \
+    && python3.12 -m pip install --no-cache-dir --no-deps \
+        "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
 
 # Make python3.12 the default python3 so that run_gfal_docker scripts work.
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
