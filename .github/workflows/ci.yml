@@ -132,8 +132,13 @@ jobs:
       # of slower pilot/xrootd cases that can make the workflow appear stuck near
       # completion. The dedicated Alma compare job covers legacy/new parity
       # separately.
+      #
+      # These CERN-backed network tests are occasionally flaky at the job level
+      # even when the exact same commit passes on main. Add explicit reruns here
+      # so transient EOS / proxy / network hiccups do not fail a release tag.
       run: |
         timeout 30m pytest -v -rs \
+          --reruns 3 --reruns-delay 10 \
           tests/test_integration_eospublic.py \
           tests/test_integration_eospilot.py -k "not TestEosPilotTpc and not TestEosPilotXrootd and not TestEosPilotMkdirRm and not test_copy_large_file"
 
