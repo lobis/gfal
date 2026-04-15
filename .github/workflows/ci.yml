@@ -169,7 +169,7 @@ jobs:
       run: |
         CERT_TMPDIR=$(mktemp -d)
         export CERT_TMPDIR
-        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem /tmp/gfal-tmp-proxy' EXIT
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem' EXIT
         echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out /tmp/userkey.pem
@@ -213,7 +213,7 @@ jobs:
       run: |
         CERT_TMPDIR=$(mktemp -d)
         export CERT_TMPDIR
-        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem /tmp/x509proxy' EXIT
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem' EXIT
         echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out /tmp/usercert.pem
         openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out /tmp/userkey.pem
