@@ -49,6 +49,7 @@ dev = [
     "pytest-rerunfailures>=16.0.1",
     "pre-commit>=3.0",
     "codespell>=2.4.2",
+    "certifi",
 ]
 
 [tool.hatch.version]

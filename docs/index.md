@@ -108,6 +108,9 @@ gfal cat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-ph
 
 For a larger set of verified examples, see [EOS Public Examples](eospublic-examples.md).
 
+For deployment-backed storage testing across EOS and dCache-style endpoints, see
+[Storage Deployment Integration](storage-deployment-integration.md).
+
 ## Command reference
 
 ### `gfal ls`

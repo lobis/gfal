@@ -145,6 +145,8 @@ class _SyncAiohttpSession:
         self._timeout = storage_options.get("timeout")
         self._cert = storage_options.get("client_cert")
         self._key = storage_options.get("client_key")
+        if self._cert:
+            self._ssl_context.load_cert_chain(self._cert, self._key or self._cert)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
 

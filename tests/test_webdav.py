@@ -23,6 +23,7 @@ from gfal.core.webdav import (
     WebDAVFileSystem,
     _http_fs_opts,
     _parse_propfind,
+    _SyncAiohttpSession,
 )
 
 # ---------------------------------------------------------------------------
@@ -328,6 +329,28 @@ class TestHttpFsOpts:
         assert get_client.func.__name__ == "_no_verify_get_client"
         assert get_client.keywords["ipv4_only"] is False
         assert get_client.keywords["ipv6_only"] is True
+
+
+class TestSyncAiohttpSession:
+    def test_loads_client_cert_chain_into_ssl_context(self, monkeypatch):
+        fake_context = MagicMock()
+
+        monkeypatch.setattr(
+            "gfal.core.webdav._make_ssl_context", lambda verify: fake_context
+        )
+
+        session = _SyncAiohttpSession(
+            {
+                "ssl_verify": False,
+                "client_cert": "/tmp/usercert.pem",
+                "client_key": "/tmp/userkey.pem",
+            }
+        )
+
+        fake_context.load_cert_chain.assert_called_once_with(
+            "/tmp/usercert.pem", "/tmp/userkey.pem"
+        )
+        assert session.cert == ("/tmp/usercert.pem", "/tmp/userkey.pem")
 
 
 # ---------------------------------------------------------------------------

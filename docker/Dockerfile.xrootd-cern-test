@@ -18,25 +18,39 @@ FROM almalinux:9
 # Install system dependencies.
 # python3.12 is available in AlmaLinux 9 AppStream (no EPEL needed).
 # xrootd-client provides GSI plugin libraries used by the pip xrootd package.
-RUN dnf install -y \
-        epel-release \
-        dnf-plugins-core \
-    && dnf config-manager --set-enabled crb \
-    && dnf install -y \
-        git \
-        wget \
-        openssl \
-        python3.12 \
-        python3.12-pip \
-        xrootd-client \
-        xrootd-client-libs \
-        globus-proxy-utils \
-        gfal2 \
-        gfal2-util-scripts \
-        python3-gfal2-util \
-        gfal2-plugin-xrootd \
-        gfal2-plugin-http \
-        gfal2-plugin-file \
+RUN set -euxo pipefail \
+    && for attempt in 1 2 3; do \
+        if dnf install -y \
+            --setopt=timeout=30 \
+            --setopt=install_weak_deps=False \
+            epel-release \
+            dnf-plugins-core \
+          && dnf config-manager --set-enabled crb \
+          && dnf install -y \
+            --setopt=timeout=30 \
+            --setopt=install_weak_deps=False \
+            git \
+            wget \
+            openssl \
+            python3.12 \
+            python3.12-pip \
+            xrootd-client \
+            xrootd-client-libs \
+            globus-proxy-utils \
+            gfal2 \
+            gfal2-util-scripts \
+            python3-gfal2-util \
+            gfal2-plugin-xrootd \
+            gfal2-plugin-http \
+            gfal2-plugin-file; then \
+          break; \
+        fi; \
+        if [ "$attempt" -eq 3 ]; then \
+          exit 1; \
+        fi; \
+        dnf clean all || true; \
+        sleep 10; \
+      done \
     && dnf clean all \
     && python3.12 -m pip install --upgrade pip --quiet
 
