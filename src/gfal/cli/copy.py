@@ -12,7 +12,7 @@ import threading
 import time
 import zlib
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.progress import Progress
@@ -378,6 +378,7 @@ class CommandCopy(base.CommandBase):
         use_tpc = explicit_tpc or auto_tpc
         if use_tpc and not self.params.dry_run:
             tpc_timeout = getattr(self.params, "transfer_timeout", 0) or None
+            tpc_dst_url = self._transfer_destination_url(dst_url, src_st)
 
             # ------------------------------------------------------------------
             # Progress display for TPC
@@ -431,7 +432,7 @@ class CommandCopy(base.CommandBase):
 
                 _tpc.do_tpc(
                     src_url,
-                    dst_url,
+                    tpc_dst_url,
                     opts,
                     mode=getattr(self.params, "tpc_mode", "pull"),
                     timeout=tpc_timeout,
@@ -538,6 +539,12 @@ class CommandCopy(base.CommandBase):
             print(f"Copy {src_url} => {dst_url}")
             return
 
+        write_dst_url = self._transfer_destination_url(dst_url, src_st)
+        write_remote_times = write_dst_url != dst_url
+        write_dst_fs, write_dst_path = fs.url_to_fs(
+            write_dst_url, fs.build_storage_options(self.params)
+        )
+
         # Create parent directories if requested
         if self.params.parent:
             parent = str(Path(dst_path).parent)
@@ -584,7 +591,7 @@ class CommandCopy(base.CommandBase):
         try:
             with (
                 src_fs.open(src_path, "rb") as src_f,
-                dst_fs.open(dst_path, "wb") as dst_f,
+                write_dst_fs.open(write_dst_path, "wb") as dst_f,
             ):
                 while True:
                     chunk = src_f.read(fs.CHUNK_SIZE)
@@ -624,10 +631,27 @@ class CommandCopy(base.CommandBase):
                     f"Checksum mismatch after transfer: src={src_checksum} dst={dst_checksum}"
                 )
 
-        self._preserve_times(src_st, dst_url, dst_path)
+        self._preserve_times(
+            src_st, dst_url, dst_path, remote_already_preserved=write_remote_times
+        )
 
-    def _preserve_times(self, src_st, dst_url, dst_path):
+    def _transfer_destination_url(self, dst_url, src_st):
+        """Return the destination URL to use for the transfer itself.
+
+        EOS remote endpoints accept ``eos.mtime`` on the destination URL for
+        streamed uploads and TPC, so we only rewrite the URL for the write step.
+        All preflight existence checks continue to use the canonical destination.
+        """
         if not getattr(self.params, "preserve_times", False):
+            return dst_url
+        return _eos_mtime_url(dst_url, src_st.st_mtime) or dst_url
+
+    def _preserve_times(
+        self, src_st, dst_url, dst_path, *, remote_already_preserved=False
+    ):
+        if not getattr(self.params, "preserve_times", False):
+            return
+        if remote_already_preserved:
             return
 
         dst_local = _local_destination_path(dst_url, dst_path)
@@ -756,6 +780,37 @@ def _checksum_fs(fso, path, alg):
                 break
             _update_hasher(h, alg, chunk)
     return _finalise_hasher(h, alg)
+
+
+def _split_timestamp_ns(timestamp):
+    seconds = int(timestamp)
+    nanoseconds = int(round((timestamp - seconds) * 1_000_000_000))
+    if nanoseconds >= 1_000_000_000:
+        seconds += 1
+        nanoseconds -= 1_000_000_000
+    return seconds, nanoseconds
+
+
+def _eos_mtime_url(url, timestamp):
+    """Return *url* with an ``eos.mtime`` query when it targets EOS.
+
+    EOS accepts ``eos.mtime=<sec>[.<nsec>]`` on both WebDAV and XRootD
+    destinations. Non-EOS endpoints are left untouched so their behaviour
+    remains unchanged.
+    """
+    normalized = fs.normalize_url(url)
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
+        return None
+    if "eos" not in (parsed.hostname or "").lower():
+        return None
+
+    seconds, nanoseconds = _split_timestamp_ns(timestamp)
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    params["eos.mtime"] = (
+        str(seconds) if nanoseconds == 0 else f"{seconds}.{nanoseconds:09d}"
+    )
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 def _local_destination_path(dst_url, dst_path):

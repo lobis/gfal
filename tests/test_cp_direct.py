@@ -16,6 +16,7 @@ import pytest
 from gfal.cli.copy import (
     CommandCopy,
     _checksum_fs,
+    _eos_mtime_url,
     _finalise_hasher,
     _is_special_file,
     _make_hasher,
@@ -462,6 +463,29 @@ class TestChecksumHelpers:
         alg, expected = _parse_checksum_arg("ADLER32:abc123")
         assert alg == "ADLER32"
         assert expected == "abc123"
+
+
+class TestPreserveTimesHelpers:
+    def test_eos_mtime_url_for_https_eos(self):
+        url = _eos_mtime_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt", 946684800.0
+        )
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?eos.mtime=946684800"
+        )
+
+    def test_eos_mtime_url_preserves_existing_query(self):
+        url = _eos_mtime_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?authz=abc", 946684800.25
+        )
+        assert "authz=abc" in url
+        assert "eos.mtime=946684800.250000000" in url
+
+    def test_eos_mtime_url_ignores_non_eos_hosts(self):
+        assert (
+            _eos_mtime_url("root://redirector.example.org//store/file.root", 1.0)
+            is None
+        )
 
     def test_make_hasher_adler32(self):
         h = _make_hasher("ADLER32")
