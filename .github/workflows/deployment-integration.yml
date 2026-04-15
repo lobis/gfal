@@ -1,0 +1,165 @@
+name: Deployment Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  eos-kind:
+    name: EOS kind deployment contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install local test dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev,all]"
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+          /opt/ghc /usr/local/share/boost /usr/share/swift \
+          /opt/hostedtoolcache/CodeQL || true
+        docker system prune -af --volumes || true
+
+    - name: Cache EOS Docker image
+      id: cache-eos-image
+      uses: actions/cache@v5
+      with:
+        path: /tmp/eos-image.tar
+        key: eos-kind-image-5.4.1.el9
+
+    - name: Pull and save EOS Docker image
+      if: steps.cache-eos-image.outputs.cache-hit != 'true'
+      env:
+        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
+        EOS_IMAGE_TAG: 5.4.1.el9
+      run: |
+        docker pull ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}
+        docker save ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG} -o /tmp/eos-image.tar
+
+    - name: Load EOS Docker image from cache
+      if: steps.cache-eos-image.outputs.cache-hit == 'true'
+      run: |
+        docker load -i /tmp/eos-image.tar
+        rm -f /tmp/eos-image.tar
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1
+
+    - name: Load EOS image into kind
+      env:
+        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
+        EOS_IMAGE_TAG: 5.4.1.el9
+      run: |
+        kind load docker-image \
+          --name chart-testing \
+          ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}
+        docker rmi ${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG} || true
+
+    - name: Deploy EOS via Helm chart
+      env:
+        EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
+        EOS_IMAGE_TAG: 5.4.1.el9
+      run: |
+        helm install eos oci://registry.cern.ch/eos/charts/server \
+          --set "global.repository=${EOS_IMAGE_REPO}" \
+          --set "global.tag=${EOS_IMAGE_TAG}" \
+          --set "global.pullPolicy=IfNotPresent" \
+          --set "fst.replicaCount=2" \
+          --set "qdb.replicaCount=1" \
+          --set "global.securityContext.privileged=true" \
+          --set "global.securityContext.allowPrivilegeEscalation=true" \
+          --timeout 20m \
+          --wait
+
+    - name: Wait for EOS namespace to boot
+      run: |
+        MGM_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
+        for i in $(seq 1 60); do
+          if kubectl exec eos-mgm-0 -c "${MGM_CONTAINER}" -- eos ns stat 2>/dev/null | grep -q "booted"; then
+            break
+          fi
+          if [ "$i" -eq 60 ]; then
+            kubectl logs eos-mgm-0 --all-containers=true --tail=100 || true
+            exit 1
+          fi
+          sleep 10
+        done
+
+    - name: Set up SSH access to EOS MGM
+      timeout-minutes: 5
+      run: |
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        ssh-keygen -t ed25519 -N '' -f ~/.ssh/eos_test_key -C gfal-ci
+        PUBLIC_KEY=$(cat ~/.ssh/eos_test_key.pub)
+        MGM_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
+
+        kubectl exec eos-mgm-0 -c "${MGM_CONTAINER}" -- bash -c "
+          set -eo pipefail
+          for attempt in 1 2 3; do
+            if timeout 120 dnf install -y --nogpgcheck --setopt=timeout=30 --setopt=install_weak_deps=False openssh-server; then
+              break
+            fi
+            if [ \"\$attempt\" -eq 3 ]; then
+              exit 1
+            fi
+            sleep 5
+          done
+          mkdir -p /root/.ssh
+          chmod 700 /root/.ssh
+          echo '${PUBLIC_KEY}' > /root/.ssh/authorized_keys
+          chmod 600 /root/.ssh/authorized_keys
+          ssh-keygen -A
+          rm -f /run/nologin /etc/nologin /var/run/nologin
+          /usr/sbin/sshd -p 2222 \
+            -o UsePAM=no \
+            -o PermitRootLogin=yes \
+            -o PubkeyAuthentication=yes \
+            -o PasswordAuthentication=no \
+            -o AuthorizedKeysFile=/root/.ssh/authorized_keys \
+            -o PrintLastLog=no \
+            -o PrintMotd=no
+        "
+
+        kubectl port-forward pod/eos-mgm-0 2222:2222 1094:1094 8443:8443 &
+        sleep 5
+
+        cat >> ~/.ssh/config << 'EOF'
+        Host eos-mgm
+          HostName 127.0.0.1
+          Port 2222
+          User root
+          IdentityFile ~/.ssh/eos_test_key
+          StrictHostKeyChecking no
+          UserKnownHostsFile /dev/null
+          ServerAliveInterval 30
+          ConnectTimeout 10
+        EOF
+
+        ssh eos-mgm 'eos version'
+
+    - name: Prepare EOS deployment contract
+      env:
+        EOS_TEST_SSH_TARGET: eos-mgm
+      run: |
+        chmod +x scripts/prepare-eos-kind-deployment.sh
+        ./scripts/prepare-eos-kind-deployment.sh "gha-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+
+    - name: Run generic deployment integration tests
+      run: pytest -v -rs tests/test_integration_storage_deployment.py
+
+    - name: Dump EOS state on failure
+      if: failure()
+      run: |
+        kubectl get pods || true
+        kubectl get svc || true
+        kubectl logs eos-mgm-0 --all-containers=true --tail=100 || true
