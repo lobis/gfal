@@ -117,8 +117,8 @@ def _find_docker() -> Optional[str]:
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
-# runtime dependencies from gfal's pyproject (including the temporary
-# fsspec-xrootd fork). Used for XRootD integration tests that require proper
+# gfal runtime dependencies plus the temporary fsspec-xrootd fork used for
+# integration coverage. Used for XRootD integration tests that require proper
 # GSI authentication (not available on macOS without /etc/grid-security).
 _DOCKER_IMAGE = "xrootd-cern-test"
 
