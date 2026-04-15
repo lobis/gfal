@@ -469,8 +469,17 @@ jobs:
         - name: PyPI
           container: python:3.12-slim
           install_cmd: |
-            for i in {1..18}; do \
-              pip install --no-cache-dir "gfal==$EXPECTED_VERSION" && break || sleep 10; \
+            i=1
+            while [ "$i" -le 18 ]; do
+              if pip install --no-cache-dir "gfal==$EXPECTED_VERSION"; then
+                break
+              fi
+              if [ "$i" -eq 18 ]; then
+                echo "❌ Timed out waiting for gfal==$EXPECTED_VERSION to appear on PyPI"
+                exit 1
+              fi
+              sleep 10
+              i=$((i + 1))
             done
     container: ${{ matrix.target.container }}
     steps:
