@@ -185,6 +185,7 @@ jobs:
 
   deployment-integration:
     name: Deployment Integration (EOS kind)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -228,12 +229,16 @@ jobs:
           /opt/hostedtoolcache/CodeQL || true
         docker system prune -af --volumes || true
 
+    - name: Set EOS cache key
+      id: eos-version
+      run: echo "tag=${EOS_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
     - name: Cache EOS Docker image
       id: cache-eos-image
       uses: actions/cache@v5
       with:
         path: /tmp/eos-image.tar
-        key: eos-kind-image-5.4.1.el9
+        key: eos-kind-image-${{ steps.eos-version.outputs.tag }}
 
     - name: Pull and save EOS Docker image
       if: steps.cache-eos-image.outputs.cache-hit != 'true'
@@ -694,7 +699,7 @@ jobs:
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration ]
+    needs: [ codespell, pre-commit, tests, xrootd, integration ]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
