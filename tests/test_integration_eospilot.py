@@ -33,6 +33,7 @@ import hashlib
 import os
 import socket
 import sys
+import textwrap
 import uuid
 from pathlib import Path
 
@@ -49,6 +50,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.network]
 # ---------------------------------------------------------------------------
 
 _PILOT_BASE = "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
+_PILOT_ROOT_BASE = "root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
 _PILOT_NO_ACCESS = "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/dteam-has-no-permissions-here"
 _PUBSRC = (
     "https://eospublic.cern.ch//eos/opendata/phenix/"
@@ -159,6 +161,72 @@ def _run_repo_gfal_docker_script(shell_script, proxy_cert):
         "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
     )
     return _docker_run_command(f"{setup}{shell_script}", proxy_cert=proxy_cert)
+
+
+def _preserve_times_url(kind, name):
+    if kind == "local":
+        return f"file:///tmp/{name}"
+    if kind == "https":
+        return f"{_PILOT_BASE}/{name}"
+    if kind == "root":
+        return f"{_PILOT_ROOT_BASE}/{name}"
+    raise ValueError(f"Unknown preserve-times endpoint kind: {kind}")
+
+
+def _preserve_times_setup(kind, url):
+    if kind == "local":
+        return ""
+    if kind == "https":
+        return textwrap.dedent(
+            f"""
+            python3.12 - <<'PY'
+            import requests
+
+            proxy = "/tmp/x509proxy"
+            resp = requests.put(
+                "{url}?eos.mtime=946684800",
+                data=b"preserve-times\\n",
+                cert=(proxy, proxy),
+                verify=False,
+                timeout=20,
+            )
+            if resp.status_code not in (200, 201, 204):
+                raise SystemExit(f"https source setup failed: {{resp.status_code}}")
+            PY
+            """
+        )
+    if kind == "root":
+        return f"xrdcp -f /tmp/src.txt '{url}?eos.mtime=946684800'\n"
+    raise ValueError(f"Unknown preserve-times endpoint kind: {kind}")
+
+
+def _preserve_times_verify(kind, url):
+    if kind == "local":
+        return textwrap.dedent(
+            f"""
+            python3.12 - <<'PY'
+            from pathlib import Path
+            from urllib.parse import urlparse
+
+            path = Path(urlparse("{url}").path)
+            ts = int(path.stat().st_mtime)
+            if ts != 946684800:
+                raise SystemExit(f"local mtime mismatch for {{path}}: {{ts}}")
+            PY
+            """
+        )
+    return textwrap.dedent(
+        f"""
+        gfal stat -t 20 --no-verify '{url}' >/tmp/stat.out 2>/tmp/stat.err
+        grep -q '2000-01-01' /tmp/stat.out
+        """
+    )
+
+
+def _preserve_times_cleanup(kind, url):
+    if kind == "local":
+        return ""
+    return f"gfal rm -t 20 --no-verify '{url}' >/dev/null 2>/dev/null || true\n"
 
 
 # ---------------------------------------------------------------------------
@@ -323,28 +391,61 @@ class TestEosPilotStreamingCopy:
 @requires_proxy
 @requires_docker
 class TestEosPilotStreamingCopyDocker:
-    def test_preserve_times_warns_and_does_not_preserve_remote_https_mtime(
-        self, proxy_cert
+    @pytest.mark.parametrize(
+        ("src_kind", "dst_kind"),
+        [
+            ("local", "https"),
+            ("https", "local"),
+            ("local", "root"),
+            ("root", "local"),
+            ("https", "https"),
+            ("https", "root"),
+            ("root", "https"),
+            ("root", "root"),
+        ],
+        ids=[
+            "local_to_https",
+            "https_to_local",
+            "local_to_root",
+            "root_to_local",
+            "https_to_https",
+            "https_to_root",
+            "root_to_https",
+            "root_to_root",
+        ],
+    )
+    def test_preserve_times_across_local_https_and_xrootd(
+        self, proxy_cert, src_kind, dst_kind
     ):
-        remote = f"{_PILOT_BASE}/pytest-preserve-times-{uuid.uuid4().hex[:8]}.txt"
-        script = f"""
-set -e
-printf 'preserve times\\n' >/tmp/src.txt
-touch -t 200001010101 /tmp/src.txt
-gfal cp -t 20 --preserve-times file:///tmp/src.txt '{remote}' >/tmp/cp.out 2>/tmp/cp.err
-gfal stat -t 20 '{remote}' >/tmp/stat.out 2>/tmp/stat.err
-gfal rm -t 20 '{remote}' >/tmp/rm.out 2>/tmp/rm.err || true
-cat /tmp/cp.out
-cat /tmp/stat.out
-cat /tmp/cp.err >&2
-cat /tmp/stat.err >&2
-cat /tmp/rm.err >&2
-"""
+        src_name = f"pytest-preserve-src-{uuid.uuid4().hex[:8]}.txt"
+        dst_name = f"pytest-preserve-dst-{uuid.uuid4().hex[:8]}.txt"
+        src_url = _preserve_times_url(
+            src_kind, "src.txt" if src_kind == "local" else src_name
+        )
+        dst_url = _preserve_times_url(
+            dst_kind, "dst.txt" if dst_kind == "local" else dst_name
+        )
+        setup_src = _preserve_times_setup(src_kind, src_url)
+        verify_dst = _preserve_times_verify(dst_kind, dst_url)
+        cleanup_src = _preserve_times_cleanup(src_kind, src_url)
+        cleanup_dst = _preserve_times_cleanup(dst_kind, dst_url)
+
+        script = textwrap.dedent(
+            f"""
+            set -e
+            printf 'preserve times\\n' >/tmp/src.txt
+            touch -t 200001010101 /tmp/src.txt
+            {setup_src}gfal cp -t 20 --no-verify --preserve-times '{src_url}' '{dst_url}' >/tmp/cp.out 2>/tmp/cp.err
+            {verify_dst}{cleanup_src}{cleanup_dst}cat /tmp/cp.out
+            cat /tmp/cp.err >&2
+            if [ -f /tmp/stat.out ]; then cat /tmp/stat.out; fi
+            if [ -f /tmp/stat.err ]; then cat /tmp/stat.err >&2; fi
+            """
+        )
         rc, out, err = _run_repo_gfal_docker_script(script, proxy_cert)
 
         assert rc == 0, err
-        assert "--preserve-times is only supported for local destinations" in err
-        assert "2000-01-01" not in out
+        assert "--preserve-times is only supported for local destinations" not in err
 
     def test_skip_if_same_skips_matching_remote_and_fails_on_mismatch(self, proxy_cert):
         remote = f"{_PILOT_BASE}/pytest-skip-if-same-{uuid.uuid4().hex[:8]}.txt"

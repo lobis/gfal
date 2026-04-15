@@ -116,9 +116,10 @@ def _find_docker() -> Optional[str]:
     return None
 
 
-# Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and
-# fsspec-xrootd installed.  Used for XRootD integration tests that require
-# proper GSI authentication (not available on macOS without /etc/grid-security).
+# Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
+# runtime dependencies from gfal's pyproject (including the temporary
+# fsspec-xrootd fork). Used for XRootD integration tests that require proper
+# GSI authentication (not available on macOS without /etc/grid-security).
 _DOCKER_IMAGE = "xrootd-cern-test"
 
 # Repo root — mounted read-only into the container so gfal is importable.
@@ -193,7 +194,7 @@ def run_gfal_docker(
 
     Returns ``(returncode, stdout, stderr)`` as strings.
     """
-    # fsspec-xrootd (gfal3-updates branch) is pre-installed in the image.
+    # XRootD runtime dependencies are pre-installed in the image from pyproject.toml.
     # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
     # but /repo is mounted read-only.
     script = (

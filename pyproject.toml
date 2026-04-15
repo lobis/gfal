@@ -32,13 +32,13 @@ tui = [
     "textual>=8.2.3",
 ]
 xrootd = [
-    "fsspec-xrootd>=0.5.1",
+    "fsspec-xrootd @ git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates",
     "xrootd>=5.9.2",
 ]
 all = [
     "rich-click>=1.7.0",
     "textual>=8.2.3",
-    "fsspec-xrootd>=0.5.1",
+    "fsspec-xrootd @ git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates",
     "xrootd>=5.9.2",
 ]
 dev = [
@@ -53,6 +53,9 @@ dev = [
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gfal"]
