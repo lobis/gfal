@@ -23,9 +23,9 @@ That means our side needs to provide two things:
 - a container image that can run that suite when a deployment is already available
 
 For EOS we also want our own CI path, so the repo includes an EOS-specific
-workflow that follows the same general pattern used in `eos-tui`: deploy EOS
-via the official Helm chart on a local `kind` cluster, expose the storage
-endpoints, then run the generic deployment suite.
+job in the main CI workflow that follows the same general pattern used in
+`eos-tui`: deploy EOS via the official Helm chart on a local `kind` cluster,
+expose the storage endpoints, then run the generic deployment suite.
 
 ## Environment Contract
 
