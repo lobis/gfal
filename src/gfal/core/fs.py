@@ -8,6 +8,7 @@ import hashlib
 import os
 import stat as stat_module
 import sys
+import warnings
 import zlib
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from urllib.parse import urlparse, urlunparse
 import fsspec
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
+_EMITTED_ROOT_HTTPS_FALLBACKS: set[tuple[str, str]] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +115,62 @@ def normalize_url(url):
     return url
 
 
+class RootProtocolFallbackWarning(UserWarning):
+    """Warning emitted when ``root://`` falls back to HTTPS."""
+
+
+def _root_url_to_https(url):
+    """Translate a ``root://`` or ``xroot://`` URL to the equivalent HTTPS URL."""
+    parsed = urlparse(url)
+    path = parsed.path
+    if path.startswith("//"):
+        path = path[1:]
+    elif not path.startswith("/"):
+        path = "/" + path
+    return urlunparse(parsed._replace(scheme="https", path=path))
+
+
+def _iter_exception_chain(exc):
+    """Yield *exc* and its causes/contexts without looping forever."""
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_missing_xrootd_dependency(exc):
+    """Return True when XRootD initialisation failed because optional deps are missing."""
+    markers = (
+        "xrootd",
+        "fsspec_xrootd",
+        "protocol not known",
+        "no implementation for protocol",
+        "no module named",
+    )
+    for current in _iter_exception_chain(exc):
+        if isinstance(current, (ImportError, ModuleNotFoundError)):
+            return True
+        if any(marker in str(current).lower() for marker in markers):
+            return True
+    return False
+
+
+def _warn_root_https_fallback(root_url, https_url):
+    """Emit a one-time warning when a ``root://`` URL is retried via HTTPS."""
+    key = (root_url, https_url)
+    if key in _EMITTED_ROOT_HTTPS_FALLBACKS:
+        return
+    _EMITTED_ROOT_HTTPS_FALLBACKS.add(key)
+    warnings.warn(
+        "XRootD support is not installed; "
+        f"retrying {root_url} via HTTPS as {https_url}",
+        RootProtocolFallbackWarning,
+        stacklevel=3,
+    )
+
+
 def url_to_fs(url, storage_options=None, **kwargs):
     """
     Return (AbstractFileSystem, path) for a URL.
@@ -139,6 +197,12 @@ def url_to_fs(url, storage_options=None, **kwargs):
         try:
             fs, path = fsspec.url_to_fs(url, **storage_options)
         except Exception as e:
+            if _is_missing_xrootd_dependency(e):
+                https_url = _root_url_to_https(url)
+                _warn_root_https_fallback(url, https_url)
+                from gfal.core.webdav import WebDAVFileSystem
+
+                return WebDAVFileSystem(storage_options), https_url
             cause = e.__cause__ or e
             raise RuntimeError(
                 f"Cannot load XRootD filesystem: {cause}\n"
