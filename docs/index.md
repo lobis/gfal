@@ -2,6 +2,37 @@
 
 **gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with optional **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd).
 
+## Python library API
+
+`import gfal` exposes an async-first client plus a synchronous facade:
+
+```python
+import asyncio
+import gfal
+
+
+async def main():
+    client = gfal.AsyncGfalClient()
+    await client.copy(
+        "file:///tmp/input.txt",
+        "file:///tmp/output.txt",
+        options=gfal.CopyOptions(
+            overwrite=True,
+            checksum=gfal.ChecksumPolicy("ADLER32"),
+        ),
+    )
+
+
+asyncio.run(main())
+```
+
+```python
+import gfal
+
+client = gfal.GfalClient()
+client.copy("file:///tmp/input.txt", "file:///tmp/output.txt")
+```
+
 ## Installation
 
 ### From PyPI

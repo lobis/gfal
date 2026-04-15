@@ -690,6 +690,23 @@ class TestTransferTimeout:
         assert dst.read_bytes() == b"hello world"
 
 
+class TestCliUsesLibraryCopy:
+    def test_do_copy_delegates_to_gfal_client(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+
+        with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        mock_client.copy.assert_called_once()
+
+
 class TestTpcOnlyPreflight:
     def test_tpc_only_unsupported_pair_skips_destination_probe(self, tmp_path):
         src = tmp_path / "src.txt"
