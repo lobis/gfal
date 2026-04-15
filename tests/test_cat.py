@@ -35,7 +35,7 @@ class TestCatBasic:
         f = tmp_path / "test.txt"
         f.write_text("hello ipv6\n")
 
-        rc, out, err = run_gfal("cat", "-6", f.as_uri())
+        rc, out, err = run_gfal("cat", "--ipv6", f.as_uri())
 
         assert rc == 0
         assert out == "hello ipv6\n"

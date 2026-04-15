@@ -74,7 +74,7 @@ class TestStatRegularFile:
         f = tmp_path / "test.txt"
         f.write_text("x")
 
-        rc, out, err = run_gfal("stat", "-4", f.as_uri())
+        rc, out, err = run_gfal("stat", "--ipv4", f.as_uri())
 
         assert rc == 0
         assert "File:" in out

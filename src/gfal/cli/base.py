@@ -753,6 +753,10 @@ class CommandBase:
             params_dict["dst"] = [params_dict["src"]]
             params_dict["src"] = None
 
+        if params_dict.get("ipv4_only") and params_dict.get("ipv6_only"):
+            sys.stderr.write(f"{prog}: --ipv4 and --ipv6 are mutually exclusive\n")
+            sys.exit(2)
+
         self.params = SimpleNamespace(**params_dict)
 
     # ------------------------------------------------------------------

@@ -38,7 +38,7 @@ class TestSaveBasic:
         f = tmp_path / "out.txt"
         content = "hello over ipv4\n"
 
-        rc, out, err = run_gfal("save", "-4", f.as_uri(), input=content)
+        rc, out, err = run_gfal("save", "--ipv4", f.as_uri(), input=content)
 
         assert rc == 0
         assert f.read_text() == content

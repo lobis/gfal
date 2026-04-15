@@ -33,6 +33,36 @@ def test_ipv4_v6_parsing():
     assert cmd.params.ipv6_only is True
 
 
+def test_ipv4_and_ipv6_mutually_exclusive_long_options(capsys):
+    """Verify that the preferred long options are mutually exclusive."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self):
+            return 0
+
+    cmd = DummyCommand()
+    with pytest.raises(SystemExit) as excinfo:
+        cmd.parse(cmd.execute_test, ["gfal-test", "--ipv4", "--ipv6"])
+
+    assert excinfo.value.code == 2
+    assert "--ipv4 and --ipv6 are mutually exclusive" in capsys.readouterr().err
+
+
+def test_ipv4_and_ipv6_mutually_exclusive_mixed_aliases(capsys):
+    """Short aliases should also be rejected when combined with long options."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self):
+            return 0
+
+    cmd = DummyCommand()
+    with pytest.raises(SystemExit) as excinfo:
+        cmd.parse(cmd.execute_test, ["gfal-test", "-4", "--ipv6"])
+
+    assert excinfo.value.code == 2
+    assert "--ipv4 and --ipv6 are mutually exclusive" in capsys.readouterr().err
+
+
 def test_build_storage_options_ipv():
     """Verify that build_storage_options captures IP flags."""
     params = MagicMock()

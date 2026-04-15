@@ -33,7 +33,7 @@ class TestRmSingleFile:
         f = tmp_path / "file.txt"
         f.write_text("content")
 
-        rc, out, err = run_gfal("rm", "-6", f.as_uri())
+        rc, out, err = run_gfal("rm", "--ipv6", f.as_uri())
 
         assert rc == 0
         assert not f.exists()
