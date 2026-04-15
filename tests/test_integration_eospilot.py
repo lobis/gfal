@@ -180,18 +180,21 @@ def _preserve_times_setup(kind, url):
         return textwrap.dedent(
             f"""
             python3.12 - <<'PY'
-            import requests
-
+            import ssl
+            import urllib.request
             proxy = "/tmp/x509proxy"
-            resp = requests.put(
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ctx.load_cert_chain(proxy, proxy)
+            req = urllib.request.Request(
                 "{url}?eos.mtime=946684800",
                 data=b"preserve-times\\n",
-                cert=(proxy, proxy),
-                verify=False,
-                timeout=20,
+                method="PUT",
             )
-            if resp.status_code not in (200, 201, 204):
-                raise SystemExit(f"https source setup failed: {{resp.status_code}}")
+            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+                if resp.status not in (200, 201, 204):
+                    raise SystemExit(f"https source setup failed: {{resp.status}}")
             PY
             """
         )

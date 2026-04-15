@@ -19,6 +19,7 @@ import pytest
 
 from gfal.cli.copy import _tpc_applicable
 from gfal.core import tpc as tpc_mod
+from gfal.core.webdav import HttpStatusError
 from helpers import run_gfal
 
 # ---------------------------------------------------------------------------
@@ -85,11 +86,11 @@ class TestParseTpcBody:
             tpc_mod._parse_tpc_body(resp)
 
     def test_403_raises_http_error(self):
-        import requests
-
         resp = self._make_resp(403)
-        resp.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
-        with pytest.raises(requests.HTTPError):
+        resp.raise_for_status.side_effect = HttpStatusError(
+            403, "https://dst.example.com/file"
+        )
+        with pytest.raises(HttpStatusError):
             tpc_mod._parse_tpc_body(resp)
 
     def test_202_with_perf_markers_then_success(self):
@@ -349,7 +350,7 @@ class TestBuildSession:
 
     def test_ssl_verify_true_default(self):
         session = tpc_mod._build_session({})
-        # Default requests session verify is True or a CA bundle path; not False
+        # Default session verify should remain enabled.
         assert session.verify is not False
 
 

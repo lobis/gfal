@@ -10,13 +10,20 @@ from __future__ import annotations
 
 import posixpath
 import socket
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import MagicMock
 
+import aiohttp
 import pytest
 
-from gfal.core.webdav import WebDAVFileSystem, _http_fs_opts, _parse_propfind
+from gfal.core.webdav import (
+    WebDAVFileSystem,
+    _http_fs_opts,
+    _parse_propfind,
+)
 
 # ---------------------------------------------------------------------------
 # Minimal mock WebDAV server
@@ -621,14 +628,12 @@ class TestWebDAVSslError:
         """info() re-raises SSLError when ssl_verify=True (default)."""
         from unittest.mock import patch
 
-        import requests
-
         fs = WebDAVFileSystem()  # ssl_verify defaults to True
-        ssl_exc = requests.exceptions.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
+        ssl_exc = ssl.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
 
         with (
             patch.object(fs, "_propfind", side_effect=ssl_exc),
-            pytest.raises(requests.exceptions.SSLError),
+            pytest.raises(ssl.SSLError),
         ):
             fs.info("https://example.com/path")
 
@@ -636,10 +641,8 @@ class TestWebDAVSslError:
         """info() falls through to _http_fs when ssl_verify=False (--no-verify)."""
         from unittest.mock import patch
 
-        import requests
-
         fs = WebDAVFileSystem({"ssl_verify": False})
-        ssl_exc = requests.exceptions.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
+        ssl_exc = ssl.SSLError("SSL: CERTIFICATE_VERIFY_FAILED")
 
         with _vfs_lock:
             _vfs.add("/nv_fallback.txt")
@@ -654,14 +657,12 @@ class TestWebDAVSslError:
         """info() re-raises ConnectionError when ssl_verify=True (default)."""
         from unittest.mock import patch
 
-        import requests
-
         fs = WebDAVFileSystem()
-        conn_exc = requests.exceptions.ConnectionError("connection refused")
+        conn_exc = aiohttp.ClientConnectionError("connection refused")
 
         with (
             patch.object(fs, "_propfind", side_effect=conn_exc),
-            pytest.raises(requests.exceptions.ConnectionError),
+            pytest.raises(aiohttp.ClientConnectionError),
         ):
             fs.info("https://example.com/path")
 
@@ -742,12 +743,8 @@ class TestWebDAVOpenWrite:
             f.write(b"payload")
 
     def test_open_write_timeout_maps_to_timeout_error(self):
-        from unittest.mock import MagicMock
-
-        import requests
-
         fs = WebDAVFileSystem({"timeout": 3})
-        fs._session.put = MagicMock(side_effect=requests.exceptions.Timeout("slow"))
+        fs._session.put = MagicMock(side_effect=TimeoutError("slow"))
 
         with pytest.raises(TimeoutError), fs.open("https://server/slow.bin", "wb") as f:
             f.write(b"payload")

@@ -106,23 +106,10 @@ def do_tpc(
 
 
 def _build_session(opts):
-    """Return a requests.Session configured from fsspec storage_options."""
-    import requests
+    """Return a synchronous aiohttp-backed session configured from storage options."""
+    from gfal.core.webdav import _make_session
 
-    session = requests.Session()
-    if opts.get("client_cert"):
-        key = opts.get("client_key", opts["client_cert"])
-        session.cert = (opts["client_cert"], key)
-    if not opts.get("ssl_verify", True):
-        # Suppress the InsecureRequestWarning that urllib3 emits
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        session.verify = False
-    bearer_token = opts.get("bearer_token")
-    if bearer_token:
-        session.headers.update({"Authorization": f"Bearer {bearer_token}"})
-    return session
+    return _make_session(opts)
 
 
 def _parse_tpc_body(resp, progress_callback=None):

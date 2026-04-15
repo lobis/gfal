@@ -834,35 +834,26 @@ class CommandBase:
             if strerror not in msg:
                 return f"{msg}: {strerror}"
             return msg
-        # SSL / connection errors from requests: give a clear hint.
-        try:
-            import requests as _requests
-
-            if isinstance(e, _requests.exceptions.Timeout):
-                return f"{path}: Operation timed out" if path else "Operation timed out"
-            if isinstance(e, _requests.exceptions.SSLError):
-                cause = str(e)
-                if "WRONG_VERSION_NUMBER" in cause or "UNKNOWN_PROTOCOL" in cause:
-                    return f"{msg}: server does not speak HTTPS on this port (try http:// instead)"
-                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
-            if isinstance(e, _requests.exceptions.ConnectionError):
-                cause = str(e.__cause__ or e).lower()
-                if "ssl" in cause or "certificate" in cause:
-                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
-                return msg
-        except ImportError:
-            pass
-
         # SSL / connection errors from aiohttp (used by fsspec)
         try:
             import aiohttp as _aiohttp
 
+            if isinstance(e, _aiohttp.ClientSSLError):
+                cause = str(e)
+                if "WRONG_VERSION_NUMBER" in cause or "UNKNOWN_PROTOCOL" in cause:
+                    return f"{msg}: server does not speak HTTPS on this port (try http:// instead)"
+                return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
             if isinstance(e, _aiohttp.ClientConnectorSSLError):
                 return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
             if isinstance(e, _aiohttp.ClientConnectorError):
                 cause = str(e.__cause__ or e).lower()
                 if "ssl" in cause or "certificate" in cause:
                     return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
+            if isinstance(e, _aiohttp.ClientConnectionError):
+                cause = str(e.__cause__ or e).lower()
+                if "ssl" in cause or "certificate" in cause:
+                    return f"{msg}: SSL certificate error (use --no-verify to skip, or install the server CA. See: https://lobis.github.io/gfal-cli/installation/#cern-ca-certificates)"
+                return msg
         except ImportError:
             pass
         # HTTP errors from aiohttp: status attribute carries the HTTP code
@@ -928,7 +919,8 @@ class CommandBase:
 
     def execute(self, func):
         # Forced IP family (IPv4/v6)
-        # This affects the `requests` layer globally for the duration of the command.
+        # This affects urllib3-based transports globally for the duration
+        # of the command.
         ipv4_only = getattr(self.params, "ipv4_only", False)
         ipv6_only = getattr(self.params, "ipv6_only", False)
         if ipv4_only or ipv6_only:
