@@ -15,6 +15,7 @@ authors = [
 dependencies = [
     "fsspec>=2023.1.0",
     "aiohttp>=3.8.0",
+    "urllib3>=2.0.0",
     "truststore; python_version >= '3.10'",
     "rich>=13.0.0",
     "click>=8.0.0",
