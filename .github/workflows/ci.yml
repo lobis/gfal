@@ -271,17 +271,7 @@ jobs:
       run: |
         kubectl port-forward pod/eos-mgm-0 1094:1094 8443:8443 >/tmp/eos-port-forward.log 2>&1 &
         for i in $(seq 1 12); do
-          if python - <<'PY'
-            import socket
-            import sys
-
-            ports = (1094, 8443)
-            for port in ports:
-                with socket.socket() as sock:
-                    sock.settimeout(1)
-                    if sock.connect_ex(("127.0.0.1", port)) != 0:
-                        sys.exit(1)
-        PY
+          if python -c "import socket, sys; ports=(1094, 8443); sys.exit(any(socket.socket().connect_ex(('127.0.0.1', port)) != 0 for port in ports))"
           then
             break
           fi
