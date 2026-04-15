@@ -15,16 +15,33 @@ dcache_chimera() {
     kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
 }
 
+run_chimera_allow_fail() {
+    local output
+    if output=$(dcache_chimera "$@" 2>&1); then
+        if [ -n "${output}" ]; then
+            echo "${output}" >&2
+        fi
+        return 0
+    fi
+
+    local status=$?
+    echo "Warning: dcache_chimera $* failed with exit ${status}" >&2
+    if [ -n "${output}" ]; then
+        echo "${output}" >&2
+    fi
+    return 0
+}
+
 kubectl wait -n "${NAMESPACE}" --for=condition=Ready "pod/${DOOR_POD}" --timeout=10m >/dev/null
 
-dcache_chimera mkdir /data/gfal-tests || true
-dcache_chimera chmod 0777 /data/gfal-tests || true
-dcache_chimera mkdir "${BASE_PATH}" || true
-dcache_chimera chmod 0755 "${BASE_PATH}" || true
-dcache_chimera mkdir "${WRITABLE_PATH}" || true
-dcache_chimera chmod 0777 "${WRITABLE_PATH}" || true
-dcache_chimera mkdir "${DENIED_PATH}" || true
-dcache_chimera chmod 0555 "${DENIED_PATH}" || true
+run_chimera_allow_fail mkdir /data/gfal-tests
+run_chimera_allow_fail chmod 0777 /data/gfal-tests
+run_chimera_allow_fail mkdir "${BASE_PATH}"
+run_chimera_allow_fail chmod 0755 "${BASE_PATH}"
+run_chimera_allow_fail mkdir "${WRITABLE_PATH}"
+run_chimera_allow_fail chmod 0777 "${WRITABLE_PATH}"
+run_chimera_allow_fail mkdir "${DENIED_PATH}"
+run_chimera_allow_fail chmod 0555 "${DENIED_PATH}"
 
 cat <<EOF
 GFAL_DEPLOYMENT_NAME=dcache-kind
