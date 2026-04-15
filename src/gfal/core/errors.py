@@ -2,6 +2,26 @@ import errno
 from typing import Optional
 
 
+def is_xrootd_permission_message(message: str) -> bool:
+    """Return True for XRootD authorization/access-denied style failures."""
+    lower = message.lower()
+    xrootd_markers = (
+        "server responded with an error",
+        "[3010]",
+        "unable to give access",
+        "user access restricted",
+        "unauthorized identity used",
+        "unable to open file",
+        "permission denied",
+        "operation not permitted",
+    )
+    return (
+        "xroot" in lower
+        or "root://" in lower
+        or "server responded with an error" in lower
+    ) and any(marker in lower for marker in xrootd_markers)
+
+
 class GfalError(OSError):
     """Base class for all library-specific exceptions."""
 

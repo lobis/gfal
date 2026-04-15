@@ -506,6 +506,18 @@ class TestGfalClientMapError:
         result = self.client._map_error(e, "file:///test")
         assert isinstance(result, GfalError)
 
+    def test_xrootd_permission_message_maps_to_permission_error(self):
+        e = OSError(
+            "File did not open properly: [ERROR] Server responded with an error: "
+            "[3010] Unable to give access - user access restricted - "
+            "unauthorized identity used ; Permission denied"
+        )
+        result = self.client._map_error(
+            e, "root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
+        )
+        assert isinstance(result, GfalPermissionError)
+        assert result.errno == errno.EACCES
+
     def test_generic_exception_zero_errno(self):
         e = Exception("something went wrong")
         e.errno = 0

@@ -1008,7 +1008,11 @@ class TestEosPilotXrootd:
         """Writing to the no-access path over root:// should fail."""
         dst = f"{self._XROOTD_NO_ACCESS}/xrd_denied.bin"
         rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", dst)
-        assert rc != 0
+        assert rc == 13
+        assert (
+            "permission denied" in err.lower()
+            or "operation not permitted" in err.lower()
+        )
 
     def test_mkdir_xrootd(self, proxy_cert, xrootd_pilot_dir):
         """mkdir over root:// should create a subdirectory."""

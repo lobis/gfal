@@ -62,11 +62,12 @@ version-file = "src/gfal/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-n 4"
+addopts = "-n 4 --dist loadgroup"
 markers = [
     "integration: tests that require network access to external services",
     "network: tests that make real network calls (retried automatically on failure)",
     "xrootd: tests that require a local XRootD server (started automatically by the fixture)",
+    "xdist_group(name): keep related tests on the same xdist worker",
 ]
 
 [tool.ruff]

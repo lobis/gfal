@@ -7,6 +7,31 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+_DEFAULT_SUBPROCESS_TIMEOUT = int(os.environ.get("GFAL_TEST_SUBPROCESS_TIMEOUT", "30"))
+
+
+def _decode_timeout_stream(value, *, binary: bool):
+    """Normalize TimeoutExpired stdout/stderr payloads."""
+    if value is None:
+        return b"" if binary else ""
+    if binary:
+        return value if isinstance(value, bytes) else str(value).encode("utf-8")
+    return (
+        value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+    )
+
+
+def _timed_out_result(exc: subprocess.TimeoutExpired, *, binary: bool = False):
+    """Return a synthetic subprocess result for hung test commands."""
+    stdout = _decode_timeout_stream(getattr(exc, "stdout", None), binary=binary)
+    stderr = _decode_timeout_stream(getattr(exc, "stderr", None), binary=binary)
+    timeout_msg = (
+        f"Test helper timed out after {exc.timeout} seconds: {' '.join(exc.cmd)}\n"
+    )
+    if binary:
+        return 124, stdout, stderr + timeout_msg.encode("utf-8")
+    return 124, stdout, stderr + timeout_msg
+
 
 def _subprocess_env():
     """Build the environment dict for gfal-cli subprocesses.
@@ -41,7 +66,9 @@ def _subprocess_env():
     return env
 
 
-def run_gfal(cmd, *args, input=None, env=None):
+def run_gfal(
+    cmd, *args, input=None, env=None, timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT
+):
     """
     Run ``gfal <cmd>`` in a subprocess via the current Python interpreter.
 
@@ -59,14 +86,18 @@ def run_gfal(cmd, *args, input=None, env=None):
     subprocess_env = _subprocess_env()
     if env is not None:
         subprocess_env = {**subprocess_env, **env}
-    proc = subprocess.run(
-        [sys.executable, "-c", script, *[str(a) for a in args]],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        input=input,
-        env=subprocess_env,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script, *[str(a) for a in args]],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            input=input,
+            env=subprocess_env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return _timed_out_result(exc)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -198,7 +229,9 @@ def run_gfal2_docker(
     )
 
 
-def run_gfal_binary(cmd, *args, input_bytes=None):
+def run_gfal_binary(
+    cmd, *args, input_bytes=None, timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT
+):
     """
     Like run_gfal but captures stdout as raw bytes (for cat/save binary tests).
     """
@@ -206,10 +239,14 @@ def run_gfal_binary(cmd, *args, input_bytes=None):
         f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
         "from gfal.cli.shell import main; main()"
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", script, *[str(a) for a in args]],
-        capture_output=True,
-        input=input_bytes,
-        env=_subprocess_env(),
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script, *[str(a) for a in args]],
+            capture_output=True,
+            input=input_bytes,
+            env=_subprocess_env(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return _timed_out_result(exc, binary=True)
     return proc.returncode, proc.stdout, proc.stderr

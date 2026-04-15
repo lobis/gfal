@@ -5,6 +5,7 @@ SimpleNamespace) to avoid subprocess overhead and ensure coverage is collected
 in the pytest process.
 """
 
+import errno
 import os
 import sys
 from types import SimpleNamespace
@@ -178,6 +179,30 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
 
         assert rc == 17
+
+    def test_copy_xrootd_permission_denied_returns_eacces(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"x")
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[
+                "root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/dteam-has-no-permissions-here/x.bin"
+            ],
+        )
+
+        with patch.object(
+            cmd,
+            "_do_copy",
+            side_effect=OSError(
+                "File did not open properly: [ERROR] Server responded with an error: "
+                "[3010] Unable to give access - user access restricted - "
+                "unauthorized identity used ; Permission denied"
+            ),
+        ):
+            rc = cmd.execute_cp()
+
+        assert rc == errno.EACCES
 
     def test_copy_recursive_skip_if_same(self, tmp_path):
         src = tmp_path / "srcdir"

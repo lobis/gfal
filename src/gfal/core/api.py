@@ -12,6 +12,7 @@ from gfal.core.errors import (
     GfalNotADirectoryError,
     GfalPermissionError,
     GfalTimeoutError,
+    is_xrootd_permission_message,
 )
 
 
@@ -260,6 +261,12 @@ class GfalClient:
             return GfalNotADirectoryError(msg)
         if isinstance(e, TimeoutError):
             return GfalTimeoutError(msg)
+
+        # XRootD permission denials often surface as plain OSError/Exception with
+        # errno unset even though the server message is clearly an auth/access
+        # rejection (e.g. "[3010] Unable to give access ... unauthorized identity used").
+        if is_xrootd_permission_message(msg):
+            return GfalPermissionError(msg)
 
         # HTTP status mapping (aiohttp style)
         status = getattr(e, "status", None)
