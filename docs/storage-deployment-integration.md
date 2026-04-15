@@ -27,6 +27,11 @@ job in the main CI workflow that follows the same general pattern used in
 `eos-tui`: deploy EOS via the official Helm chart on a local `kind` cluster,
 expose the storage endpoints, then run the generic deployment suite.
 
+For dCache the repo now also includes a dedicated CI job in the main workflow.
+It deploys PostgreSQL, Zookeeper, Kafka, and dCache itself on a local `kind`
+cluster, prepares writable and denied paths with `chimera`, and runs the same
+generic deployment suite from a dedicated in-cluster test runner pod.
+
 ## Environment Contract
 
 `tests/test_integration_storage_deployment.py` is enabled when at least one of
@@ -130,6 +135,33 @@ Example:
 export EOS_TEST_SSH_TARGET=eos-mgm
 ./scripts/prepare-eos-kind-deployment.sh run-123
 ```
+
+## dCache Workflow
+
+For dCache we provide `ci/dcache-values.yaml` and
+`scripts/prepare-dcache-kind-deployment.sh`.
+
+The CI job:
+
+- deploys the recommended backing services from the dCache Kubernetes how-to
+- pins the Zookeeper and Kafka dependency charts to `bitnamilegacy/*` images,
+  because the historical default `bitnami/*` tags referenced by those chart
+  versions are no longer published on Docker Hub
+- opts into those legacy images via the charts' `allowInsecureImages` gate so
+  the deployment stays reproducible even after the upstream Bitnami registry
+  cleanup
+- installs the dCache Helm chart with a minimal door/pool profile
+- disables the chart's NFS-based probes and the NFS door itself, since this
+  CI job validates WebDAV and XRootD behavior rather than NFS readiness
+- enables anonymous WebDAV and XRootD writes for the dedicated test area
+- creates writable and denied directories under `/data/gfal-tests/<run-id>`
+- runs `tests/test_integration_storage_deployment.py` from an in-cluster pod
+
+The dCache preparation script prints the same `GFAL_DEPLOYMENT_*` contract as
+the EOS one, but it first waits for the dCache door pod to become ready so it
+fails cleanly on a broken deployment instead of exporting unusable endpoints.
+The resulting URLs target the in-cluster dCache service DNS names instead of
+localhost port-forwards.
 
 ## dCache Collaboration Path
 

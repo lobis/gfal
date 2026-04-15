@@ -1,0 +1,49 @@
+zookeeper:
+  embedded: false
+
+livenessProbe:
+  enabled: false
+
+readinessProbe:
+  enabled: false
+
+startupProbe:
+  enabled: false
+
+dcache:
+  spacemanager:
+    enabled: false
+  pools:
+    - a
+  layoutExtra: |
+    [door-svc/webdav]
+    webdav.cell.name=webdav-tls
+    webdav.net.port=8083
+    webdav.authn.protocol=https
+    webdav.authz.anonymous-operations=FULL
+    webdav.redirect.on-write=false
+    webdav.redirect.on-read=true
+
+services:
+  nfs:
+    enabled: false
+  dcap:
+    enabled: false
+  dcapg:
+    enabled: false
+  xrootdg:
+    enabled: false
+  webdav:
+    enabled: false
+  webdavs:
+    enabled: true
+  srm:
+    enabled: false
+  gridftp:
+    enabled: false
+  sshAdmin:
+    enabled: false
+  frontend:
+    enabled: false
+  frontends:
+    enabled: false

@@ -358,13 +358,125 @@ jobs:
         kubectl get svc || true
         kubectl logs eos-mgm-0 --all-containers=true --tail=100 || true
 
+  deployment-integration-dcache:
+    name: Deployment Integration (dCache kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+          /opt/ghc /usr/local/share/boost /usr/share/swift \
+          /opt/hostedtoolcache/CodeQL || true
+        docker system prune -af --volumes || true
+
+    - name: Build deployment test runner image
+      run: docker build --platform linux/amd64 -t gfal-integration-runner -f docker/Dockerfile.integration-runner .
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1
+
+    - name: Load test runner image into kind
+      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
+
+    - name: Add Helm repositories
+      run: |
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm repo add dcache https://gitlab.desy.de/api/v4/projects/7648/packages/helm/test
+        helm repo update
+
+    - name: Deploy dCache dependencies
+      run: |
+        helm install --wait \
+          --set auth.username=dcache \
+          --set auth.password=let-me-in \
+          --set auth.database=chimera \
+          chimera bitnami/postgresql
+        # These chart defaults still point at archived Bitnami tags that no longer
+        # exist on Docker Hub. Use the matching bitnamilegacy images instead.
+        helm install --wait \
+          --set global.security.allowInsecureImages=true \
+          --set image.repository=bitnamilegacy/zookeeper \
+          cells bitnami/zookeeper
+        helm install --wait \
+          --set global.security.allowInsecureImages=true \
+          --set externalZookeeper.servers=cells-zookeeper \
+          --set kraft.enabled=false \
+          --set image.repository=bitnamilegacy/kafka \
+          billing bitnami/kafka \
+          --version 23.0.7
+
+    - name: Deploy dCache via Helm chart
+      run: helm install --wait -f ci/dcache-values.yaml store dcache/dcache
+
+    - name: Prepare dCache deployment contract
+      run: |
+        chmod +x scripts/prepare-dcache-kind-deployment.sh
+        ./scripts/prepare-dcache-kind-deployment.sh "gha-${GITHUB_RUN_ID}" store default >> "$GITHUB_ENV"
+
+    - name: Run generic deployment integration tests inside kind
+      run: |
+        kubectl delete job gfal-dcache-tests --ignore-not-found=true
+        cat <<EOF | kubectl apply -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-dcache-tests
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: tests
+                image: gfal-integration-runner:latest
+                imagePullPolicy: Never
+                env:
+                - name: GFAL_DEPLOYMENT_NAME
+                  value: "${GFAL_DEPLOYMENT_NAME}"
+                - name: GFAL_DEPLOYMENT_VERIFY_SSL
+                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
+                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
+                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
+                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
+                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
+                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
+                - name: GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE
+                  value: "${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}"
+                - name: GFAL_DEPLOYMENT_ROOT_DENIED_BASE
+                  value: "${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}"
+        EOF
+
+        if ! kubectl wait --for=condition=complete --timeout=20m job/gfal-dcache-tests; then
+          kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1 || true
+          kubectl describe job gfal-dcache-tests || true
+          kubectl get pods || true
+          kubectl describe pod -l job-name=gfal-dcache-tests || true
+          exit 1
+        fi
+
+        kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1
+
+    - name: Dump dCache state on failure
+      if: failure()
+      run: |
+        kubectl get pods || true
+        kubectl get svc || true
+        kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
+        kubectl logs statefulset/store-pool-a --all-containers=true --tail=100 || true
+
   # ---------------------------------------------------------------------------
   # 2. Packaging
   # ---------------------------------------------------------------------------
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration ]
+    needs: [ codespell, pre-commit, tests, xrootd, integration, deployment-integration, deployment-integration-dcache ]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
