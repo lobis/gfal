@@ -9,6 +9,39 @@
 
 A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with optional **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd).
 
+## Python library API
+
+`gfal` is available as both an async-first library API and a synchronous facade:
+
+```python
+import asyncio
+import gfal
+
+
+async def main():
+    client = gfal.AsyncGfalClient()
+    stat_result = await client.stat("file:///tmp/input.txt")
+    await client.copy(
+        "file:///tmp/input.txt",
+        "file:///tmp/output.txt",
+        options=gfal.CopyOptions(
+            overwrite=True,
+            checksum=gfal.ChecksumPolicy("ADLER32"),
+        ),
+    )
+    return stat_result.size
+
+
+asyncio.run(main())
+```
+
+```python
+import gfal
+
+client = gfal.GfalClient()
+client.copy("file:///tmp/input.txt", "file:///tmp/output.txt")
+```
+
 ## Installation
 
 ### From PyPI

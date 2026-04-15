@@ -5,13 +5,16 @@ collected in the pytest process.
 """
 
 import errno
+import io
 import stat
 import sys
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from gfal.core.api import GfalClient
+from gfal.core.api import AsyncGfalClient, ChecksumPolicy, CopyOptions, GfalClient
 from gfal.core.errors import (
     GfalError,
     GfalFileExistsError,
@@ -69,6 +72,21 @@ class TestGfalClientInit:
         opts = client.storage_options
         assert opts["client_cert"] == "/tmp/x.pem"
         assert opts["client_key"] == "/tmp/k.pem"
+
+    def test_async_client_exposes_same_init_surface(self):
+        client = AsyncGfalClient(
+            cert="/tmp/x.pem",
+            key="/tmp/k.pem",
+            timeout=60,
+            ssl_verify=False,
+            ipv6_only=True,
+        )
+        assert client.cert == "/tmp/x.pem"
+        assert client.key == "/tmp/k.pem"
+        assert client.timeout == 60
+        assert client.ssl_verify is False
+        assert client.ipv4_only is False
+        assert client.ipv6_only is True
 
     def test_storage_options_with_ipv4_only(self):
         client = GfalClient(ipv4_only=True)
@@ -591,3 +609,200 @@ class TestGfalClientXattrWithMock:
         with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
             result = client.listxattr(f.as_uri())
         assert result == ["user.foo", "user.bar"]
+
+
+class TestGfalClientLibraryHelpers:
+    def test_exists_true_and_false(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = GfalClient()
+        assert client.exists(f.as_uri()) is True
+        assert client.exists((tmp_path / "missing.txt").as_uri()) is False
+
+    def test_iterdir_returns_iterator(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        client = GfalClient()
+        entries = list(client.iterdir(tmp_path.as_uri(), detail=False))
+        assert sorted(entries) == ["a.txt", "b.txt"]
+
+    def test_xattrs_bulk_helper(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = GfalClient()
+        mock_fso = MagicMock()
+        mock_fso.listxattr.return_value = ["user.foo", "user.bar"]
+        mock_fso.getxattr.side_effect = ["one", "two"]
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
+            result = client.xattrs(f.as_uri())
+
+        assert result == {"user.foo": "one", "user.bar": "two"}
+
+    def test_copy_file_local(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        client = GfalClient()
+        client.copy(src.as_uri(), dst.as_uri())
+
+        assert dst.read_text() == "hello"
+
+    def test_copy_respects_options(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("payload")
+        dst.write_text("old")
+
+        client = GfalClient()
+        client.copy(
+            src.as_uri(),
+            dst.as_uri(),
+            options=CopyOptions(
+                overwrite=True,
+                checksum=ChecksumPolicy("ADLER32", mode="both"),
+            ),
+        )
+
+        assert dst.read_text() == "payload"
+
+    def test_start_copy_handle(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        client = GfalClient()
+        handle = client.start_copy(src.as_uri(), dst.as_uri())
+        handle.wait()
+
+        assert handle.done() is True
+        assert dst.read_text() == "hello"
+
+    def test_copy_directory_over_existing_file_raises_even_with_overwrite(
+        self, tmp_path
+    ):
+        src = tmp_path / "srcdir"
+        src.mkdir()
+        (src / "child.txt").write_text("payload")
+        dst = tmp_path / "dst.txt"
+        dst.write_text("existing")
+
+        client = GfalClient()
+
+        with pytest.raises(GfalIsADirectoryError, match="directory over a file"):
+            client.copy(
+                src.as_uri(),
+                dst.as_uri(),
+                options=CopyOptions(recursive=True, overwrite=True),
+            )
+
+    def test_copy_with_tpc_never_does_not_attempt_tpc(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+            def open(self, path, mode):
+                if "r" in mode:
+                    return nullcontext(io.BytesIO(b"payload"))
+                return nullcontext(io.BytesIO())
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch(
+                "gfal.core.tpc.do_tpc",
+                side_effect=AssertionError("TPC should not run"),
+            ),
+        ):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="never"),
+            )
+
+
+class TestAsyncGfalClient:
+    @pytest.mark.asyncio
+    async def test_async_stat_ls_and_exists(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_text("hello")
+        client = AsyncGfalClient()
+
+        st = await client.stat(src.as_uri())
+        names = await client.ls(tmp_path.as_uri(), detail=False)
+        exists = await client.exists(src.as_uri())
+
+        assert st.size == 5
+        assert exists is True
+        assert names == ["src.txt"]
+
+    @pytest.mark.asyncio
+    async def test_async_copy_and_checksum(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        client = AsyncGfalClient()
+
+        await client.copy(
+            src.as_uri(),
+            dst.as_uri(),
+            options=CopyOptions(
+                checksum=ChecksumPolicy("ADLER32", mode="both"),
+            ),
+        )
+        checksum = await client.checksum(dst.as_uri(), "ADLER32")
+
+        assert dst.read_text() == "hello"
+        assert checksum
+
+    @pytest.mark.asyncio
+    async def test_async_xattrs_helper(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        client = AsyncGfalClient()
+        mock_fso = MagicMock()
+        mock_fso.listxattr.return_value = ["user.foo"]
+        mock_fso.getxattr.return_value = "one"
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, str(f))):
+            result = await client.xattrs(f.as_uri())
+
+        assert result == {"user.foo": "one"}
+
+    @pytest.mark.asyncio
+    async def test_async_start_copy_handle(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        client = AsyncGfalClient()
+        handle = client.start_copy(src.as_uri(), dst.as_uri())
+        await handle.wait_async()
+
+        assert handle.done() is True
+        assert dst.read_text() == "hello"

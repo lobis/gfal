@@ -2,22 +2,38 @@
 gfal cp implementation.
 """
 
-import contextlib
 import errno
-import hashlib
-import os
 import stat
 import sys
-import threading
 import time
-import zlib
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlparse
 
 from gfal.cli import base
 from gfal.cli.progress import Progress
+from gfal.core import api as core_api
 from gfal.core import fs
-from gfal.core.errors import GfalFileExistsError, is_xrootd_permission_message
+from gfal.core.api import (
+    ChecksumPolicy,
+    CopyOptions,
+    GfalClient,
+)
+from gfal.core.api import (
+    checksum_fs as _checksum_fs,
+)
+from gfal.core.api import (
+    parse_checksum_arg as _parse_checksum_arg,
+)
+from gfal.core.api import (
+    tpc_applicable as _tpc_applicable,
+)
+from gfal.core.errors import is_xrootd_permission_message
+
+_make_hasher = core_api.make_hasher
+_update_hasher = core_api.update_hasher
+_finalise_hasher = core_api.finalise_hasher
+_is_special_file = core_api.is_special_file
+_eos_mtime_url = core_api.eos_mtime_url
 
 
 class CommandCopy(base.CommandBase):
@@ -290,22 +306,64 @@ class CommandCopy(base.CommandBase):
                 sys.stdout.buffer.write(chunk)
         sys.stdout.buffer.flush()
 
+    def _build_client(self):
+        return GfalClient(**base.build_client_kwargs(self.params))
+
+    def _build_copy_options(self):
+        checksum = None
+        if self.params.checksum:
+            algorithm, expected = _parse_checksum_arg(self.params.checksum)
+            checksum = ChecksumPolicy(
+                algorithm=algorithm,
+                mode=self.params.checksum_mode,
+                expected_value=expected,
+            )
+
+        tpc = "never"
+        if getattr(self.params, "tpc_only", False):
+            tpc = "only"
+        elif getattr(self.params, "tpc", False):
+            tpc = "auto"
+
+        return CopyOptions(
+            overwrite=getattr(self.params, "force", False),
+            create_parents=getattr(self.params, "parent", False),
+            timeout=getattr(self.params, "transfer_timeout", 0) or None,
+            checksum=checksum,
+            source_space_token=getattr(self.params, "src_spacetoken", None),
+            destination_space_token=getattr(self.params, "dst_spacetoken", None),
+            streams=getattr(self.params, "nbstreams", None),
+            tpc=tpc,
+            tpc_direction=getattr(self.params, "tpc_mode", "pull"),
+            recursive=getattr(self.params, "recursive", False),
+            preserve_times=getattr(self.params, "preserve_times", False),
+            skip_if_same=getattr(self.params, "skip_if_same", False),
+            just_copy=getattr(self.params, "just_copy", False),
+            disable_cleanup=getattr(self.params, "disable_cleanup", False),
+            no_delegation=getattr(self.params, "no_delegation", False),
+            evict=getattr(self.params, "evict", False),
+            scitag=getattr(self.params, "scitag", None),
+        )
+
     def _do_copy(self, src_url, dst_url, opts):
-        """High-level copy: handle directories, overwrite checks, etc."""
-        src_fs, src_path = fs.url_to_fs(src_url, opts)
-        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+        """High-level copy wrapper over the library client."""
+        client = self._build_client()
 
-        src_info = src_fs.info(src_path)
-        src_st = fs.StatInfo(src_info)
-        src_isdir = stat.S_ISDIR(src_st.st_mode)
+        if self.params.dry_run:
+            src_st = client.stat(src_url)
+            if src_st.is_dir():
+                if not self.params.recursive:
+                    print(f"Skipping directory {src_url} (use -r to copy recursively)")
+                    return
+                if not client.exists(dst_url):
+                    print(f"Mkdir {dst_url}")
+                print(f"Copy {src_url} => {dst_url}")
+                return
+            print(f"Copy {src_url} => {dst_url}")
+            return
 
-        # Fail fast for explicit --tpc-only when the protocol pair can never
-        # support third-party copy. This avoids slow destination probes for
-        # cases like file:// -> https:// that should be rejected immediately.
-        if (
-            getattr(self.params, "tpc_only", False)
-            and not self.params.dry_run
-            and not _tpc_applicable(src_url, dst_url)
+        if getattr(self.params, "tpc_only", False) and not _tpc_applicable(
+            src_url, dst_url
         ):
             src_scheme = urlparse(src_url).scheme.lower()
             dst_scheme = urlparse(dst_url).scheme.lower()
@@ -314,508 +372,106 @@ class CommandCopy(base.CommandBase):
                 f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
             )
 
-        dst_isdir = False
-        dst_exists = False
         try:
-            dst_info = dst_fs.info(dst_path)
-            dst_st = fs.StatInfo(dst_info)
-            dst_isdir = stat.S_ISDIR(dst_st.st_mode)
-            dst_exists = True
-        except (FileNotFoundError, Exception):
+            src_st = client.stat(src_url)
+            dst_st = client.stat(dst_url)
+            if src_st.is_dir() and not dst_st.is_dir():
+                raise IsADirectoryError("Cannot copy a directory over a file")
+        except IsADirectoryError:
+            raise
+        except FileNotFoundError:
+            pass
+        except Exception:
             pass
 
-        if not self.params.just_copy:
-            if dst_exists and not dst_isdir and not self.params.force:
-                # Pipes and character devices (e.g. /dev/stdout) can always be
-                # written to without --force — they don't hold persistent data.
-                _is_special = _is_special_file(dst_path)
-                if not _is_special:
-                    if self._existing_file_matches_source(
-                        src_fs, src_path, dst_fs, dst_path, dst_url
-                    ):
-                        return
-                    raise GfalFileExistsError(
-                        f"Destination {dst_url} exists and overwrite is not set"
-                    )
-
-            if dst_exists and not dst_isdir and src_isdir:
-                raise IsADirectoryError("Cannot copy a directory over a file")
-
-        if src_isdir:
-            if not self.params.recursive:
-                print(f"Skipping directory {src_url} (use -r to copy recursively)")
-                return
-            if not dst_exists:
-                if self.params.dry_run:
-                    print(f"Mkdir {dst_url}")
-                else:
-                    dst_fs.mkdir(dst_path, create_parents=self.params.parent)
-            self._recursive_copy(
-                src_url, src_fs, src_path, dst_url, dst_fs, dst_path, opts
-            )
-            self._preserve_times(src_st, dst_url, dst_path)
-            return
-
-        # Resolve destination if it is a directory
-        if dst_isdir:
-            name = Path(src_path.rstrip("/")).name
-            dst_url = dst_url.rstrip("/") + "/" + name
+        if getattr(self.params, "skip_if_same", False) and not getattr(
+            self.params, "force", False
+        ):
+            src_fs, src_path = fs.url_to_fs(src_url, opts)
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
-
-        # ------------------------------------------------------------------
-        # Third-party copy attempt
-        # ------------------------------------------------------------------
-        explicit_tpc = getattr(self.params, "tpc", False) or getattr(
-            self.params, "tpc_only", False
-        )
-        use_streamed = getattr(self.params, "copy_mode", None) == "streamed"
-        # Auto-TPC: mirrors gfal2's default behaviour — for HTTP<->HTTP and
-        # root<->root transfers, attempt TPC first and fall back to streaming
-        # unless the user explicitly requested streaming with --copy-mode=streamed.
-        auto_tpc = (
-            not explicit_tpc and not use_streamed and _tpc_applicable(src_url, dst_url)
-        )
-        use_tpc = explicit_tpc or auto_tpc
-        if use_tpc and not self.params.dry_run:
-            tpc_timeout = getattr(self.params, "transfer_timeout", 0) or None
-            tpc_dst_url = self._transfer_destination_url(dst_url, src_st)
-
-            # ------------------------------------------------------------------
-            # Progress display for TPC
-            #
-            # Always lazy: progress only starts when the first WLCG perf-marker
-            # is received.  This means a TPC attempt that fails before any bytes
-            # move (wrong protocol pair, 405, auth error) produces no output —
-            # streaming then takes over and shows its own clean progress line.
-            # For XRootD TPC (no perf-markers) we start progress explicitly
-            # just before the blocking CopyProcess.run() call.
-            # ------------------------------------------------------------------
-            show_progress = sys.stdout.isatty() and not self.params.verbose
-            tpc_start = time.monotonic()
-            tpc_progress_shown = [False]
-
-            def _start_tpc_progress():
-                if tpc_progress_shown[0]:
-                    return
-                tpc_progress_shown[0] = True
-                if show_progress:
-                    self.progress_bar = Progress(f"Copying {Path(src_url).name}")
-                    self.progress_bar.update(
-                        total_size=src_st.st_size if src_st.st_size else None
-                    )
-                    self.progress_bar.start()
-                else:
-                    print(
-                        f"Copying {src_st.st_size or 0} bytes  {src_url}  =>  {dst_url}"
-                    )
-
-            def _stop_tpc_progress(success):
-                if not tpc_progress_shown[0]:
-                    return
-                if show_progress:
-                    self.progress_bar.stop(success)
-                    print()
-
-            def _tpc_progress(bytes_transferred):
-                _start_tpc_progress()
-                if show_progress and src_st.st_size:
-                    self.progress_bar.update(
-                        curr_size=bytes_transferred,
-                        total_size=src_st.st_size,
-                        elapsed=time.monotonic() - tpc_start,
-                    )
-
             try:
-                from gfal.core import (
-                    tpc as _tpc,  # lazy: tpc.py may not be installed  # noqa: PLC0415
-                )
-
-                _tpc.do_tpc(
-                    src_url,
-                    tpc_dst_url,
-                    opts,
-                    mode=getattr(self.params, "tpc_mode", "pull"),
-                    timeout=tpc_timeout,
-                    verbose=bool(self.params.verbose),
-                    scitag=getattr(self.params, "scitag", None),
-                    progress_callback=_tpc_progress,
-                    start_callback=_start_tpc_progress,
-                )
-                _stop_tpc_progress(True)
-                return  # TPC succeeded — nothing more to do
-            except ImportError as e:
-                _stop_tpc_progress(False)
-                if getattr(self.params, "tpc_only", False):
-                    raise OSError(
-                        "Third-party copy required (--tpc-only) but the tpc "
-                        "module is not available in this installation"
-                    ) from e
-                if self.params.verbose:
-                    sys.stderr.write(
-                        "TPC module not available, falling back to streaming\n"
-                    )
-            except NotImplementedError as e:
-                _stop_tpc_progress(False)
-                if getattr(self.params, "tpc_only", False):
-                    raise OSError(
-                        f"Third-party copy required (--tpc-only) but not available: {e}"
-                    ) from e
-                # Fall through to streaming copy
-                if self.params.verbose:
-                    sys.stderr.write(
-                        f"TPC not available ({e}), falling back to streaming\n"
-                    )
-            except Exception:
-                _stop_tpc_progress(False)
-                if auto_tpc:
-                    # Auto-TPC failed (e.g. server returned error, auth issue);
-                    # fall back to client-side streaming silently unless verbose.
-                    if self.params.verbose:
-                        sys.stderr.write("Auto-TPC failed, falling back to streaming\n")
-                else:
-                    raise  # explicit --tpc: propagate the error
-
-        # ------------------------------------------------------------------
-        # Streaming (client-side) copy with optional per-file timeout
-        # ------------------------------------------------------------------
-        transfer_timeout = getattr(self.params, "transfer_timeout", 0)
-        if transfer_timeout and transfer_timeout > 0:
-            exc_holder = [None]
-
-            def _run():
-                try:
-                    self._copy_file(
-                        src_url,
-                        src_fs,
-                        src_path,
-                        dst_url,
-                        dst_fs,
-                        dst_path,
-                        src_st,
-                    )
-                except Exception as e:
-                    exc_holder[0] = e
-
-            t = threading.Thread(target=_run, daemon=True)
-            t.start()
-            t.join(transfer_timeout)
-            if t.is_alive():
-                raise TimeoutError(
-                    f"Transfer timed out after {transfer_timeout}s: {src_url}"
-                )
-            if exc_holder[0] is not None:
-                raise exc_holder[0]
-        else:
-            self._copy_file(
-                src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st
-            )
-
-    def _recursive_copy(
-        self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, opts
-    ):
-        entries = src_fs.ls(src_path, detail=False)
-        src_path.rstrip("/") + "/"
-        dst_path.rstrip("/") + "/"
-        src_url_base = src_url.rstrip("/") + "/"
-        dst_url_base = dst_url.rstrip("/") + "/"
-
-        for entry_path in entries:
-            name = Path(entry_path.rstrip("/")).name
-            if name in (".", ".."):
-                continue
-            child_src_url = src_url_base + name
-            child_dst_url = dst_url_base + name
-            try:
-                self._do_copy(child_src_url, child_dst_url, opts)
-            except Exception as e:
-                sys.stderr.write(f"ERROR copying {child_src_url}: {e}\n")
-                if self.params.abort_on_failure:
-                    raise
-
-    def _copy_file(self, src_url, src_fs, src_path, dst_url, dst_fs, dst_path, src_st):
-        """Stream a single file from src to dst with optional progress and checksum."""
-        src_size = src_st.st_size
-        if self.params.dry_run:
-            print(f"Copy {src_url} => {dst_url}")
-            return
-
-        write_dst_url = self._transfer_destination_url(dst_url, src_st)
-        write_remote_times = write_dst_url != dst_url
-        write_dst_fs, write_dst_path = fs.url_to_fs(
-            write_dst_url, fs.build_storage_options(self.params)
-        )
-
-        # Create parent directories if requested
-        if self.params.parent:
-            parent = str(Path(dst_path).parent)
-            if parent:
-                with contextlib.suppress(Exception):
-                    dst_fs.mkdir(parent, create_parents=True)
-
-        # Compute source checksum before transfer if requested (skipped with --just-copy)
-        src_checksum = None
-        if (
-            self.params.checksum
-            and not self.params.just_copy
-            and self.params.checksum_mode in ("source", "both")
-        ):
-            alg, expected = _parse_checksum_arg(self.params.checksum)
-            src_checksum = _checksum_fs(src_fs, src_path, alg)
-            if expected and src_checksum != expected.lower():
-                raise OSError(
-                    f"Source checksum mismatch: expected {expected}, got {src_checksum}"
-                )
-
-        # Set up progress bar
-        show_progress = sys.stdout.isatty() and not self.params.verbose
-        if show_progress:
-            self.progress_bar = Progress(f"Copying {Path(src_url).name}")
-            self.progress_bar.update(total_size=src_size if src_size else None)
-            self.progress_bar.start()
-        else:
-            print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
-
-        start = time.monotonic()
-        transferred = 0
-        dst_checksum_hasher = None
-
-        alg_for_dst = None
-        if (
-            self.params.checksum
-            and not self.params.just_copy
-            and self.params.checksum_mode in ("target", "both")
-        ):
-            alg_for_dst, _ = _parse_checksum_arg(self.params.checksum)
-            dst_checksum_hasher = _make_hasher(alg_for_dst)
-
-        try:
-            with (
-                src_fs.open(src_path, "rb") as src_f,
-                write_dst_fs.open(write_dst_path, "wb") as dst_f,
-            ):
-                while True:
-                    chunk = src_f.read(fs.CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    dst_f.write(chunk)
-                    transferred += len(chunk)
-                    if dst_checksum_hasher is not None:
-                        _update_hasher(dst_checksum_hasher, alg_for_dst, chunk)
-                    if show_progress and src_size:
-                        elapsed = time.monotonic() - start
-                        self.progress_bar.update(
-                            curr_size=transferred,
-                            total_size=src_size,
-                            elapsed=elapsed,
+                dst_info = dst_fs.info(dst_path)
+                dst_mode = fs.StatInfo(dst_info).st_mode
+                if (
+                    stat.S_ISREG(dst_mode)
+                    and not _is_special_file(src_path)
+                    and not _is_special_file(dst_path)
+                ):
+                    algorithm = "ADLER32"
+                    if self.params.checksum:
+                        algorithm, _ = _parse_checksum_arg(self.params.checksum)
+                    if _checksum_fs(src_fs, src_path, algorithm) == _checksum_fs(
+                        dst_fs, dst_path, algorithm
+                    ):
+                        print(
+                            f"Skipping existing file {dst_url} "
+                            f"(matching {algorithm} checksum)"
                         )
-        except Exception:
-            if show_progress:
-                self.progress_bar.stop(False)
-                print()
-            # Remove the partially-written destination file unless the caller
-            # explicitly opted out with --disable-cleanup.
-            if not self.params.disable_cleanup:
-                with contextlib.suppress(Exception):
-                    dst_fs.rm(dst_path, recursive=False)
-            raise
+                        return
+            except Exception:
+                pass
 
-        if show_progress:
-            self.progress_bar.stop(True)
-            print()
-
-        # Verify destination checksum
-        if dst_checksum_hasher is not None:
-            dst_checksum = _finalise_hasher(dst_checksum_hasher, alg_for_dst)
-            if src_checksum and dst_checksum != src_checksum:
-                raise OSError(
-                    f"Checksum mismatch after transfer: src={src_checksum} dst={dst_checksum}"
-                )
-
-        self._preserve_times(
-            src_st, dst_url, dst_path, remote_already_preserved=write_remote_times
-        )
-
-    def _transfer_destination_url(self, dst_url, src_st):
-        """Return the destination URL to use for the transfer itself.
-
-        EOS remote endpoints accept ``eos.mtime`` on the destination URL for
-        streamed uploads and TPC, so we only rewrite the URL for the write step.
-        All preflight existence checks continue to use the canonical destination.
-        """
-        if not getattr(self.params, "preserve_times", False):
-            return dst_url
-        return _eos_mtime_url(dst_url, src_st.st_mtime) or dst_url
-
-    def _preserve_times(
-        self, src_st, dst_url, dst_path, *, remote_already_preserved=False
-    ):
-        if not getattr(self.params, "preserve_times", False):
-            return
-        if remote_already_preserved:
-            return
-
-        dst_local = _local_destination_path(dst_url, dst_path)
-        if dst_local is None:
-            self._warn_preserve_times_unsupported(dst_url)
-            return
+        src_size = None
+        show_progress = sys.stdout.isatty() and not self.params.verbose
+        progress_started = [False]
+        transfer_start = time.monotonic()
 
         try:
-            os.utime(
-                dst_local,
-                ns=(
-                    int(src_st.st_atime * 1_000_000_000),
-                    int(src_st.st_mtime * 1_000_000_000),
-                ),
+            src_size = client.stat(src_url).st_size
+        except Exception:
+            src_size = None
+
+        def _start_progress():
+            if progress_started[0]:
+                return
+            progress_started[0] = True
+            if show_progress:
+                self.progress_bar = Progress(f"Copying {Path(src_url).name}")
+                self.progress_bar.update(total_size=src_size if src_size else None)
+                self.progress_bar.start()
+            else:
+                print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+
+        def _progress(bytes_transferred):
+            _start_progress()
+            if show_progress and src_size:
+                self.progress_bar.update(
+                    curr_size=bytes_transferred,
+                    total_size=src_size,
+                    elapsed=time.monotonic() - transfer_start,
+                )
+
+        def _warn(message):
+            if message.startswith("Skipping existing file ") or message.startswith(
+                "Skipping directory "
+            ):
+                print(message)
+                return
+            normalized = fs.normalize_url(dst_url)
+            scheme = urlparse(normalized).scheme.lower() or "unknown"
+            if message.startswith("--preserve-times"):
+                if scheme in self._preserve_times_warned:
+                    return
+                self._preserve_times_warned.add(scheme)
+            sys.stderr.write(f"{self.prog}: warning: {message}\n")
+
+        copy_failed = True
+        try:
+            client.copy(
+                src_url,
+                dst_url,
+                options=self._build_copy_options(),
+                progress_callback=_progress,
+                start_callback=_start_progress,
+                warn_callback=_warn,
             )
-        except OSError as e:
-            sys.stderr.write(
-                f"{self.prog}: warning: could not preserve times for {dst_url}: {e}\n"
-            )
-
-    def _warn_preserve_times_unsupported(self, dst_url):
-        normalized = fs.normalize_url(dst_url)
-        scheme = urlparse(normalized).scheme.lower() or "unknown"
-        if scheme in self._preserve_times_warned:
-            return
-        self._preserve_times_warned.add(scheme)
-        sys.stderr.write(
-            f"{self.prog}: warning: --preserve-times is only supported for local "
-            f"destinations; skipping for {scheme} targets\n"
-        )
-
-    def _existing_file_matches_source(
-        self, src_fs, src_path, dst_fs, dst_path, dst_url
-    ):
-        if not getattr(self.params, "skip_if_same", False):
-            return False
-
-        alg = "ADLER32"
-        if self.params.checksum:
-            alg, _ = _parse_checksum_arg(self.params.checksum)
-
-        src_checksum = _checksum_fs(src_fs, src_path, alg)
-        dst_checksum = _checksum_fs(dst_fs, dst_path, alg)
-        if src_checksum != dst_checksum:
-            return False
-
-        print(f"Skipping existing file {dst_url} (matching {alg} checksum)")
-        return True
+            copy_failed = False
+        finally:
+            if progress_started[0] and show_progress:
+                self.progress_bar.stop(not copy_failed)
+                print()
 
 
 # ---------------------------------------------------------------------------
 # Checksum helpers
 # ---------------------------------------------------------------------------
-
-
-def _parse_checksum_arg(arg):
-    """Return (algorithm, expected_value_or_None)."""
-    parts = arg.split(":", 1)
-    alg = parts[0].upper()
-    expected = parts[1].lower() if len(parts) > 1 else None
-    return alg, expected
-
-
-def _make_hasher(alg):
-    alg = alg.upper()
-    if alg in ("ADLER32", "CRC32"):
-        return [alg, 1 if alg == "ADLER32" else 0]
-    return hashlib.new(alg.lower().replace("-", ""))
-
-
-def _update_hasher(h, alg, chunk):
-    alg = alg.upper()
-    if alg == "ADLER32":
-        h[1] = zlib.adler32(chunk, h[1]) & 0xFFFFFFFF
-    elif alg == "CRC32":
-        h[1] = zlib.crc32(chunk, h[1]) & 0xFFFFFFFF
-    else:
-        h.update(chunk)
-
-
-def _finalise_hasher(h, alg):
-    alg = alg.upper()
-    if alg in ("ADLER32", "CRC32"):
-        return f"{h[1]:08x}"
-    return h.hexdigest()
-
-
-def _tpc_applicable(src_url, dst_url):
-    """Return True when TPC should be attempted automatically.
-
-    TPC is applicable when both endpoints use the same transport family:
-    - HTTP/HTTPS  <->  HTTP/HTTPS  (WebDAV COPY)
-    - root/xroot  <->  root/xroot  (XRootD CopyProcess)
-
-    This mirrors gfal2's behavior of attempting TPC by default for these
-    protocol pairs and falling back to streaming if TPC is unavailable.
-    """
-    src_s = urlparse(src_url).scheme.lower()
-    dst_s = urlparse(dst_url).scheme.lower()
-    http = {"http", "https"}
-    xrd = {"root", "xroot"}
-    return (src_s in http and dst_s in http) or (src_s in xrd and dst_s in xrd)
-
-
-def _is_special_file(path):
-    """Return True if *path* is a FIFO, character device, or socket.
-
-    These can always be written to without ``--force`` because they don't
-    hold persistent data that would be lost on overwrite (e.g. /dev/stdout).
-    Returns False on any OS error (e.g. path is on a remote filesystem).
-    """
-    try:
-        m = Path(path).stat().st_mode
-        return stat.S_ISFIFO(m) or stat.S_ISCHR(m) or stat.S_ISSOCK(m)
-    except OSError:
-        return False
-
-
-def _checksum_fs(fso, path, alg):
-    """Compute checksum by reading the file."""
-    h = _make_hasher(alg)
-    with fso.open(path, "rb") as f:
-        while True:
-            chunk = f.read(fs.CHUNK_SIZE)
-            if not chunk:
-                break
-            _update_hasher(h, alg, chunk)
-    return _finalise_hasher(h, alg)
-
-
-def _split_timestamp_ns(timestamp):
-    seconds = int(timestamp)
-    nanoseconds = int(round((timestamp - seconds) * 1_000_000_000))
-    if nanoseconds >= 1_000_000_000:
-        seconds += 1
-        nanoseconds -= 1_000_000_000
-    return seconds, nanoseconds
-
-
-def _eos_mtime_url(url, timestamp):
-    """Return *url* with an ``eos.mtime`` query when it targets EOS.
-
-    EOS accepts ``eos.mtime=<sec>[.<nsec>]`` on both WebDAV and XRootD
-    destinations. Non-EOS endpoints are left untouched so their behaviour
-    remains unchanged.
-    """
-    normalized = fs.normalize_url(url)
-    parsed = urlparse(normalized)
-    if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
-        return None
-    if "eos" not in (parsed.hostname or "").lower():
-        return None
-
-    seconds, nanoseconds = _split_timestamp_ns(timestamp)
-    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    params["eos.mtime"] = (
-        str(seconds) if nanoseconds == 0 else f"{seconds}.{nanoseconds:09d}"
-    )
-    return urlunparse(parsed._replace(query=urlencode(params)))
-
-
-def _local_destination_path(dst_url, dst_path):
-    """Return a local destination path when *dst_url* targets file://."""
-    normalized = fs.normalize_url(dst_url)
-    if urlparse(normalized).scheme.lower() != "file":
-        return None
-    return Path(dst_path)
