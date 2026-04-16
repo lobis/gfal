@@ -6,13 +6,14 @@ RELEASE="${2:-store}"
 NAMESPACE="${3:-default}"
 
 DOOR_POD="${RELEASE}-dcache-door-0"
-SERVICE_HOST="${RELEASE}-door-svc.${NAMESPACE}.svc.cluster.local"
+SERVICE_HOST="${DCACHE_TEST_SERVICE_HOST:-${RELEASE}-door-svc.${NAMESPACE}.svc.cluster.local}"
+SERVICE_PORT="${DCACHE_TEST_SERVICE_PORT:-8083}"
 BASE_PATH="/data/gfal-tests/${RUN_ID}"
 WRITABLE_PATH="${BASE_PATH}/writable"
 DENIED_PATH="${BASE_PATH}/denied"
 
 dcache_chimera() {
-    kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
+    timeout 30 kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
 }
 
 run_chimera_allow_fail() {
@@ -47,6 +48,6 @@ cat <<EOF
 GFAL_DEPLOYMENT_NAME=dcache-kind
 GFAL_DEPLOYMENT_VERIFY_SSL=0
 GFAL_DEPLOYMENT_SUPPORTS_LISTING=1
-GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=https://${SERVICE_HOST}:8083${WRITABLE_PATH}
-GFAL_DEPLOYMENT_HTTP_DENIED_BASE=https://${SERVICE_HOST}:8083${DENIED_PATH}
+GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=https://${SERVICE_HOST}:${SERVICE_PORT}${WRITABLE_PATH}
+GFAL_DEPLOYMENT_HTTP_DENIED_BASE=https://${SERVICE_HOST}:${SERVICE_PORT}${DENIED_PATH}
 EOF

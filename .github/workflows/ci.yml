@@ -182,13 +182,15 @@ jobs:
       run: pytest tests/test_integration_compare_gfal2.py -v --tb=short
 
   deployment-integration:
-    name: Deployment Integration (EOS kind)
+    name: Deployment Integration (EOS k3s)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gfal-k3s]
     timeout-minutes: 60
     permissions:
       contents: read
     env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      EOS_NAMESPACE: eos-${{ github.run_id }}
       EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
       EOS_IMAGE_TAG: 5.4.1.el9
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
@@ -220,70 +222,15 @@ jobs:
         grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
 
-    - name: Free disk space
+    - name: Deploy EOS via Helm chart on k3s
       run: |
-        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-          /opt/ghc /usr/local/share/boost /usr/share/swift \
-          /opt/hostedtoolcache/CodeQL || true
-        docker system prune -af --volumes || true
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build deployment test runner image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: docker/Dockerfile.integration-runner
-        load: true
-        platforms: linux/amd64
-        tags: gfal-integration-runner:latest
-        cache-from: type=gha,scope=deployment-integration-runner
-        cache-to: type=gha,mode=max,scope=deployment-integration-runner
-
-    - name: Set EOS cache key
-      id: eos-version
-      run: echo "tag=${EOS_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-
-    - name: Cache EOS Docker image
-      id: cache-eos-image
-      uses: actions/cache@v5
-      with:
-        path: /tmp/eos-image.tar
-        key: eos-kind-image-${{ steps.eos-version.outputs.tag }}
-
-    - name: Pull and save EOS Docker image
-      if: steps.cache-eos-image.outputs.cache-hit != 'true'
-      run: |
-        docker pull "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}"
-        docker save "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}" -o /tmp/eos-image.tar
-
-    - name: Load EOS Docker image from cache
-      if: steps.cache-eos-image.outputs.cache-hit == 'true'
-      run: |
-        docker load -i /tmp/eos-image.tar
-        rm -f /tmp/eos-image.tar
-
-    - name: Create kind cluster
-      uses: helm/kind-action@v1
-
-    - name: Load EOS image into kind
-      run: |
-        kind load docker-image \
-          --name chart-testing \
-          "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}"
-        docker rmi "${EOS_IMAGE_REPO}:${EOS_IMAGE_TAG}" || true
-
-    - name: Load test runner image into kind
-      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
-
-    - name: Deploy EOS via Helm chart
-      run: |
+        kubectl create namespace "${EOS_NAMESPACE}"
         helm install eos oci://registry.cern.ch/eos/charts/server \
+          --namespace "${EOS_NAMESPACE}" \
           --set "global.repository=${EOS_IMAGE_REPO}" \
           --set "global.tag=${EOS_IMAGE_TAG}" \
           --set "global.pullPolicy=IfNotPresent" \
-          --set "fst.replicaCount=2" \
+          --set "fst.replicaCount=1" \
           --set "qdb.replicaCount=1" \
           --set "global.securityContext.privileged=true" \
           --set "global.securityContext.allowPrivilegeEscalation=true" \
@@ -292,189 +239,95 @@ jobs:
 
     - name: Wait for EOS namespace to boot
       run: |
-        MGM_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
+        MGM_CONTAINER=$(
+          kubectl get pod -n "${EOS_NAMESPACE}" eos-mgm-0 \
+            -o jsonpath='{.spec.containers[0].name}'
+        )
         for i in $(seq 1 60); do
-          if kubectl exec eos-mgm-0 -c "${MGM_CONTAINER}" -- eos ns stat 2>/dev/null | grep -q "booted"; then
+          if kubectl exec -n "${EOS_NAMESPACE}" eos-mgm-0 -c "${MGM_CONTAINER}" -- \
+               eos ns stat 2>/dev/null | grep -q "booted"; then
             break
           fi
           if [ "$i" -eq 60 ]; then
-            kubectl logs eos-mgm-0 --all-containers=true --tail=100 || true
+            kubectl logs -n "${EOS_NAMESPACE}" eos-mgm-0 --all-containers=true --tail=100 || true
             exit 1
           fi
           sleep 10
         done
 
-    - name: Create EOS proxy secret
-      if: env.X509_USER_PROXY != ''
-      run: |
-        kubectl create secret generic eos-proxy \
-          --from-file=x509proxy="${X509_USER_PROXY}" \
-          --dry-run=client -o yaml | kubectl apply -f -
-
-    - name: Prepare EOS deployment contract
+    - name: Run EOS deployment tests from host runner
       env:
         EOS_TEST_KUBECTL_TARGET: eos-mgm-0
-        EOS_TEST_KUBECTL_NAMESPACE: default
       run: |
         chmod +x scripts/prepare-eos-kind-deployment.sh
+        export EOS_TEST_KUBECTL_NAMESPACE="${EOS_NAMESPACE}"
         export EOS_TEST_KUBECTL_CONTAINER
-        EOS_TEST_KUBECTL_CONTAINER=$(kubectl get pod eos-mgm-0 -o jsonpath='{.spec.containers[0].name}')
-        ./scripts/prepare-eos-kind-deployment.sh "gha-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+        EOS_TEST_KUBECTL_CONTAINER=$(
+          kubectl get pod -n "${EOS_NAMESPACE}" eos-mgm-0 \
+            -o jsonpath='{.spec.containers[0].name}'
+        )
 
-    - name: Run generic deployment integration tests inside kind
-      run: |
-        kubectl delete job gfal-eos-tests --ignore-not-found=true
-        cat <<EOF | kubectl apply -f -
-        apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: gfal-eos-tests
-        spec:
-          backoffLimit: 0
-          template:
-            spec:
-              restartPolicy: Never
-              volumes:
-              - name: x509proxy
-                secret:
-                  secretName: eos-proxy
-                  optional: true
-              containers:
-              - name: tests
-                image: gfal-integration-runner:latest
-                imagePullPolicy: Never
-                env:
-                - name: GFAL_DEPLOYMENT_NAME
-                  value: "${GFAL_DEPLOYMENT_NAME}"
-                - name: GFAL_DEPLOYMENT_VERIFY_SSL
-                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
-                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
-                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
-                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
-                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
-                - name: GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE
-                  value: "${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}"
-                - name: GFAL_DEPLOYMENT_ROOT_DENIED_BASE
-                  value: "${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}"
-                - name: GFAL_DEPLOYMENT_PROXY
-                  value: "/tmp/x509proxy"
-                - name: X509_USER_PROXY
-                  value: "/tmp/x509proxy"
-                volumeMounts:
-                - name: x509proxy
-                  mountPath: /tmp/x509proxy
-                  subPath: x509proxy
-                  readOnly: true
-        EOF
+        kubectl -n "${EOS_NAMESPACE}" port-forward svc/eos-mgm 8443:8443 1094:1094 \
+          > /tmp/eos-port-forward.log 2>&1 &
+        PF_PID=$!
+        trap 'kill "${PF_PID}" || true' EXIT
 
-        (
-          for _ in $(seq 1 240); do
-            POD=$(kubectl get pod -l job-name=gfal-eos-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-            if [ -n "${POD}" ]; then
-              echo "Streaming logs from ${POD}"
-              kubectl logs -f "${POD}" --all-containers=true || true
-              exit 0
+        for port in 8443 1094; do
+          for _ in $(seq 1 30); do
+            if bash -lc "echo > /dev/tcp/127.0.0.1/${port}" 2>/dev/null; then
+              break
             fi
-            sleep 5
+            if ! kill -0 "${PF_PID}" 2>/dev/null; then
+              cat /tmp/eos-port-forward.log || true
+              exit 1
+            fi
+            sleep 2
           done
-        ) &
-        LOG_PID=$!
+        done
 
-        wait_for_job() {
-          local job_name=$1
-          local deadline=$(( $(date +%s) + 1200 ))
-          while [ "$(date +%s)" -lt "${deadline}" ]; do
-            succeeded=$(kubectl get job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
-            failed=$(kubectl get job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
-            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
-              return 0
-            fi
-            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
-              echo "Job ${job_name} failed"
-              return 1
-            fi
-            sleep 5
-          done
-          echo "Timed out waiting for job ${job_name} to finish"
-          return 124
-        }
-
-        if ! wait_for_job gfal-eos-tests; then
-          kill "${LOG_PID}" || true
-          kubectl logs job/gfal-eos-tests --all-containers=true --tail=-1 || true
-          kubectl describe job gfal-eos-tests || true
-          kubectl get pods || true
-          kubectl describe pod -l job-name=gfal-eos-tests || true
-          exit 1
+        export EOS_TEST_HTTP_HOST=127.0.0.1
+        export EOS_TEST_ROOT_HOST=127.0.0.1
+        while IFS= read -r line; do
+          export "${line}"
+        done < <(./scripts/prepare-eos-kind-deployment.sh "gha-${GITHUB_RUN_ID}")
+        if [ -n "${X509_USER_PROXY:-}" ]; then
+          export GFAL_DEPLOYMENT_PROXY="${X509_USER_PROXY}"
         fi
-
-        kill "${LOG_PID}" || true
-        kubectl logs job/gfal-eos-tests --all-containers=true --tail=-1
+        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
 
     - name: Dump EOS state on failure
       if: failure()
       run: |
-        kubectl get pods || true
-        kubectl get svc || true
-        kubectl logs eos-mgm-0 --all-containers=true --tail=100 || true
+        kubectl get pods -n "${EOS_NAMESPACE}" || true
+        kubectl get svc -n "${EOS_NAMESPACE}" || true
+        kubectl logs -n "${EOS_NAMESPACE}" eos-mgm-0 --all-containers=true --tail=100 || true
+        kubectl logs -n "${EOS_NAMESPACE}" eos-fst-0 --all-containers=true --tail=100 || true
+
+    - name: Cleanup EOS namespace
+      if: always()
+      run: kubectl delete namespace "${EOS_NAMESPACE}" --ignore-not-found=true --wait=false || true
 
   deployment-integration-dcache:
-    name: Deployment Integration (dCache kind)
+    name: Deployment Integration (dCache k3s)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gfal-k3s]
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      DCACHE_NAMESPACE: dcache-${{ github.run_id }}
     steps:
     - uses: actions/checkout@v6
 
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-          /opt/ghc /usr/local/share/boost /usr/share/swift \
-          /opt/hostedtoolcache/CodeQL || true
-        docker system prune -af --volumes || true
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build deployment test runner image
-      uses: docker/build-push-action@v6
+    - uses: actions/setup-python@v6
       with:
-        context: .
-        file: docker/Dockerfile.integration-runner
-        load: true
-        platforms: linux/amd64
-        tags: gfal-integration-runner:latest
-        cache-from: type=gha,scope=deployment-integration-runner
-        cache-to: type=gha,mode=max,scope=deployment-integration-runner
+        python-version: "3.12"
 
-    - name: Create kind cluster
-      uses: helm/kind-action@v1
-
-    - name: Load test runner image into kind
-      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
-
-    - name: Start dCache progress logger
+    - name: Install local test dependencies
       run: |
-        cat > /tmp/k8s-progress.sh <<'SH'
-        set -eu
-        tick=0
-        while true; do
-          tick=$((tick + 1))
-          echo "=== $(date -u +'%Y-%m-%dT%H:%M:%SZ') dCache snapshot ${tick} ==="
-          kubectl get pods -A -o wide || true
-          kubectl get jobs -A || true
-          if [ $((tick % 3)) -eq 0 ]; then
-            kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 30 || true
-          fi
-          sleep 20
-        done
-        SH
-        bash /tmp/k8s-progress.sh &
-        echo $! > /tmp/k8s-progress.pid
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev,all]"
 
     - name: Add Helm repositories
       run: |
@@ -482,324 +335,173 @@ jobs:
         helm repo add dcache https://gitlab.desy.de/api/v4/projects/7648/packages/helm/test
         helm repo update
 
-    - name: Deploy dCache dependencies
+    - name: Deploy dCache on k3s
       run: |
-        helm install --wait \
+        kubectl create namespace "${DCACHE_NAMESPACE}"
+        helm install --wait -n "${DCACHE_NAMESPACE}" \
           --set auth.username=dcache \
           --set auth.password=let-me-in \
           --set auth.database=chimera \
           chimera bitnami/postgresql
-        # These chart defaults still point at archived Bitnami tags that no longer
-        # exist on Docker Hub. Use the matching bitnamilegacy images instead.
-        helm install --wait \
+        helm install --wait -n "${DCACHE_NAMESPACE}" \
           --set global.security.allowInsecureImages=true \
           --set image.repository=bitnamilegacy/zookeeper \
           cells bitnami/zookeeper
-        helm install --wait \
+        helm install --wait -n "${DCACHE_NAMESPACE}" \
           --set global.security.allowInsecureImages=true \
           --set externalZookeeper.servers=cells-zookeeper \
           --set kraft.enabled=false \
           --set image.repository=bitnamilegacy/kafka \
           billing bitnami/kafka \
           --version 23.0.7
-
-    - name: Deploy dCache via Helm chart
-      run: helm install --wait -f ci/dcache-values.yaml store dcache/dcache
+        helm install --wait -n "${DCACHE_NAMESPACE}" -f ci/dcache-values.yaml store dcache/dcache
 
     - name: Wait for dCache WebDAV door to accept connections
       run: |
         echo "Waiting for dCache WebDAV door on port 8083..."
         for i in $(seq 1 60); do
-          if kubectl exec store-dcache-door-0 -- \
+          if kubectl exec -n "${DCACHE_NAMESPACE}" store-dcache-door-0 -- \
                bash -c 'echo > /dev/tcp/localhost/8083' 2>/dev/null; then
             echo "dCache WebDAV door is ready (attempt ${i})"
             break
           fi
           if [ "${i}" -eq 60 ]; then
             echo "dCache WebDAV door did not become ready after 10 minutes"
-            kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
+            kubectl logs -n "${DCACHE_NAMESPACE}" statefulset/store-dcache-door --all-containers=true --tail=100 || true
             exit 1
           fi
           sleep 10
         done
 
-    - name: Prepare dCache deployment contract
+    - name: Run dCache deployment tests from host runner
       run: |
         chmod +x scripts/prepare-dcache-kind-deployment.sh
-        ./scripts/prepare-dcache-kind-deployment.sh "gha-${GITHUB_RUN_ID}" store default >> "$GITHUB_ENV"
+        kubectl -n "${DCACHE_NAMESPACE}" port-forward svc/store-door-svc 8083:8083 \
+          > /tmp/dcache-port-forward.log 2>&1 &
+        PF_PID=$!
+        trap 'kill "${PF_PID}" || true' EXIT
 
-    - name: Run generic deployment integration tests inside kind
-      run: |
-        kubectl delete job gfal-dcache-tests --ignore-not-found=true
-        cat <<EOF | kubectl apply -f -
-        apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: gfal-dcache-tests
-        spec:
-          backoffLimit: 0
-          template:
-            spec:
-              restartPolicy: Never
-              containers:
-              - name: tests
-                image: gfal-integration-runner:latest
-                imagePullPolicy: Never
-                env:
-                - name: GFAL_DEPLOYMENT_NAME
-                  value: "${GFAL_DEPLOYMENT_NAME}"
-                - name: GFAL_DEPLOYMENT_VERIFY_SSL
-                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
-                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
-                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
-                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
-                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
-        EOF
+        for _ in $(seq 1 30); do
+          if bash -lc "echo > /dev/tcp/127.0.0.1/8083" 2>/dev/null; then
+            break
+          fi
+          if ! kill -0 "${PF_PID}" 2>/dev/null; then
+            cat /tmp/dcache-port-forward.log || true
+            exit 1
+          fi
+          sleep 2
+        done
 
-        (
-          for _ in $(seq 1 240); do
-            POD=$(kubectl get pod -l job-name=gfal-dcache-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-            if [ -n "${POD}" ]; then
-              echo "Streaming logs from ${POD}"
-              kubectl logs -f "${POD}" --all-containers=true || true
-              exit 0
-            fi
-            sleep 5
-          done
-        ) &
-        LOG_PID=$!
-
-        wait_for_job() {
-          local job_name=$1
-          local deadline=$(( $(date +%s) + 1200 ))
-          while [ "$(date +%s)" -lt "${deadline}" ]; do
-            succeeded=$(kubectl get job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
-            failed=$(kubectl get job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
-            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
-              return 0
-            fi
-            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
-              echo "Job ${job_name} failed"
-              return 1
-            fi
-            sleep 5
-          done
-          echo "Timed out waiting for job ${job_name} to finish"
-          return 124
-        }
-
-        if ! wait_for_job gfal-dcache-tests; then
-          kill "${LOG_PID}" || true
-          kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1 || true
-          kubectl describe job gfal-dcache-tests || true
-          kubectl get pods || true
-          kubectl describe pod -l job-name=gfal-dcache-tests || true
-          exit 1
-        fi
-
-        kill "${LOG_PID}" || true
-        kubectl logs job/gfal-dcache-tests --all-containers=true --tail=-1
+        export DCACHE_TEST_SERVICE_HOST=127.0.0.1
+        export DCACHE_TEST_SERVICE_PORT=8083
+        while IFS= read -r line; do
+          export "${line}"
+        done < <(./scripts/prepare-dcache-kind-deployment.sh "gha-${GITHUB_RUN_ID}" store "${DCACHE_NAMESPACE}")
+        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
 
     - name: Dump dCache state on failure
       if: failure()
       run: |
-        kubectl get pods || true
-        kubectl get svc || true
-        kubectl logs statefulset/store-dcache-door --all-containers=true --tail=100 || true
-        kubectl logs statefulset/store-pool-a --all-containers=true --tail=100 || true
+        kubectl get pods -n "${DCACHE_NAMESPACE}" || true
+        kubectl get svc -n "${DCACHE_NAMESPACE}" || true
+        kubectl logs -n "${DCACHE_NAMESPACE}" statefulset/store-dcache-door --all-containers=true --tail=100 || true
+        kubectl logs -n "${DCACHE_NAMESPACE}" statefulset/store-pool-a --all-containers=true --tail=100 || true
 
-    - name: Stop dCache progress logger
+    - name: Cleanup dCache namespace
       if: always()
-      run: |
-        if [ -f /tmp/k8s-progress.pid ]; then
-          kill "$(cat /tmp/k8s-progress.pid)" || true
-        fi
+      run: kubectl delete namespace "${DCACHE_NAMESPACE}" --ignore-not-found=true --wait=false || true
 
   deployment-integration-storm:
-    name: Deployment Integration (StoRM kind)
+    name: Deployment Integration (StoRM k3s)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gfal-k3s]
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      STORM_NAMESPACE: storm-${{ github.run_id }}
     steps:
     - uses: actions/checkout@v6
 
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-          /opt/ghc /usr/local/share/boost /usr/share/swift \
-          /opt/hostedtoolcache/CodeQL || true
-        docker system prune -af --volumes || true
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build deployment test runner image
-      uses: docker/build-push-action@v6
+    - uses: actions/setup-python@v6
       with:
-        context: .
-        file: docker/Dockerfile.integration-runner
-        load: true
-        platforms: linux/amd64
-        tags: gfal-integration-runner:latest
-        cache-from: type=gha,scope=deployment-integration-runner
-        cache-to: type=gha,mode=max,scope=deployment-integration-runner
+        python-version: "3.12"
 
-    - name: Create kind cluster
-      uses: helm/kind-action@v1
-
-    - name: Load test runner image into kind
-      run: kind load docker-image --name chart-testing gfal-integration-runner:latest
-
-    - name: Start StoRM progress logger
+    - name: Install local test dependencies
       run: |
-        cat > /tmp/k8s-progress.sh <<'SH'
-        set -eu
-        tick=0
-        while true; do
-          tick=$((tick + 1))
-          echo "=== $(date -u +'%Y-%m-%dT%H:%M:%SZ') StoRM snapshot ${tick} ==="
-          kubectl get pods -A -o wide || true
-          kubectl get jobs -A || true
-          if [ $((tick % 3)) -eq 0 ]; then
-            kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 30 || true
-          fi
-          sleep 20
-        done
-        SH
-        bash /tmp/k8s-progress.sh &
-        echo $! > /tmp/k8s-progress.pid
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev,all]"
 
     - name: Clone StoRM WebDAV deployment chart
       run: git clone --depth=1 https://gitlab.com/ska-telescope/src/src-dm/ska-src-dm-storm-webdav-deployment.git /tmp/storm-webdav-deployment
 
     - name: Create StoRM TLS secret
       run: |
-        kubectl create namespace storm
+        kubectl create namespace "${STORM_NAMESPACE}"
         openssl req -x509 -nodes -newkey rsa:2048 -days 2 \
-          -subj "/CN=storm-webdav.storm.svc.cluster.local" \
-          -addext "subjectAltName=DNS:storm-webdav.storm.svc.cluster.local,DNS:storm-webdav,DNS:localhost" \
+          -subj "/CN=storm-webdav.${STORM_NAMESPACE}.svc.cluster.local" \
+          -addext "subjectAltName=DNS:storm-webdav.${STORM_NAMESPACE}.svc.cluster.local,DNS:storm-webdav,DNS:localhost" \
           -keyout /tmp/storm-tls.key \
           -out /tmp/storm-tls.crt
         kubectl create secret tls storm-tls-secret \
-          --namespace storm \
+          --namespace "${STORM_NAMESPACE}" \
           --cert=/tmp/storm-tls.crt \
           --key=/tmp/storm-tls.key
 
-    - name: Deploy StoRM WebDAV via Helm chart
+    - name: Deploy StoRM WebDAV via Helm chart on k3s
       run: |
         helm install storm /tmp/storm-webdav-deployment/etc/helm \
-          --namespace storm \
+          --namespace "${STORM_NAMESPACE}" \
           --values ci/storm-values.yaml \
           --debug \
-          --timeout 20m \
+          --timeout 5m \
           --wait
 
-    - name: Prepare StoRM deployment contract
+    - name: Run StoRM deployment tests from host runner
       run: |
         chmod +x scripts/prepare-storm-kind-deployment.sh
-        ./scripts/prepare-storm-kind-deployment.sh "gha-${GITHUB_RUN_ID}" storm >> "$GITHUB_ENV"
+        kubectl -n "${STORM_NAMESPACE}" port-forward svc/storm-webdav 8085:8085 \
+          > /tmp/storm-port-forward.log 2>&1 &
+        PF_PID=$!
+        trap 'kill "${PF_PID}" || true' EXIT
 
-    - name: Run generic deployment integration tests inside kind
-      run: |
-        kubectl delete -n storm job gfal-storm-tests --ignore-not-found=true
-        cat <<EOF | kubectl apply -f -
-        apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: gfal-storm-tests
-          namespace: storm
-        spec:
-          backoffLimit: 0
-          template:
-            spec:
-              restartPolicy: Never
-              containers:
-              - name: tests
-                image: gfal-integration-runner:latest
-                imagePullPolicy: Never
-                env:
-                - name: GFAL_DEPLOYMENT_NAME
-                  value: "${GFAL_DEPLOYMENT_NAME}"
-                - name: GFAL_DEPLOYMENT_VERIFY_SSL
-                  value: "${GFAL_DEPLOYMENT_VERIFY_SSL}"
-                - name: GFAL_DEPLOYMENT_SUPPORTS_LISTING
-                  value: "${GFAL_DEPLOYMENT_SUPPORTS_LISTING}"
-                - name: GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}"
-                - name: GFAL_DEPLOYMENT_HTTP_DENIED_BASE
-                  value: "${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}"
-        EOF
+        for _ in $(seq 1 30); do
+          if bash -lc "echo > /dev/tcp/127.0.0.1/8085" 2>/dev/null; then
+            break
+          fi
+          if ! kill -0 "${PF_PID}" 2>/dev/null; then
+            cat /tmp/storm-port-forward.log || true
+            exit 1
+          fi
+          sleep 2
+        done
 
-        (
-          for _ in $(seq 1 240); do
-            POD=$(kubectl get pod -n storm -l job-name=gfal-storm-tests -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-            if [ -n "${POD}" ]; then
-              echo "Streaming logs from ${POD}"
-              kubectl logs -n storm -f "${POD}" --all-containers=true || true
-              exit 0
-            fi
-            sleep 5
-          done
-        ) &
-        LOG_PID=$!
-
-        wait_for_job() {
-          local namespace=$1
-          local job_name=$2
-          local deadline=$(( $(date +%s) + 1200 ))
-          while [ "$(date +%s)" -lt "${deadline}" ]; do
-            succeeded=$(kubectl get -n "${namespace}" job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
-            failed=$(kubectl get -n "${namespace}" job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
-            if [ -n "${succeeded}" ] && [ "${succeeded}" -ge 1 ]; then
-              return 0
-            fi
-            if [ -n "${failed}" ] && [ "${failed}" -ge 1 ]; then
-              echo "Job ${namespace}/${job_name} failed"
-              return 1
-            fi
-            sleep 5
-          done
-          echo "Timed out waiting for job ${namespace}/${job_name} to finish"
-          return 124
-        }
-
-        if ! wait_for_job storm gfal-storm-tests; then
-          kill "${LOG_PID}" || true
-          kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1 || true
-          kubectl describe -n storm job gfal-storm-tests || true
-          kubectl get pods -n storm || true
-          kubectl describe -n storm pod -l job-name=gfal-storm-tests || true
-          exit 1
-        fi
-
-        kill "${LOG_PID}" || true
-        kubectl logs -n storm job/gfal-storm-tests --all-containers=true --tail=-1
+        export STORM_TEST_SERVICE_HOST=127.0.0.1
+        export STORM_TEST_SERVICE_PORT=8085
+        while IFS= read -r line; do
+          export "${line}"
+        done < <(./scripts/prepare-storm-kind-deployment.sh "gha-${GITHUB_RUN_ID}" "${STORM_NAMESPACE}")
+        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
 
     - name: Dump StoRM state on failure
       if: failure()
       run: |
-        kubectl get pods -n storm || true
-        kubectl get svc -n storm || true
-        kubectl get events -n storm --sort-by=.metadata.creationTimestamp | tail -n 50 || true
-        kubectl describe pod -n storm -l app=storm-webdav || true
-        POD=$(kubectl get pod -n storm -l app=storm-webdav -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        kubectl get pods -n "${STORM_NAMESPACE}" || true
+        kubectl get svc -n "${STORM_NAMESPACE}" || true
+        kubectl get events -n "${STORM_NAMESPACE}" --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+        kubectl describe pod -n "${STORM_NAMESPACE}" -l app=storm-webdav || true
+        POD=$(kubectl get pod -n "${STORM_NAMESPACE}" -l app=storm-webdav -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
         if [ -n "${POD}" ]; then
-          kubectl logs -n storm "${POD}" -c storm-webdav --tail=200 || true
-          kubectl logs -n storm "${POD}" -c storm-webdav --previous --tail=200 || true
-          kubectl logs -n storm "${POD}" -c prepare-ca-certificates --tail=200 || true
-          kubectl logs -n storm "${POD}" -c change-ownership-of-sa-to-storm-user --tail=200 || true
+          kubectl logs -n "${STORM_NAMESPACE}" "${POD}" -c storm-webdav --tail=200 || true
+          kubectl logs -n "${STORM_NAMESPACE}" "${POD}" -c storm-webdav --previous --tail=200 || true
+          kubectl logs -n "${STORM_NAMESPACE}" "${POD}" -c prepare-ca-certificates --tail=200 || true
+          kubectl logs -n "${STORM_NAMESPACE}" "${POD}" -c change-ownership-of-sa-to-storm-user --tail=200 || true
         fi
 
-    - name: Stop StoRM progress logger
+    - name: Cleanup StoRM namespace
       if: always()
-      run: |
-        if [ -f /tmp/k8s-progress.pid ]; then
-          kill "$(cat /tmp/k8s-progress.pid)" || true
-        fi
+      run: kubectl delete namespace "${STORM_NAMESPACE}" --ignore-not-found=true --wait=false || true
 
   # ---------------------------------------------------------------------------
   # 2. Packaging

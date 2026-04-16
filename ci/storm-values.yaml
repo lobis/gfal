@@ -20,7 +20,7 @@ extraEnv:
 healthcheck:
   enabled: true
   test: >
-    curl -ks -o /dev/null -w '%{http_code}' http://localhost:8085/sa/ |
+    curl -ks -o /dev/null -w '%{http_code}' http://localhost:8085/sa |
     grep -Eq '20[0-9]|40[01]'
   interval: 30
   timeout: 10
@@ -37,7 +37,7 @@ config:
       enabled: false
   storageAreas:
     - name: sa
-      rootPath: /data/sa
+      rootPath: /data
       accessPoints:
         - /sa
       orgs: []
