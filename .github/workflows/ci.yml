@@ -806,6 +806,37 @@ jobs:
         name: rpm-package-distributions-${{ matrix.os.name }}-${{ matrix.arch }}
         path: rpmbuild/RPMS/*/*.rpm
 
+  build-conda:
+    name: Build Conda Package 📦
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - uses: conda-incubator/setup-miniconda@v3
+      with:
+        activate-environment: conda-build
+        auto-activate-base: false
+        channels: conda-forge
+        channel-priority: strict
+        miniforge-variant: Miniforge3
+        python-version: "3.12"
+    - name: Install conda build dependencies
+      shell: bash -el {0}
+      run: conda install -y conda-build anaconda-client hatchling hatch-vcs
+    - name: Build conda package
+      shell: bash -el {0}
+      run: |
+        export PKG_VERSION="$(python -m hatchling version)"
+        export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
+        conda build recipe --output-folder conda-dist
+    - name: Store conda package
+      uses: actions/upload-artifact@v7
+      with:
+        name: conda-package-distributions
+        path: conda-dist/noarch/*
+
   # ---------------------------------------------------------------------------
   # 3. Validation & Repository Update
   # ---------------------------------------------------------------------------
@@ -852,6 +883,34 @@ jobs:
         python3 -m pip install --no-cache-dir pytest pytest-asyncio pytest-xdist pytest-cov pytest-rerunfailures
     - name: Run tests against installed package
       run: python3 -m pytest tests/ -q -m "not integration and not xrootd" --override-ini="addopts="
+
+  test-conda-install:
+    name: Test Conda Install 🧪
+    needs: [ build-conda ]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v8
+      with:
+        name: conda-package-distributions
+        path: conda-dist/noarch/
+    - uses: conda-incubator/setup-miniconda@v3
+      with:
+        activate-environment: conda-test
+        auto-activate-base: false
+        channels: conda-forge
+        channel-priority: strict
+        miniforge-variant: Miniforge3
+        python-version: "3.12"
+    - name: Install local conda package
+      shell: bash -el {0}
+      run: conda install -y conda-dist/noarch/gfal-*.conda
+    - name: Verify XRootD-enabled install
+      shell: bash -el {0}
+      run: |
+        command -v gfal
+        gfal --help
+        python -c "from XRootD import client; import fsspec_xrootd; import gfal"
 
   update-repo:
     name: Update YUM Repository 🌐
@@ -934,7 +993,7 @@ jobs:
   publish-to-pypi:
     name: Publish to PyPI 🚀
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build, build-rpm, test-install ]
+    needs: [ build, build-rpm, build-conda, test-install, test-conda-install ]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -948,10 +1007,44 @@ jobs:
         path: dist/
     - uses: pypa/gh-action-pypi-publish@release/v1
 
+  publish-conda:
+    name: Publish Conda Package 🚀
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build-conda, test-conda-install ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: conda-package-distributions
+        path: conda-dist/noarch/
+    - uses: conda-incubator/setup-miniconda@v3
+      with:
+        activate-environment: conda-publish
+        auto-activate-base: false
+        channels: conda-forge
+        channel-priority: strict
+        miniforge-variant: Miniforge3
+        python-version: "3.12"
+    - name: Install upload client
+      if: env.ANACONDA_API_TOKEN != ''
+      shell: bash -el {0}
+      run: conda install -y anaconda-client
+    - name: Upload to Anaconda.org
+      if: env.ANACONDA_API_TOKEN != ''
+      shell: bash -el {0}
+      run: anaconda --token "$ANACONDA_API_TOKEN" upload --user lobis conda-dist/noarch/gfal-*.conda
+    - name: Skip upload when token is unavailable
+      if: env.ANACONDA_API_TOKEN == ''
+      run: echo "ANACONDA_API_TOKEN is not configured; skipping conda upload."
+
   github-release:
     name: Create GitHub Release 🚀
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build, build-rpm, test-install ]
+    needs: [ build, build-rpm, build-conda, test-install, test-conda-install ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -976,11 +1069,16 @@ jobs:
       with:
         name: rpm-package-distributions-el10-aarch64
         path: release-artifacts/rpm/el10-aarch64/
+    - uses: actions/download-artifact@v8
+      with:
+        name: conda-package-distributions
+        path: release-artifacts/conda/noarch/
     - name: Prepare Release Files
       run: |
         mkdir -p release-upload
 
         cp -a release-artifacts/python/. release-upload/
+        cp -a release-artifacts/conda/noarch/. release-upload/
 
         # As with the Pages repo, publish a single canonical noarch RPM from
         # the x86_64 build for each EL release to avoid duplicate filenames
@@ -1001,9 +1099,11 @@ jobs:
 
   verify-deployment:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
-    needs: [ update-repo, publish-to-pypi, github-release ]
+    needs: [ update-repo, publish-to-pypi, publish-conda, github-release ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    env:
+      ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -1049,9 +1149,28 @@ jobs:
               sleep 10
               i=$((i + 1))
             done
+        - name: Conda
+          container: condaforge/miniforge3:latest
+          install_cmd: |
+            i=1
+            while [ "$i" -le 18 ]; do
+              if conda install -y -c lobis -c conda-forge "gfal==$EXPECTED_VERSION"; then
+                break
+              fi
+              if [ "$i" -eq 18 ]; then
+                echo "❌ Timed out waiting for gfal==$EXPECTED_VERSION to appear on Anaconda.org"
+                exit 1
+              fi
+              sleep 10
+              i=$((i + 1))
+            done
     container: ${{ matrix.target.container }}
     steps:
+    - name: Skip Conda verification when upload is unavailable
+      if: matrix.target.name == 'Conda' && env.ANACONDA_API_TOKEN == ''
+      run: echo "ANACONDA_API_TOKEN is not configured; skipping Conda verification."
     - name: Install and Verify
+      if: matrix.target.name != 'Conda' || env.ANACONDA_API_TOKEN != ''
       run: |
         EXPECTED_VERSION=${{ github.ref_name }}
         EXPECTED_VERSION=${EXPECTED_VERSION#v}

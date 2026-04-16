@@ -1,0 +1,58 @@
+{% set version = os.environ.get("PKG_VERSION") or "0.0.0" %}
+
+package:
+  name: gfal
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  noarch: python
+  script: {{ PYTHON }} -m pip install . --no-deps --no-build-isolation -vv
+  script_env:
+    - PKG_VERSION
+    - SETUPTOOLS_SCM_PRETEND_VERSION
+  entry_points:
+    - gfal = gfal.cli.shell:main
+
+requirements:
+  host:
+    - hatch-vcs
+    - hatchling
+    - pip
+    - python >=3.9
+  run:
+    - aiohttp >=3.8.0
+    - click >=8.0.0
+    - fsspec >=2023.1.0
+    - fsspec-xrootd >=0.5.1  # [py==39]
+    - fsspec-xrootd >=0.5.3  # [py>=310]
+    - python >=3.9
+    - rich >=13.0.0
+    - truststore  # [py>=310]
+    - urllib3 >=2.0.0
+    - xrootd >=5.9.2
+
+test:
+  imports:
+    - XRootD
+    - fsspec_xrootd
+    - gfal
+  commands:
+    - gfal --help
+    - python -c "from XRootD import client; import fsspec_xrootd; import gfal"
+  requires:
+    - pip
+
+about:
+  home: https://github.com/lobis/gfal
+  summary: Grid File Access Library — Python rewrite of gfal2 with HTTP/HTTPS and XRootD support
+  license: BSD-3-Clause
+  license_file: LICENSE
+  dev_url: https://github.com/lobis/gfal
+  doc_url: https://lobis.github.io/gfal/
+
+extra:
+  recipe-maintainers:
+    - lobis
