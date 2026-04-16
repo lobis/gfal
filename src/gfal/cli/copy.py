@@ -62,15 +62,13 @@ class CommandCopy(base.CommandBase):
         help="which side(s) to verify the checksum on",
     )
     @base.arg(
-        "--skip-if-same",
-        action="store_true",
-        help="when destination exists and --force is not set, compare checksums "
-        "and skip the copy if source and destination already match",
-    )
-    @base.arg(
-        "--ignore-existing",
-        action="store_true",
-        help="when destination exists, skip copying without performing any checks",
+        "--compare",
+        type=str,
+        default=None,
+        choices=["quick", "checksum", "off"],
+        help="when destination exists and --force is not set, how to decide whether "
+        "to skip: quick = compare mtime and size (default when --compare is used), "
+        "checksum = compare checksums, off = skip unconditionally without any checks",
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
@@ -342,8 +340,7 @@ class CommandCopy(base.CommandBase):
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
             preserve_times=getattr(self.params, "preserve_times", False),
-            skip_if_same=getattr(self.params, "skip_if_same", False),
-            ignore_existing=getattr(self.params, "ignore_existing", False),
+            compare=getattr(self.params, "compare", None),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),
             no_delegation=getattr(self.params, "no_delegation", False),
