@@ -25,6 +25,7 @@ from gfal.core.errors import (
     GfalNotADirectoryError,
     GfalPermissionError,
     GfalTimeoutError,
+    is_xrootd_not_found_message,
     is_xrootd_permission_message,
 )
 
@@ -842,6 +843,25 @@ class AsyncGfalClient:
 
         msg = str(e) or f"({type(e).__name__})"
 
+        # Walk the exception cause/context chain to find aiohttp connection errors
+        # that fsspec wraps in FileNotFoundError or other generic exceptions.
+        # Must be checked before the FileNotFoundError branch below.
+        with contextlib.suppress(ImportError):
+            import aiohttp as _aiohttp
+
+            cause: Optional[BaseException] = e.__cause__ or e.__context__
+            _seen: set[int] = set()
+            while cause is not None and id(cause) not in _seen:
+                _seen.add(id(cause))
+                if isinstance(cause, _aiohttp.ClientSSLError):
+                    return GfalError(msg, errno.EHOSTDOWN)
+                if isinstance(cause, _aiohttp.ClientConnectionError):
+                    ec = getattr(cause, "errno", None) or errno.ECONNREFUSED
+                    if isinstance(ec, int) and ec > 0:
+                        return GfalError(msg, ec)
+                    return GfalError(msg, errno.ECONNREFUSED)
+                cause = cause.__cause__ or cause.__context__
+
         if isinstance(e, FileNotFoundError):
             return GfalFileNotFoundError(msg)
         if isinstance(e, PermissionError):
@@ -874,6 +894,9 @@ class AsyncGfalClient:
                 return GfalNotADirectoryError(msg)
             if e.errno == errno.ETIMEDOUT:
                 return GfalTimeoutError(msg)
+
+        if is_xrootd_not_found_message(msg):
+            return GfalFileNotFoundError(msg)
 
         if is_xrootd_permission_message(msg):
             return GfalPermissionError(msg)

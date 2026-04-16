@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from gfal.cli import base
+from gfal.cli.base import exception_exit_code
 from gfal.core import fs
 from gfal.core.api import GfalClient
 from gfal.core.utils import file_mode_str
@@ -205,7 +206,7 @@ class CommandLs(base.CommandBase):
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
                 self._print_error(e)
-                rc = 1
+                rc = exception_exit_code(e)
             else:
                 if r:
                     rc = r

@@ -8,6 +8,7 @@ import sys
 from datetime import datetime
 
 from gfal.cli import base
+from gfal.cli.base import exception_exit_code
 from gfal.core import fs
 from gfal.core.api import GfalClient
 from gfal.core.utils import file_mode_str, file_type_str
@@ -54,7 +55,7 @@ class GfalCommands(base.CommandBase):
                     client.mkdir(d, mode=mode_int, parents=self.params.parents)
             except Exception as e:
                 self._print_error(e)
-                rc = getattr(e, "errno", 1)
+                rc = exception_exit_code(e)
         return rc
 
     # ------------------------------------------------------------------
@@ -100,7 +101,7 @@ class GfalCommands(base.CommandBase):
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
                 self._print_error(e)
-                rc = getattr(e, "errno", 1)
+                rc = exception_exit_code(e)
         return rc
 
     # ------------------------------------------------------------------
@@ -123,7 +124,7 @@ class GfalCommands(base.CommandBase):
                 if isinstance(e, OSError) and e.errno == errno.EPIPE:
                     raise
                 self._print_error(e)
-                rc = getattr(e, "errno", 1)
+                rc = exception_exit_code(e)
                 first = False
         return rc
 
@@ -225,7 +226,7 @@ class GfalCommands(base.CommandBase):
                     client.chmod(url, mode)
             except Exception as e:
                 self._print_error(e)
-                rc = getattr(e, "errno", 1)
+                rc = exception_exit_code(e)
         return rc
 
     # ------------------------------------------------------------------
@@ -249,7 +250,7 @@ class GfalCommands(base.CommandBase):
             sys.stdout.write(f"{self.params.file} {checksum}\n")
         except Exception as e:
             self._print_error(e)
-            return 1
+            return exception_exit_code(e)
 
     # ------------------------------------------------------------------
     # xattr
@@ -289,5 +290,5 @@ class GfalCommands(base.CommandBase):
                         sys.stdout.write(f"{attr} FAILED: {e}\n\n")
         except Exception as e:
             self._print_error(e)
-            return getattr(e, "errno", 1)
+            return exception_exit_code(e)
         return 0

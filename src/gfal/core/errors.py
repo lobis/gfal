@@ -2,16 +2,37 @@ import errno
 from typing import Optional
 
 
+def is_xrootd_not_found_message(message: str) -> bool:
+    """Return True for XRootD "not found" style failures.
+
+    "Server responded with an error" is an XRootD-specific error phrase; HTTP
+    404s are handled upstream via the ``status`` attribute and never reach this
+    helper, so the broad marker is safe to include.
+    """
+    lower = message.lower()
+    not_found_markers = (
+        "no such file or directory",
+        "unable to stat",
+        "[3011]",
+    )
+    return (
+        "xroot" in lower
+        or "root://" in lower
+        or "server responded with an error" in lower
+    ) and any(marker in lower for marker in not_found_markers)
+
+
 def is_xrootd_permission_message(message: str) -> bool:
     """Return True for XRootD authorization/access-denied style failures."""
     lower = message.lower()
+    # Explicit not-found text: never a permission error regardless of other markers.
+    if "no such file or directory" in lower:
+        return False
     xrootd_markers = (
-        "server responded with an error",
         "[3010]",
         "unable to give access",
         "user access restricted",
         "unauthorized identity used",
-        "unable to open file",
         "permission denied",
         "operation not permitted",
     )
