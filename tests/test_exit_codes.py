@@ -305,12 +305,12 @@ class TestExitCodesCopy:
         assert rc == errno.ENOENT, f"expected {errno.ENOENT}, got {rc}"
 
     def test_cp_without_force_copies_on_size_mismatch(self, tmp_path):
-        """Default size compare: different sizes → copy (no error, no -f needed)."""
+        """Explicit --compare size: different sizes → copy (no error, no -f needed)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new longer content")
         dst.write_bytes(b"old")
-        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", "--compare", "size", src.as_uri(), dst.as_uri())
         assert rc == 0
         assert dst.read_bytes() == b"new longer content"
 

@@ -280,7 +280,7 @@ class TestXRootDCopy:
         assert (xrootd_server["data_dir"] / dst_name).read_bytes() == payload
 
     def test_copy_without_force_skips_same_size_existing(self, xrootd_server, tmp_path):
-        """Without -f and default --compare size, an existing file of the same size is
+        """With --compare size and an existing file of the same size, copy is
         skipped (not overwritten)."""
         data = xrootd_server["data_dir"]
         existing = _unique(data, ".txt")
@@ -290,7 +290,11 @@ class TestXRootDCopy:
         src.write_bytes(b"_changed")  # also 8 bytes, different content
 
         rc, out, err = run_gfal(
-            "cp", src.as_uri(), xrootd_server["root_url"] + existing.name
+            "cp",
+            "--compare",
+            "size",
+            src.as_uri(),
+            xrootd_server["root_url"] + existing.name,
         )
 
         assert rc == 0, err
@@ -299,8 +303,7 @@ class TestXRootDCopy:
     def test_copy_without_force_overwrites_different_size(
         self, xrootd_server, tmp_path
     ):
-        """Without -f and default --compare size, a file with a different size is
-        overwritten (sizes differ → copy proceeds)."""
+        """With --compare size and a different-sized existing file, copy proceeds."""
         data = xrootd_server["data_dir"]
         existing = _unique(data, ".txt")
         existing.write_bytes(b"original")  # 8 bytes
@@ -309,7 +312,11 @@ class TestXRootDCopy:
         src.write_bytes(b"replacement")  # 11 bytes — different size
 
         rc, out, err = run_gfal(
-            "cp", src.as_uri(), xrootd_server["root_url"] + existing.name
+            "cp",
+            "--compare",
+            "size",
+            src.as_uri(),
+            xrootd_server["root_url"] + existing.name,
         )
 
         assert rc == 0, err
