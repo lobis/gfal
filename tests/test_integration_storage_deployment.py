@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import require_test_prereq
 from deployment_env import (
     deployment_skip_reason,
     join_remote,
@@ -20,8 +21,7 @@ pytestmark = [pytest.mark.integration]
 @pytest.fixture(scope="session")
 def deployment():
     config = load_deployment_config()
-    if config is None:
-        pytest.skip(deployment_skip_reason())
+    require_test_prereq(config is not None, deployment_skip_reason())
     return config
 
 
