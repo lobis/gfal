@@ -279,21 +279,41 @@ class TestXRootDCopy:
         assert rc == 0, err
         assert (xrootd_server["data_dir"] / dst_name).read_bytes() == payload
 
-    def test_copy_no_overwrite_without_force(self, xrootd_server, tmp_path):
-        """Without -f, copying to an existing remote file should fail."""
+    def test_copy_without_force_skips_same_size_existing(self, xrootd_server, tmp_path):
+        """Without -f and default --compare size, an existing file of the same size is
+        skipped (not overwritten)."""
         data = xrootd_server["data_dir"]
         existing = _unique(data, ".txt")
-        existing.write_bytes(b"original")
+        existing.write_bytes(b"original")  # 8 bytes
 
         src = tmp_path / "new.txt"
-        src.write_bytes(b"replacement")
+        src.write_bytes(b"_changed")  # also 8 bytes, different content
 
         rc, out, err = run_gfal(
             "cp", src.as_uri(), xrootd_server["root_url"] + existing.name
         )
 
-        assert rc != 0
-        assert existing.read_bytes() == b"original"
+        assert rc == 0, err
+        assert existing.read_bytes() == b"original"  # unchanged — size matched, skipped
+
+    def test_copy_without_force_overwrites_different_size(
+        self, xrootd_server, tmp_path
+    ):
+        """Without -f and default --compare size, a file with a different size is
+        overwritten (sizes differ → copy proceeds)."""
+        data = xrootd_server["data_dir"]
+        existing = _unique(data, ".txt")
+        existing.write_bytes(b"original")  # 8 bytes
+
+        src = tmp_path / "new.txt"
+        src.write_bytes(b"replacement")  # 11 bytes — different size
+
+        rc, out, err = run_gfal(
+            "cp", src.as_uri(), xrootd_server["root_url"] + existing.name
+        )
+
+        assert rc == 0, err
+        assert existing.read_bytes() == b"replacement"
 
     def test_copy_force_overwrite(self, xrootd_server, tmp_path):
         """With -f, existing remote file is overwritten."""
@@ -311,8 +331,8 @@ class TestXRootDCopy:
         assert rc == 0, err
         assert existing.read_bytes() == b"replacement"
 
-    def test_copy_skip_if_same_existing_remote_match(self, xrootd_server, tmp_path):
-        """--skip-if-same should skip an existing remote file with matching bytes."""
+    def test_copy_compare_checksum_existing_remote_match(self, xrootd_server, tmp_path):
+        """--compare checksum should skip an existing remote file with matching bytes."""
         data = xrootd_server["data_dir"]
         existing = _unique(data, ".txt")
         existing.write_bytes(b"same content")
@@ -322,7 +342,8 @@ class TestXRootDCopy:
 
         rc, out, err = run_gfal(
             "cp",
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             src.as_uri(),
             xrootd_server["root_url"] + existing.name,
         )
@@ -331,8 +352,10 @@ class TestXRootDCopy:
         assert existing.read_bytes() == b"same content"
         assert "matching ADLER32 checksum" in out
 
-    def test_copy_skip_if_same_existing_remote_mismatch(self, xrootd_server, tmp_path):
-        """--skip-if-same should still fail when remote content differs."""
+    def test_copy_compare_checksum_existing_remote_mismatch(
+        self, xrootd_server, tmp_path
+    ):
+        """--compare checksum should copy (overwrite) when remote content differs."""
         data = xrootd_server["data_dir"]
         existing = _unique(data, ".txt")
         existing.write_bytes(b"old content")
@@ -342,15 +365,16 @@ class TestXRootDCopy:
 
         rc, out, err = run_gfal(
             "cp",
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             src.as_uri(),
             xrootd_server["root_url"] + existing.name,
         )
 
-        assert rc != 0
-        assert existing.read_bytes() == b"old content"
+        assert rc == 0, err
+        assert existing.read_bytes() == b"new content"
 
-    def test_copy_recursive_skip_if_same_remote(self, xrootd_server, tmp_path):
+    def test_copy_recursive_compare_checksum_remote(self, xrootd_server, tmp_path):
         """Recursive copy should skip matching remote files and copy the rest."""
         src = tmp_path / "srcdir"
         src.mkdir()
@@ -364,7 +388,8 @@ class TestXRootDCopy:
         rc, out, err = run_gfal(
             "cp",
             "-r",
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             src.as_uri(),
             xrootd_server["root_url"] + dst.name,
         )

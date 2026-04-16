@@ -304,14 +304,15 @@ class TestExitCodesCopy:
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
         assert rc == errno.ENOENT, f"expected {errno.ENOENT}, got {rc}"
 
-    def test_cp_overwrite_existing_returns_eexist(self, tmp_path):
-        """gfal cp without -f to an existing dst must return EEXIST (17)."""
+    def test_cp_without_force_copies_on_size_mismatch(self, tmp_path):
+        """Default size compare: different sizes → copy (no error, no -f needed)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
-        src.write_bytes(b"new")
+        src.write_bytes(b"new longer content")
         dst.write_bytes(b"old")
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
-        assert rc == errno.EEXIST, f"expected {errno.EEXIST}, got {rc}"
+        assert rc == 0
+        assert dst.read_bytes() == b"new longer content"
 
     def test_cp_permission_denied_returns_eacces(self, tmp_path):
         """gfal cp to a read-only directory should return EACCES (13)."""
@@ -330,14 +331,15 @@ class TestExitCodesCopy:
         finally:
             ro_dir.chmod(0o755)
 
-    def test_cp_no_overwrite_is_eexist(self, tmp_path):
-        """Verifies the exit code is exactly 17 matching the legacy comparison test."""
+    def test_cp_compare_none_skips_existing(self, tmp_path):
+        """--compare none skips an existing dst without error (exit 0)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new content")
         dst.write_bytes(b"old content")
-        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
-        assert rc == 17  # errno.EEXIST
+        rc, out, err = run_gfal("cp", "--compare", "none", src.as_uri(), dst.as_uri())
+        assert rc == 0
+        assert dst.read_bytes() == b"old content"
 
 
 class TestExitCodesLs:

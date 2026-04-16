@@ -320,6 +320,11 @@ def _argspec_to_click_option(args, kwargs):
     if action == "store_true":
         click_kw["is_flag"] = True
         click_kw["default"] = default if default is not None else False
+        # Explicitly set flag_value=True so Click never auto-derives it
+        # from the default.  Click 8.0 auto-sets flag_value=not(default),
+        # which turns ``--preserve-times`` (default True) into a toggle
+        # that *disables* the feature when the flag is present.
+        click_kw["flag_value"] = True
         return {
             "kind": "option",
             "param_decls": option_names,
@@ -328,15 +333,19 @@ def _argspec_to_click_option(args, kwargs):
         }
 
     if action == "store_false":
-        # When flag is present → False; absent → True (default)
+        # Treat like store_const with const=False.  Click's ``flag_value``
+        # parameter does not reliably invert a boolean default, so we reuse
+        # the ``const_option`` machinery which already handles "set *dest*
+        # to *const* when the flag is present".
         click_kw["is_flag"] = True
-        click_kw["flag_value"] = False
-        click_kw["default"] = default if default is not None else True
+        click_kw["default"] = False
+        click_kw["hidden"] = True
         return {
-            "kind": "option",
+            "kind": "const_option",
             "param_decls": option_names,
             "click_kw": click_kw,
             "dest": dest,
+            "const": False,
         }
 
     if action == "store_const":
@@ -456,7 +465,14 @@ def _argspec_to_click_argument(args, kwargs, has_preceding_optional=False):
     }
 
 
-_COMMON_GENERAL_OPTS = ["--help", "--version", "--verbose", "--timeout", "--log-file"]
+_COMMON_GENERAL_OPTS = [
+    "--help",
+    "--version",
+    "--verbose",
+    "--quiet",
+    "--timeout",
+    "--log-file",
+]
 _COMMON_AUTH_OPTS = ["--cert", "--key", "--no-verify"]
 _COMMON_COMPAT_OPTS = ["--definition", "--client-info", "--ipv4", "--ipv6"]
 
@@ -469,6 +485,7 @@ _COMMAND_OPTION_GROUPS: dict[str, list[dict]] = {
             "name": "Copy Options",
             "options": [
                 "--force",
+                "--compare",
                 "--parent",
                 "--recursive",
                 "--from-file",
@@ -665,6 +682,12 @@ def _build_common_params():
             help="Enable verbose mode (-v warnings, -vv info, -vvv debug).",
         ),
         click.Option(
+            ["-q", "--quiet"],
+            is_flag=True,
+            default=False,
+            help="Suppress warnings and informational messages; only errors are shown (takes precedence over --verbose).",
+        ),
+        click.Option(
             ["-t", "--timeout"],
             type=int,
             default=1800,
@@ -764,7 +787,7 @@ class CommandBase:
         """Displays a rich status spinner for blocking operations.
         Quiet in GFAL2 compat mode.
         """
-        if is_gfal2_compat():
+        if is_gfal2_compat() or self._is_quiet():
             yield
         else:
             with self.err_console.status(message) as status:
@@ -779,9 +802,13 @@ class CommandBase:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _setup_logger(level, log_file):
+    def _setup_logger(level, log_file, quiet=False):
         level = max(0, min(3, level))
-        log_level = logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
+        log_level = (
+            logging.ERROR
+            if quiet
+            else logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
+        )
 
         root = logging.getLogger()
         root.setLevel(log_level)
@@ -794,6 +821,9 @@ class CommandBase:
         fmt = logging.Formatter("%(levelname)s %(name)s: %(message)s")
         handler.setFormatter(fmt)
         root.addHandler(handler)
+
+    def _is_quiet(self):
+        return bool(getattr(self.params, "quiet", False))
 
     # ------------------------------------------------------------------
     # Argument parsing (Click-based)
@@ -1053,7 +1083,11 @@ class CommandBase:
             if default_proxy.exists():
                 os.environ["X509_USER_PROXY"] = str(default_proxy)
 
-        self._setup_logger(self.params.verbose, self.params.log_file)
+        self._setup_logger(
+            self.params.verbose,
+            self.params.log_file,
+            quiet=getattr(self.params, "quiet", False),
+        )
 
         # Interactive commands must run in the main thread (e.g. TUI signal handling).
         # This bypasses the worker thread and timeout logic.

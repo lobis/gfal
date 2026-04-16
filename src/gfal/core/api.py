@@ -65,7 +65,7 @@ class CopyOptions:
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
-    skip_if_same: bool = False
+    compare: Optional[str] = None  # None | "size" | "size_mtime" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
@@ -560,9 +560,14 @@ class AsyncGfalClient:
             and not options.overwrite
             and not is_special_file(dst_path)
         ):
+            if options.compare is None:
+                raise GfalFileExistsError(
+                    f"Destination {dst_url} exists and overwrite is not set"
+                )
             if self._existing_file_matches_source(
                 src_fs,
                 src_path,
+                src_st,
                 dst_fs,
                 dst_path,
                 dst_url,
@@ -570,9 +575,6 @@ class AsyncGfalClient:
                 warn_callback,
             ):
                 return None
-            raise GfalFileExistsError(
-                f"Destination {dst_url} exists and overwrite is not set"
-            )
 
         tpc_supported = tpc_applicable(src_url, dst_url)
         explicit_tpc = options.tpc in {"auto", "only"} and tpc_supported
@@ -768,28 +770,80 @@ class AsyncGfalClient:
         self,
         src_fs: Any,
         src_path: str,
+        src_st: StatResult,
         dst_fs: Any,
         dst_path: str,
         dst_url: str,
         options: CopyOptions,
         warn_callback: WarnCallback = None,
     ) -> bool:
-        if not options.skip_if_same:
+        compare = options.compare
+        if compare is None:
             return False
 
-        algorithm = "ADLER32"
-        if options.checksum is not None:
-            algorithm = options.checksum.algorithm.upper()
+        if compare == "none":
+            if warn_callback is not None:
+                warn_callback(f"Skipping existing file {dst_url} (--compare none)")
+            return True
 
-        src_checksum = checksum_fs(src_fs, src_path, algorithm)
-        dst_checksum = checksum_fs(dst_fs, dst_path, algorithm)
-        if src_checksum != dst_checksum:
+        if compare == "size":
+            try:
+                dst_info = dst_fs.info(dst_path)
+                dst_st = StatResult.from_info(dst_info)
+                if src_st.st_size == dst_st.st_size:
+                    if warn_callback is not None:
+                        warn_callback(
+                            f"Skipping existing file {dst_url} (matching size)"
+                        )
+                    return True
+            except Exception:
+                if warn_callback is not None:
+                    warn_callback(
+                        f"size compare failed for {dst_url}; "
+                        "proceeding with transfer. "
+                        "Use --compare=checksum for reliable deduplication "
+                        "or --compare=none to skip unconditionally."
+                    )
             return False
-        if warn_callback is not None:
-            warn_callback(
-                f"Skipping existing file {dst_url} (matching {algorithm} checksum)"
-            )
-        return True
+
+        if compare == "size_mtime":
+            try:
+                dst_info = dst_fs.info(dst_path)
+                dst_st = StatResult.from_info(dst_info)
+                if (
+                    src_st.st_size == dst_st.st_size
+                    and abs(src_st.st_mtime - dst_st.st_mtime) < 1.0
+                ):
+                    if warn_callback is not None:
+                        warn_callback(
+                            f"Skipping existing file {dst_url} (matching mtime and size)"
+                        )
+                    return True
+            except Exception:
+                if warn_callback is not None:
+                    warn_callback(
+                        f"size_mtime compare failed for {dst_url}; "
+                        "proceeding with transfer. "
+                        "Use --compare=checksum for reliable deduplication "
+                        "or --compare=none to skip unconditionally."
+                    )
+            return False
+
+        if compare == "checksum":
+            algorithm = "ADLER32"
+            if options.checksum is not None:
+                algorithm = options.checksum.algorithm.upper()
+            src_checksum = checksum_fs(src_fs, src_path, algorithm)
+            dst_checksum = checksum_fs(dst_fs, dst_path, algorithm)
+            if src_checksum != dst_checksum:
+                return False
+            if warn_callback is not None:
+                warn_callback(
+                    f"Skipping existing file {dst_url} (matching {algorithm} checksum)"
+                )
+            return True
+
+        return False
 
     def _transfer_destination_url(
         self,

@@ -19,9 +19,6 @@ from gfal.core.api import (
     GfalClient,
 )
 from gfal.core.api import (
-    checksum_fs as _checksum_fs,
-)
-from gfal.core.api import (
     parse_checksum_arg as _parse_checksum_arg,
 )
 from gfal.core.api import (
@@ -61,10 +58,14 @@ class CommandCopy(base.CommandBase):
         help="which side(s) to verify the checksum on",
     )
     @base.arg(
-        "--skip-if-same",
-        action="store_true",
-        help="when destination exists and --force is not set, compare checksums "
-        "and skip the copy if source and destination already match",
+        "--compare",
+        type=str,
+        default="size",
+        choices=["size", "size_mtime", "checksum", "none"],
+        help="when destination exists and --force is not set, how to decide whether "
+        "to skip: size (default) = compare file size only, "
+        "size_mtime = compare both size and mtime, "
+        "checksum = compare checksums, none = skip unconditionally without any checks",
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
@@ -72,7 +73,14 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--preserve-times",
         action="store_true",
-        help="preserve source access and modification times when supported",
+        default=True,
+        help="preserve source access and modification times when supported (default: on)",
+    )
+    @base.arg(
+        "--no-preserve-times",
+        action="store_false",
+        dest="preserve_times",
+        help="do not preserve source timestamps at the destination",
     )
     @base.arg(
         "--from-file",
@@ -228,7 +236,7 @@ class CommandCopy(base.CommandBase):
             "--dst-spacetoken": self.params.dst_spacetoken,
         }
         for flag, val in _ignored.items():
-            if val is not None:
+            if val is not None and not self._is_quiet():
                 sys.stderr.write(
                     f"{self.prog}: warning: {flag} is not supported in this "
                     "implementation and will be ignored\n"
@@ -330,8 +338,8 @@ class CommandCopy(base.CommandBase):
             tpc=tpc,
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
-            preserve_times=getattr(self.params, "preserve_times", False),
-            skip_if_same=getattr(self.params, "skip_if_same", False),
+            preserve_times=getattr(self.params, "preserve_times", True),
+            compare=getattr(self.params, "compare", None),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),
             no_delegation=getattr(self.params, "no_delegation", False),
@@ -378,35 +386,9 @@ class CommandCopy(base.CommandBase):
         except Exception:
             pass
 
-        if getattr(self.params, "skip_if_same", False) and not getattr(
-            self.params, "force", False
-        ):
-            src_fs, src_path = fs.url_to_fs(src_url, opts)
-            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
-            try:
-                dst_info = dst_fs.info(dst_path)
-                dst_mode = fs.StatInfo(dst_info).st_mode
-                if (
-                    stat.S_ISREG(dst_mode)
-                    and not _is_special_file(src_path)
-                    and not _is_special_file(dst_path)
-                ):
-                    algorithm = "ADLER32"
-                    if self.params.checksum:
-                        algorithm, _ = _parse_checksum_arg(self.params.checksum)
-                    if _checksum_fs(src_fs, src_path, algorithm) == _checksum_fs(
-                        dst_fs, dst_path, algorithm
-                    ):
-                        print(
-                            f"Skipping existing file {dst_url} "
-                            f"(matching {algorithm} checksum)"
-                        )
-                        return
-            except Exception:
-                pass
-
         src_size = None
-        show_progress = sys.stdout.isatty() and not self.params.verbose
+        quiet = self._is_quiet()
+        show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
         progress_started = [False]
         transfer_start = time.monotonic()
 
@@ -424,7 +406,8 @@ class CommandCopy(base.CommandBase):
                 self.progress_bar.update(total_size=src_size if src_size else None)
                 self.progress_bar.start()
             else:
-                print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+                if not quiet:
+                    print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
 
         def _progress(bytes_transferred):
             _start_progress()
@@ -436,6 +419,8 @@ class CommandCopy(base.CommandBase):
                 )
 
         def _warn(message):
+            if quiet:
+                return
             if message.startswith("Skipping existing file ") or message.startswith(
                 "Skipping directory "
             ):
@@ -457,7 +442,7 @@ class CommandCopy(base.CommandBase):
                 options=self._build_copy_options(),
                 progress_callback=_progress,
                 start_callback=_start_progress,
-                warn_callback=_warn,
+                warn_callback=None if quiet else _warn,
             )
             copy_failed = False
         finally:
