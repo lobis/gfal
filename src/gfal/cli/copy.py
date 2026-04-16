@@ -30,6 +30,7 @@ _update_hasher = core_api.update_hasher
 _finalise_hasher = core_api.finalise_hasher
 _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
+_checksum_fs = core_api.checksum_fs
 
 
 class CommandCopy(base.CommandBase):
@@ -293,6 +294,85 @@ class CommandCopy(base.CommandBase):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _dry_run_file(self, src_url, dst_url, opts):
+        """Print dry-run output for a single file.
+
+        If ``--compare checksum`` is set, computes and compares checksums.
+        Returns True if the file would be skipped, False if it would be copied.
+        Either way the appropriate line is printed.
+
+        :param src_url: Source URL.
+        :param dst_url: Destination URL.
+        :param opts: Storage options dict (from :func:`build_storage_options`).
+        """
+        compare = getattr(self.params, "compare", None)
+        if compare == "checksum" and not getattr(self.params, "force", False):
+            src_fs, src_path = fs.url_to_fs(src_url, opts)
+            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+            try:
+                dst_info = dst_fs.info(dst_path)
+                dst_mode = fs.StatInfo(dst_info).st_mode
+                if (
+                    stat.S_ISREG(dst_mode)
+                    and not _is_special_file(src_path)
+                    and not _is_special_file(dst_path)
+                ):
+                    algorithm = "ADLER32"
+                    if self.params.checksum:
+                        algorithm, _ = _parse_checksum_arg(self.params.checksum)
+                    if _checksum_fs(
+                        src_fs, src_path, algorithm, self._cancel_event
+                    ) == _checksum_fs(dst_fs, dst_path, algorithm, self._cancel_event):
+                        print(
+                            f"Skipping existing file {dst_url} "
+                            f"(matching {algorithm} checksum)"
+                        )
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def _dry_run_walk(self, src_url, dst_url, client, opts, *, _root=True):
+        """Recursively print what a ``--dry-run -r`` copy would do.
+
+        For every directory that does not yet exist at the destination a
+        ``Mkdir …`` line is printed.  For every file either a ``Copy …``
+        or a ``Skipping existing file …`` line is printed (the latter only
+        when ``--compare checksum`` matches).
+
+        :param src_url: Source directory URL.
+        :param dst_url: Destination directory URL.
+        :param client: :class:`GfalClient` instance.
+        :param opts: Storage options dict (from :func:`build_storage_options`).
+        """
+        if _root and not client.exists(dst_url):
+            print(f"Mkdir {dst_url}")
+
+        try:
+            entries = client.ls(src_url, detail=False)
+        except Exception:
+            return
+
+        src_base = src_url.rstrip("/") + "/"
+        dst_base = dst_url.rstrip("/") + "/"
+        for entry in entries:
+            name = Path(entry.rstrip("/")).name
+            if name in (".", ".."):
+                continue
+            entry_src = src_base + name
+            entry_dst = dst_base + name
+            try:
+                entry_st = client.stat(entry_src)
+            except Exception:
+                continue
+            if entry_st.is_dir():
+                if not client.exists(entry_dst):
+                    print(f"Mkdir {entry_dst}")
+                self._dry_run_walk(entry_src, entry_dst, client, opts, _root=False)
+            else:
+                if not self._dry_run_file(entry_src, entry_dst, opts):
+                    print(f"Copy {entry_src} => {entry_dst}")
+
     def _copy_to_stdout(self, src_url, opts):
         """Stream *src_url* to sys.stdout.buffer (the ``-`` destination).
 
@@ -357,9 +437,10 @@ class CommandCopy(base.CommandBase):
                 if not self.params.recursive:
                     print(f"Skipping directory {src_url} (use -r to copy recursively)")
                     return
-                if not client.exists(dst_url):
-                    print(f"Mkdir {dst_url}")
-                print(f"Copy {src_url} => {dst_url}")
+                self._dry_run_walk(src_url, dst_url, client, opts)
+                return
+            # Single-file dry run (with optional checksum-based skip check)
+            if self._dry_run_file(src_url, dst_url, opts):
                 return
             print(f"Copy {src_url} => {dst_url}")
             return
@@ -443,6 +524,7 @@ class CommandCopy(base.CommandBase):
                 progress_callback=_progress,
                 start_callback=_start_progress,
                 warn_callback=None if quiet else _warn,
+                cancel_event=self._cancel_event,
             )
             copy_failed = False
         finally:

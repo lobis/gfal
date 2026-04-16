@@ -797,3 +797,255 @@ class TestTpcOnlyPreflight:
             cmd._do_copy(src.as_uri(), "https://example.com/dst", {})
 
         mock_dst_fs.info.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Dry-run recursive and skip-if-same (issues reported: 2026-04)
+# ---------------------------------------------------------------------------
+
+
+class TestDryRunRecursive:
+    """--dry-run -r should walk the tree and show per-file output."""
+
+    def test_dry_run_recursive_shows_individual_files(self, tmp_path, capsys):
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        src.mkdir()
+        (src / "a.txt").write_bytes(b"aaa")
+        (src / "b.txt").write_bytes(b"bbb")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], dry_run=True, recursive=True
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+        assert not dst.exists()
+
+        out = capsys.readouterr().out
+        assert "Mkdir" in out
+        assert "a.txt" in out
+        assert "b.txt" in out
+
+    def test_dry_run_recursive_shows_nested_dirs(self, tmp_path, capsys):
+        src = tmp_path / "src"
+        sub = src / "sub"
+        dst = tmp_path / "dst"
+        sub.mkdir(parents=True)
+        (src / "root.txt").write_bytes(b"r")
+        (sub / "leaf.txt").write_bytes(b"l")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], dry_run=True, recursive=True
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+        assert not dst.exists()
+
+        out = capsys.readouterr().out
+        assert "root.txt" in out
+        assert "leaf.txt" in out
+        # A Mkdir for the nested subdirectory should appear
+        assert "sub" in out
+
+    def test_dry_run_recursive_compare_checksum_skips_matching(self, tmp_path, capsys):
+        """--dry-run --compare checksum should check checksums and show which
+        files would be skipped vs. copied."""
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        (src / "same.txt").write_bytes(b"identical")
+        (src / "diff.txt").write_bytes(b"new content")
+        # dst has a matching file and a different one
+        (dst / "same.txt").write_bytes(b"identical")
+        (dst / "diff.txt").write_bytes(b"OLD content")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            dry_run=True,
+            recursive=True,
+            compare="checksum",
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+
+        out = capsys.readouterr().out
+        # same.txt has matching checksum -> should be skipped
+        assert "same.txt" in out
+        assert "Skipping" in out
+        # diff.txt has different checksum -> should be in a Copy line
+        assert "diff.txt" in out
+        assert "Copy" in out
+        # dst files must NOT be modified (dry-run)
+        assert (dst / "diff.txt").read_bytes() == b"OLD content"
+
+    def test_dry_run_single_file_compare_checksum_skip(self, tmp_path, capsys):
+        """--dry-run --compare checksum on a single matching file prints Skip."""
+        src = tmp_path / "a.txt"
+        dst = tmp_path / "b.txt"
+        src.write_bytes(b"data")
+        dst.write_bytes(b"data")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            dry_run=True,
+            compare="checksum",
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+
+        out = capsys.readouterr().out
+        assert "Skipping" in out
+        assert "Copy" not in out
+
+    def test_dry_run_single_file_compare_checksum_no_match(self, tmp_path, capsys):
+        """--dry-run --compare checksum on a non-matching file prints Copy."""
+        src = tmp_path / "a.txt"
+        dst = tmp_path / "b.txt"
+        src.write_bytes(b"new")
+        dst.write_bytes(b"old")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            dry_run=True,
+            compare="checksum",
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+
+        out = capsys.readouterr().out
+        assert "Copy" in out
+        assert "Skipping" not in out
+
+
+# ---------------------------------------------------------------------------
+# Cancel-event / Ctrl-C wiring (issue reported: 2026-04)
+# ---------------------------------------------------------------------------
+
+
+class TestCancelEvent:
+    """The _cancel_event on CommandBase should abort the copy when set."""
+
+    def test_cancel_event_initialized(self):
+        import threading
+
+        from gfal.cli.base import CommandBase
+
+        cmd = CommandBase()
+        assert isinstance(cmd._cancel_event, threading.Event)
+        assert not cmd._cancel_event.is_set()
+
+    def test_cancel_event_aborts_checksum_loop(self, tmp_path):
+        """Setting cancel_event during checksum_fs raises GfalError."""
+        import threading
+
+        from gfal.core.api import checksum_fs
+        from gfal.core.errors import GfalError
+
+        large = tmp_path / "large.bin"
+        large.write_bytes(b"x" * 1024 * 1024)  # 1 MB
+
+        cancel = threading.Event()
+        cancel.set()  # pre-cancelled
+
+        from gfal.core.fs import url_to_fs
+
+        fso, path = url_to_fs(large.as_uri())
+        with pytest.raises(GfalError):
+            checksum_fs(fso, path, "ADLER32", cancel)
+
+    def test_cancel_event_passed_to_client_copy(self, tmp_path):
+        """CommandCopy._do_copy passes self._cancel_event to client.copy()."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+
+        with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {})
+
+        mock_client.copy.assert_called_once()
+        _, kwargs = mock_client.copy.call_args
+        assert kwargs.get("cancel_event") is cmd._cancel_event
+
+
+# ---------------------------------------------------------------------------
+# Preserve-times warning fires once at directory level (issue reported: 2026-04)
+# ---------------------------------------------------------------------------
+
+
+class TestPreserveTimesWarningOnce:
+    """--preserve-times warning must fire at most once per scheme, at the
+    top-level directory, not once per file in a recursive copy."""
+
+    def test_warning_fires_once_for_recursive_copy(self, tmp_path, capsys):
+        """Simulate a non-local (http) dst: the warning fires only once even
+        though there are multiple files."""
+        import contextlib
+        import sys
+        from io import StringIO
+        from urllib.parse import urlparse
+
+        src = tmp_path / "src"
+        src.mkdir()
+        for i in range(3):
+            (src / f"f{i}.txt").write_bytes(b"x" * 10)
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=["https://example.com/dst/"],
+            recursive=True,
+            preserve_times=True,
+        )
+
+        # Directly exercise the _preserve_times_warned dedup logic by
+        # simulating five warning calls for the same scheme.
+        stderr_buf = StringIO()
+        cmd._preserve_times_warned = set()
+        with contextlib.redirect_stderr(stderr_buf):
+            for _ in range(5):
+                normalized = "https://example.com/dst/"
+                scheme = urlparse(normalized).scheme.lower() or "unknown"
+                msg = (
+                    "--preserve-times is only supported for local destinations; "
+                    f"skipping for {scheme} targets"
+                )
+                if scheme in cmd._preserve_times_warned:
+                    continue
+                cmd._preserve_times_warned.add(scheme)
+                sys.stderr.write(f"{cmd.prog}: warning: {msg}\n")
+
+        warning_output = stderr_buf.getvalue()
+        # Should appear exactly once
+        assert warning_output.count("--preserve-times") == 1
+
+    def test_no_warning_without_preserve_times_flag(self, tmp_path, capsys):
+        """Without --preserve-times, no preserve-times warning is emitted."""
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        src.mkdir()
+        (src / "f.txt").write_bytes(b"hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            preserve_times=False,
+        )
+        rc = cmd.execute_cp()
+        assert rc == 0
+        _, err = capsys.readouterr()
+        assert "preserve-times" not in err

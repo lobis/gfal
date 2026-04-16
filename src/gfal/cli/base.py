@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -781,6 +782,7 @@ class CommandBase:
         self.err_console = get_console(stderr=True)
         self.params = None
         self.prog = None
+        self._cancel_event = threading.Event()
 
     @contextlib.contextmanager
     def spinner(self, message):
@@ -1120,6 +1122,7 @@ class CommandBase:
             return self.return_code
 
         except KeyboardInterrupt:
+            self._cancel_event.set()
             sys.stderr.write("\nInterrupted\n")
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             return errno.EINTR
