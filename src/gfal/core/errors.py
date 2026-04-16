@@ -3,7 +3,12 @@ from typing import Optional
 
 
 def is_xrootd_not_found_message(message: str) -> bool:
-    """Return True for XRootD "not found" style failures."""
+    """Return True for XRootD "not found" style failures.
+
+    "Server responded with an error" is an XRootD-specific error phrase; HTTP
+    404s are handled upstream via the ``status`` attribute and never reach this
+    helper, so the broad marker is safe to include.
+    """
     lower = message.lower()
     not_found_markers = (
         "no such file or directory",

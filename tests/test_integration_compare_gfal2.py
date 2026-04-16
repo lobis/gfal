@@ -354,6 +354,9 @@ class TestCompareExitCodesEosPilot:
             )
 
             assert rc_new == 13, f"expected EACCES(13), got {rc_new}: {err_new}"
+            # Legacy gfal2 exit code is environment-dependent: returns 1 when the
+            # HTTP 403 response propagates as "Operation not permitted" (EPERM, 1)
+            # rather than EACCES (13) depending on the server/gfal2 version.
             assert rc_old in (1, 13), (
                 f"legacy returned unexpected code {rc_old}: {err_old}"
             )

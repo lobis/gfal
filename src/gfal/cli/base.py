@@ -692,7 +692,7 @@ def _build_common_params():
         click.Option(
             ["--verify/--no-verify"],
             default=True,
-            help="Skip SSL certificate verification with --no-verify (insecure; for self-signed certs).",
+            help="Enable SSL certificate verification (default). Use --no-verify to skip verification (insecure; for self-signed certs).",
         ),
         click.Option(
             ["-D", "--definition"],
