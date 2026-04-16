@@ -311,17 +311,13 @@ def xrootd_server(tmp_path_factory):
     import subprocess
 
     xrootd_bin = shutil.which("xrootd")
-    require_test_prereq(
-        xrootd_bin is not None,
-        "xrootd binary not found; cannot run XRootD server tests",
-    )
+    if xrootd_bin is None:
+        pytest.skip("xrootd binary not found; skipping XRootD server tests")
 
     try:
         import fsspec_xrootd  # noqa: F401
     except ImportError:
-        require_test_prereq(
-            False, "fsspec-xrootd not installed; cannot run XRootD server tests"
-        )
+        pytest.skip("fsspec-xrootd not installed; skipping XRootD server tests")
 
     base = tmp_path_factory.mktemp("xrootd")
     data_dir = base / "data"
@@ -386,7 +382,7 @@ def xrootd_server(tmp_path_factory):
 
     if not _wait_for_port("localhost", xroot_port, timeout=10.0):
         proc.kill()
-        require_test_prereq(False, "XRootD server did not start in time")
+        pytest.skip("XRootD server did not start in time")
 
     https_url = None
     if has_tls:
