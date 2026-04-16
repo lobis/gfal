@@ -439,7 +439,7 @@ class TestEosPilotStreamingCopy:
         records = _write_batch_sources(tmp_path)
         sources_file = _write_sources_file(tmp_path, records)
 
-        rc, out, err = _run(
+        rc, _out, err = _run(
             "cp",
             proxy_cert,
             "--from-file",
@@ -513,6 +513,7 @@ class TestEosPilotStreamingCopy:
         )
         assert rc == 0, err
 
+        wrong_checksum = _adler32_hex(wrong_local.read_bytes())
         rc, out, err = _run(
             "cp",
             proxy_cert,
@@ -532,7 +533,7 @@ class TestEosPilotStreamingCopy:
         remote_mismatch = f"{pilot_dir}/{mismatched['name']}"
         rc, out, err = _run("sum", proxy_cert, remote_mismatch, "ADLER32")
         assert rc == 0, err
-        assert mismatched["adler32"] not in out.lower()
+        assert wrong_checksum in out.lower(), out
 
         for record in absent:
             remote = f"{pilot_dir}/{record['name']}"
