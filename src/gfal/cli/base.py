@@ -37,12 +37,14 @@ def exception_exit_code(e: Exception) -> int:
     """Return the most appropriate process exit code for an exception.
 
     Priority:
-    1. ``e.errno`` — explicit POSIX errno already set (GfalError, OSError).
-    2. Python built-in exception type → corresponding errno.
-    3. HTTP status code (aiohttp ``ClientResponseError``) → POSIX errno.
-    4. aiohttp SSL / connection errors (errno not set by OS layer).
-    5. XRootD permission-denied messages → EACCES.
-    6. Fallback: 1.
+    1a. Gfal custom exception types → canonical POSIX errno.
+    1b. aiohttp SSL / connection errors (checked early because
+        ``ClientConnectorCertificateError.errno`` can be 1 on Linux).
+    1c. ``e.errno`` — explicit POSIX errno already set (OSError).
+    2.  Python built-in exception type → corresponding errno.
+    3.  HTTP status code (aiohttp ``ClientResponseError``) → POSIX errno.
+    4.  XRootD permission-denied messages → EACCES.
+    5.  Fallback: 1.
     """
     # 1a. GfalError subclasses carry well-known semantic meaning; map them to
     #     their canonical POSIX errno regardless of platform (avoids Windows
@@ -59,7 +61,25 @@ def exception_exit_code(e: Exception) -> int:
         if isinstance(e, exc_type):
             return code
 
-    # 1b. Explicit errno attribute (standard OSError and
+    # 1b. aiohttp SSL / connection errors — checked before the generic errno
+    #    test because ClientConnectorCertificateError inherits from OSError
+    #    and may carry a misleading errno value (e.g. 1 from the SSL error
+    #    number on Linux) that would otherwise short-circuit to exit code 1.
+    #    Map to EHOSTDOWN to match gfal2/neon/davix behaviour ("Host is down"
+    #    for all connection failures including cert mismatches).
+    try:
+        import aiohttp as _aiohttp
+
+        if isinstance(e, _aiohttp.ClientSSLError):
+            # Catches ClientConnectorCertificateError and ClientConnectorSSLError.
+            return errno.EHOSTDOWN
+        if isinstance(e, _aiohttp.ClientConnectionError):
+            # Any other aiohttp connection-level error without an OS errno.
+            return errno.ECONNREFUSED
+    except ImportError:
+        pass
+
+    # 1c. Explicit errno attribute (standard OSError and
     #    aiohttp.ClientConnectorError which inherits from OSError and
     #    stores the underlying OS errno directly on self.errno).
     ecode = getattr(e, "errno", None)
@@ -105,26 +125,7 @@ def exception_exit_code(e: Exception) -> int:
         if mapped is not None:
             return mapped
 
-    # 4. aiohttp SSL / connection errors where errno is not set by the OS.
-    #    aiohttp.ClientConnectorError inherits from OSError and stores the
-    #    OS errno on self.errno (handled above).  SSL errors are a special
-    #    case: the Python SSL layer raises them without an OS-level errno, so
-    #    they reach here with errno=None.  Map to EHOSTDOWN to match the
-    #    gfal2/neon/davix behaviour ("Host is down" for all connection
-    #    failures including cert mismatches).
-    try:
-        import aiohttp as _aiohttp
-
-        if isinstance(e, _aiohttp.ClientSSLError):
-            # Catches ClientConnectorCertificateError and ClientConnectorSSLError.
-            return errno.EHOSTDOWN
-        if isinstance(e, _aiohttp.ClientConnectionError):
-            # Any other aiohttp connection-level error without an OS errno.
-            return errno.ECONNREFUSED
-    except ImportError:
-        pass
-
-    # 5. XRootD error messages that indicate permission denial
+    # 4. XRootD error messages that indicate permission denial
     if is_xrootd_permission_message(str(e)):
         return errno.EACCES
 

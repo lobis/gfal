@@ -169,10 +169,10 @@ class TestExceptionExitCode:
         """SSL cert failures (hostname mismatch, expired, etc.) → EHOSTDOWN.
 
         aiohttp raises ClientConnectorCertificateError (a subclass of
-        ClientSSLError) for certificate validation failures.  The OS layer is
-        never involved so errno is None; we must use the exception type to
-        pick the right code.  gfal2/neon reports these as EHOSTDOWN (112 on
-        Linux), so we match that.
+        ClientSSLError) for certificate validation failures.  On macOS the
+        errno is None; on Linux it may be 1 (from the SSL error number).
+        Either way the aiohttp type check fires first.  gfal2/neon reports
+        these as EHOSTDOWN (112 on Linux), so we match that.
         """
         import ssl
         from unittest.mock import MagicMock
@@ -186,7 +186,7 @@ class TestExceptionExitCode:
             "Hostname mismatch, certificate is not valid for 'eoshome.cern.ch'.",
         )
         e = aiohttp.ClientConnectorCertificateError(key, cert_error)
-        assert e.errno is None  # sanity-check: no OS errno is set
+        # e.errno is None on macOS but 1 on Linux — the type check must win.
         assert exception_exit_code(e) == errno.EHOSTDOWN
 
     def test_aiohttp_ssl_error_maps_to_ehostdown(self):
