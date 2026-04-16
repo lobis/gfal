@@ -561,7 +561,7 @@ def _build_common_params():
             ["-q", "--quiet"],
             is_flag=True,
             default=False,
-            help="Suppress warnings and informational messages; only errors are shown.",
+            help="Suppress warnings and informational messages; only errors are shown (takes precedence over --verbose).",
         ),
         click.Option(
             ["-t", "--timeout"],

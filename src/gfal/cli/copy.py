@@ -473,7 +473,7 @@ class CommandCopy(base.CommandBase):
                 options=self._build_copy_options(),
                 progress_callback=_progress,
                 start_callback=_start_progress,
-                warn_callback=_warn,
+                warn_callback=None if quiet else _warn,
             )
             copy_failed = False
         finally:
