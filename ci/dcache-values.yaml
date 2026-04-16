@@ -15,14 +15,6 @@ dcache:
     enabled: false
   pools:
     - a
-  layoutExtra: |
-    [door-svc/webdav]
-    webdav.cell.name=webdav-tls
-    webdav.net.port=8083
-    webdav.authn.protocol=https
-    webdav.authz.anonymous-operations=FULL
-    webdav.redirect.on-write=false
-    webdav.redirect.on-read=false
 
 services:
   nfs:

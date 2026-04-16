@@ -193,6 +193,7 @@ jobs:
       EOS_NAMESPACE: eos-${{ github.run_id }}
       EOS_IMAGE_REPO: gitlab-registry.cern.ch/dss/eos/eos-ci
       EOS_IMAGE_TAG: 5.4.1.el9
+      GFAL_HOST_WORKSPACE: ${{ github.workspace }}
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
     - uses: actions/checkout@v6
@@ -255,45 +256,98 @@ jobs:
           sleep 10
         done
 
-    - name: Run EOS deployment tests from host runner
-      env:
-        EOS_TEST_KUBECTL_TARGET: eos-mgm-0
+    - name: Run EOS deployment tests inside k3s
       run: |
         chmod +x scripts/prepare-eos-kind-deployment.sh
         export EOS_TEST_KUBECTL_NAMESPACE="${EOS_NAMESPACE}"
+        export EOS_TEST_KUBECTL_TARGET=eos-mgm-0
         export EOS_TEST_KUBECTL_CONTAINER
         EOS_TEST_KUBECTL_CONTAINER=$(
           kubectl get pod -n "${EOS_NAMESPACE}" eos-mgm-0 \
             -o jsonpath='{.spec.containers[0].name}'
         )
 
-        kubectl -n "${EOS_NAMESPACE}" port-forward svc/eos-mgm 8443:8443 1094:1094 \
-          > /tmp/eos-port-forward.log 2>&1 &
-        PF_PID=$!
-        trap 'kill "${PF_PID}" || true' EXIT
-
-        for port in 8443 1094; do
-          for _ in $(seq 1 30); do
-            if bash -lc "echo > /dev/tcp/127.0.0.1/${port}" 2>/dev/null; then
-              break
-            fi
-            if ! kill -0 "${PF_PID}" 2>/dev/null; then
-              cat /tmp/eos-port-forward.log || true
-              exit 1
-            fi
-            sleep 2
-          done
-        done
-
-        export EOS_TEST_HTTP_HOST=127.0.0.1
-        export EOS_TEST_ROOT_HOST=127.0.0.1
         while IFS= read -r line; do
-          export "${line}"
+          case "${line}" in
+            GFAL_DEPLOYMENT_NAME=*|GFAL_DEPLOYMENT_VERIFY_SSL=*|GFAL_DEPLOYMENT_SUPPORTS_LISTING=*|GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE=*|GFAL_DEPLOYMENT_ROOT_DENIED_BASE=*)
+              export "${line}"
+              ;;
+          esac
         done < <(./scripts/prepare-eos-kind-deployment.sh "gha-${GITHUB_RUN_ID}")
-        if [ -n "${X509_USER_PROXY:-}" ]; then
-          export GFAL_DEPLOYMENT_PROXY="${X509_USER_PROXY}"
+        kubectl delete job -n "${EOS_NAMESPACE}" gfal-eos-tests --ignore-not-found=true || true
+        cat <<YAML | kubectl apply -n "${EOS_NAMESPACE}" -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-eos-tests
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: tests
+                image: python:3.12-slim
+                command: ["bash", "-lc"]
+                args:
+                - |
+                  set -euo pipefail
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  python -m pip install --upgrade pip
+                  pip install --no-cache-dir '/app[dev,all]'
+                  export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
+                  export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
+                  export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
+                  export GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE='${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}'
+                  export GFAL_DEPLOYMENT_ROOT_DENIED_BASE='${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}'
+                  export GFAL_DEPLOYMENT_PROXY=/proxy/x509proxy
+                  export X509_USER_PROXY=/proxy/x509proxy
+                  cd /app
+                  pytest -v -rs -n0 \
+                    tests/test_integration_storage_deployment.py::test_deployment_contract_has_a_remote_endpoint \
+                    tests/test_integration_storage_deployment.py::test_xrootd_copy_roundtrip[local-root] \
+                    tests/test_integration_storage_deployment.py::test_xrootd_copy_roundtrip[root-local] \
+                    tests/test_integration_storage_deployment.py::test_remote_listing_sees_uploaded_file[root] \
+                    tests/test_integration_storage_deployment.py::test_permission_denied_paths_reject_writes[root]
+                volumeMounts:
+                - name: app
+                  mountPath: /app
+                - name: proxydir
+                  mountPath: /proxy
+                  readOnly: true
+              volumes:
+              - name: app
+                hostPath:
+                  path: ${GFAL_HOST_WORKSPACE}
+                  type: Directory
+              - name: proxydir
+                hostPath:
+                  path: /tmp
+                  type: Directory
+        YAML
+        for _ in $(seq 1 180); do
+          SUCCEEDED=$(kubectl get job -n "${EOS_NAMESPACE}" gfal-eos-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)
+          FAILED=$(kubectl get job -n "${EOS_NAMESPACE}" gfal-eos-tests -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)
+          if [ "${SUCCEEDED:-0}" -ge 1 ]; then
+            break
+          fi
+          if [ "${FAILED:-0}" -ge 1 ]; then
+            kubectl logs -n "${EOS_NAMESPACE}" job/gfal-eos-tests --all-containers=true --tail=-1 || true
+            kubectl describe job -n "${EOS_NAMESPACE}" gfal-eos-tests || true
+            kubectl describe pod -n "${EOS_NAMESPACE}" -l job-name=gfal-eos-tests || true
+            exit 1
+          fi
+          sleep 10
+        done
+        if [ "$(kubectl get job -n "${EOS_NAMESPACE}" gfal-eos-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)" -lt 1 ]; then
+          kubectl logs -n "${EOS_NAMESPACE}" job/gfal-eos-tests --all-containers=true --tail=-1 || true
+          kubectl describe job -n "${EOS_NAMESPACE}" gfal-eos-tests || true
+          kubectl describe pod -n "${EOS_NAMESPACE}" -l job-name=gfal-eos-tests || true
+          exit 1
         fi
-        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
+        kubectl logs -n "${EOS_NAMESPACE}" job/gfal-eos-tests --all-containers=true --tail=-1
 
     - name: Dump EOS state on failure
       if: failure()
@@ -337,6 +391,37 @@ jobs:
 
     - name: Deploy dCache on k3s
       run: |
+        rm -rf /tmp/dcache-chart
+        mkdir -p /tmp/dcache-chart
+        helm pull dcache/dcache --untar --untardir /tmp/dcache-chart
+        python - <<'PY'
+        from pathlib import Path
+
+        template = Path("/tmp/dcache-chart/dcache/templates/configmap.yaml")
+        old = """{{ if .Values.services.webdavs.enabled }}
+            [door-svc/webdav]
+            webdav.cell.name=webdav-tls
+            webdav.net.port=8083
+            webdav.authn.protocol=https
+            webdav.authz.anonymous-operations=READONLY
+            webdav.redirect.on-write=false
+            webdav.redirect.on-read=true
+        {{- end }}"""
+        new = """{{ if .Values.services.webdavs.enabled }}
+            [door-svc/webdav]
+            webdav.cell.name=webdav-tls
+            webdav.net.port=8083
+            webdav.authn.protocol=https
+            webdav.authz.anonymous-operations=FULL
+            webdav.redirect.on-write=false
+            webdav.redirect.on-read=false
+        {{- end }}"""
+        content = template.read_text()
+        if old not in content:
+            raise SystemExit("expected dCache webdavs stanza not found")
+        template.write_text(content.replace(old, new, 1))
+        PY
+
         kubectl create namespace "${DCACHE_NAMESPACE}"
         helm install --wait -n "${DCACHE_NAMESPACE}" \
           --set auth.username=dcache \
@@ -354,50 +439,93 @@ jobs:
           --set image.repository=bitnamilegacy/kafka \
           billing bitnami/kafka \
           --version 23.0.7
-        helm install --wait -n "${DCACHE_NAMESPACE}" -f ci/dcache-values.yaml store dcache/dcache
+        helm install --wait -n "${DCACHE_NAMESPACE}" -f ci/dcache-values.yaml store /tmp/dcache-chart/dcache
 
     - name: Wait for dCache WebDAV door to accept connections
       run: |
-        echo "Waiting for dCache WebDAV door on port 8083..."
-        for i in $(seq 1 60); do
-          if kubectl exec -n "${DCACHE_NAMESPACE}" store-dcache-door-0 -- \
-               bash -c 'echo > /dev/tcp/localhost/8083' 2>/dev/null; then
-            echo "dCache WebDAV door is ready (attempt ${i})"
+        kubectl rollout status -n "${DCACHE_NAMESPACE}" statefulset/store-dcache-door --timeout=10m
+        kubectl wait -n "${DCACHE_NAMESPACE}" --for=condition=Ready pod/store-dcache-door-0 --timeout=10m
+
+    - name: Run dCache deployment tests inside k3s
+      run: |
+        chmod +x scripts/prepare-dcache-kind-deployment.sh
+        while IFS= read -r line; do
+          export "${line}"
+        done < <(./scripts/prepare-dcache-kind-deployment.sh "gha-${GITHUB_RUN_ID}" store "${DCACHE_NAMESPACE}")
+        kubectl delete job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests --ignore-not-found=true || true
+        cat <<YAML | kubectl apply -n "${DCACHE_NAMESPACE}" -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-dcache-tests
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: tests
+                image: python:3.12-slim
+                command: ["bash", "-lc"]
+                args:
+                - |
+                  set -euo pipefail
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  python -m pip install --upgrade pip
+                  pip install --no-cache-dir '/app[dev,all]'
+                  export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
+                  export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
+                  export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
+                  export GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE='${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}'
+                  export GFAL_DEPLOYMENT_HTTP_DENIED_BASE='${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}'
+                  export GFAL_DEPLOYMENT_HTTP_DENIED_MARKERS='Permission denied,403,access denied,Authentication required,401'
+                  export GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE='${GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE}'
+                  export GFAL_DEPLOYMENT_ROOT_DENIED_BASE='${GFAL_DEPLOYMENT_ROOT_DENIED_BASE}'
+                  cd /app
+                  pytest -v -rs -n0 \
+                    tests/test_integration_storage_deployment.py::test_deployment_contract_has_a_remote_endpoint \
+                    tests/test_integration_storage_deployment.py::test_http_copy_roundtrip[local-http] \
+                    tests/test_integration_storage_deployment.py::test_http_copy_roundtrip[http-local] \
+                    tests/test_integration_storage_deployment.py::test_xrootd_copy_roundtrip[local-root] \
+                    tests/test_integration_storage_deployment.py::test_xrootd_copy_roundtrip[root-local] \
+                    tests/test_integration_storage_deployment.py::test_http_root_bridge_copy[http-root] \
+                    tests/test_integration_storage_deployment.py::test_http_root_bridge_copy[root-http] \
+                    tests/test_integration_storage_deployment.py::test_remote_listing_sees_uploaded_file[http] \
+                    tests/test_integration_storage_deployment.py::test_remote_listing_sees_uploaded_file[root] \
+                    tests/test_integration_storage_deployment.py::test_permission_denied_paths_reject_writes[http] \
+                    tests/test_integration_storage_deployment.py::test_permission_denied_paths_reject_writes[root]
+                volumeMounts:
+                - name: app
+                  mountPath: /app
+              volumes:
+              - name: app
+                hostPath:
+                  path: ${GITHUB_WORKSPACE}
+                  type: Directory
+        YAML
+        for _ in $(seq 1 180); do
+          SUCCEEDED=$(kubectl get job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)
+          FAILED=$(kubectl get job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)
+          if [ "${SUCCEEDED:-0}" -ge 1 ]; then
             break
           fi
-          if [ "${i}" -eq 60 ]; then
-            echo "dCache WebDAV door did not become ready after 10 minutes"
-            kubectl logs -n "${DCACHE_NAMESPACE}" statefulset/store-dcache-door --all-containers=true --tail=100 || true
+          if [ "${FAILED:-0}" -ge 1 ]; then
+            kubectl logs -n "${DCACHE_NAMESPACE}" job/gfal-dcache-tests --all-containers=true --tail=-1 || true
+            kubectl describe job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests || true
+            kubectl describe pod -n "${DCACHE_NAMESPACE}" -l job-name=gfal-dcache-tests || true
             exit 1
           fi
           sleep 10
         done
-
-    - name: Run dCache deployment tests from host runner
-      run: |
-        chmod +x scripts/prepare-dcache-kind-deployment.sh
-        kubectl -n "${DCACHE_NAMESPACE}" port-forward svc/store-door-svc 8083:8083 \
-          > /tmp/dcache-port-forward.log 2>&1 &
-        PF_PID=$!
-        trap 'kill "${PF_PID}" || true' EXIT
-
-        for _ in $(seq 1 30); do
-          if bash -lc "echo > /dev/tcp/127.0.0.1/8083" 2>/dev/null; then
-            break
-          fi
-          if ! kill -0 "${PF_PID}" 2>/dev/null; then
-            cat /tmp/dcache-port-forward.log || true
-            exit 1
-          fi
-          sleep 2
-        done
-
-        export DCACHE_TEST_SERVICE_HOST=127.0.0.1
-        export DCACHE_TEST_SERVICE_PORT=8083
-        while IFS= read -r line; do
-          export "${line}"
-        done < <(./scripts/prepare-dcache-kind-deployment.sh "gha-${GITHUB_RUN_ID}" store "${DCACHE_NAMESPACE}")
-        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
+        if [ "$(kubectl get job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)" -lt 1 ]; then
+          kubectl logs -n "${DCACHE_NAMESPACE}" job/gfal-dcache-tests --all-containers=true --tail=-1 || true
+          kubectl describe job -n "${DCACHE_NAMESPACE}" gfal-dcache-tests || true
+          kubectl describe pod -n "${DCACHE_NAMESPACE}" -l job-name=gfal-dcache-tests || true
+          exit 1
+        fi
+        kubectl logs -n "${DCACHE_NAMESPACE}" job/gfal-dcache-tests --all-containers=true --tail=-1
 
     - name: Dump dCache state on failure
       if: failure()
@@ -434,7 +562,27 @@ jobs:
         pip install --no-cache-dir ".[dev,all]"
 
     - name: Clone StoRM WebDAV deployment chart
-      run: git clone --depth=1 https://gitlab.com/ska-telescope/src/src-dm/ska-src-dm-storm-webdav-deployment.git /tmp/storm-webdav-deployment
+      run: |
+        STORM_CHART_DIR=$(mktemp -d /tmp/storm-webdav-deployment.XXXXXX)
+        echo "STORM_CHART_DIR=${STORM_CHART_DIR}" >> "$GITHUB_ENV"
+        git clone --depth=1 https://gitlab.com/ska-telescope/src/src-dm/ska-src-dm-storm-webdav-deployment.git "${STORM_CHART_DIR}"
+
+    - name: Patch StoRM chart for CI authz config
+      run: |
+        python - <<'PY'
+        import os
+        from pathlib import Path
+
+        path = Path(os.environ["STORM_CHART_DIR"]) / "etc/helm/templates/application-secret.yaml"
+        text = path.read_text()
+        snippet = (
+            "{{- with .Values.config.application.extraConfig }}\n"
+            "{{ . | nindent 4 }}\n"
+            "{{- end }}\n"
+        )
+        if snippet not in text:
+          path.write_text(text.rstrip() + "\n" + snippet)
+        PY
 
     - name: Create StoRM TLS secret
       run: |
@@ -451,38 +599,86 @@ jobs:
 
     - name: Deploy StoRM WebDAV via Helm chart on k3s
       run: |
-        helm install storm /tmp/storm-webdav-deployment/etc/helm \
+        helm install storm "${STORM_CHART_DIR}/etc/helm" \
           --namespace "${STORM_NAMESPACE}" \
           --values ci/storm-values.yaml \
+          --set-string "extraEnv.STORM_WEBDAV_HOSTNAME_0=storm-webdav.${STORM_NAMESPACE}.svc.cluster.local" \
           --debug \
           --timeout 5m \
           --wait
 
-    - name: Run StoRM deployment tests from host runner
+    - name: Run StoRM deployment tests inside k3s
       run: |
         chmod +x scripts/prepare-storm-kind-deployment.sh
-        kubectl -n "${STORM_NAMESPACE}" port-forward svc/storm-webdav 8085:8085 \
-          > /tmp/storm-port-forward.log 2>&1 &
-        PF_PID=$!
-        trap 'kill "${PF_PID}" || true' EXIT
-
-        for _ in $(seq 1 30); do
-          if bash -lc "echo > /dev/tcp/127.0.0.1/8085" 2>/dev/null; then
-            break
-          fi
-          if ! kill -0 "${PF_PID}" 2>/dev/null; then
-            cat /tmp/storm-port-forward.log || true
-            exit 1
-          fi
-          sleep 2
-        done
-
-        export STORM_TEST_SERVICE_HOST=127.0.0.1
-        export STORM_TEST_SERVICE_PORT=8085
         while IFS= read -r line; do
           export "${line}"
         done < <(./scripts/prepare-storm-kind-deployment.sh "gha-${GITHUB_RUN_ID}" "${STORM_NAMESPACE}")
-        timeout 30m pytest -v -rs tests/test_integration_storage_deployment.py
+        kubectl delete job -n "${STORM_NAMESPACE}" gfal-storm-tests --ignore-not-found=true || true
+        cat <<YAML | kubectl apply -n "${STORM_NAMESPACE}" -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: gfal-storm-tests
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: tests
+                image: python:3.12-slim
+                command: ["bash", "-lc"]
+                args:
+                - |
+                  set -euo pipefail
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  python -m pip install --upgrade pip
+                  pip install --no-cache-dir '/app[dev]'
+                  export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
+                  export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
+                  export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
+                  export GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE='${GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE}'
+                  export GFAL_DEPLOYMENT_HTTP_DENIED_BASE='${GFAL_DEPLOYMENT_HTTP_DENIED_BASE}'
+                  export GFAL_DEPLOYMENT_HTTP_DENIED_MARKERS='Permission denied,403,access denied,Authentication required,401'
+                  cd /app
+                  pytest -v -rs -n0 \
+                    tests/test_integration_storage_deployment.py::test_deployment_contract_has_a_remote_endpoint \
+                    tests/test_integration_storage_deployment.py::test_http_copy_roundtrip[local-http] \
+                    tests/test_integration_storage_deployment.py::test_http_copy_roundtrip[http-local] \
+                    tests/test_integration_storage_deployment.py::test_remote_listing_sees_uploaded_file[http] \
+                    tests/test_integration_storage_deployment.py::test_permission_denied_paths_reject_writes[http]
+                volumeMounts:
+                - name: app
+                  mountPath: /app
+              volumes:
+              - name: app
+                hostPath:
+                  path: ${GITHUB_WORKSPACE}
+                  type: Directory
+        YAML
+        for _ in $(seq 1 180); do
+          SUCCEEDED=$(kubectl get job -n "${STORM_NAMESPACE}" gfal-storm-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)
+          FAILED=$(kubectl get job -n "${STORM_NAMESPACE}" gfal-storm-tests -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)
+          if [ "${SUCCEEDED:-0}" -ge 1 ]; then
+            break
+          fi
+          if [ "${FAILED:-0}" -ge 1 ]; then
+            kubectl logs -n "${STORM_NAMESPACE}" job/gfal-storm-tests --all-containers=true --tail=-1 || true
+            kubectl describe job -n "${STORM_NAMESPACE}" gfal-storm-tests || true
+            kubectl describe pod -n "${STORM_NAMESPACE}" -l job-name=gfal-storm-tests || true
+            exit 1
+          fi
+          sleep 10
+        done
+        if [ "$(kubectl get job -n "${STORM_NAMESPACE}" gfal-storm-tests -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)" -lt 1 ]; then
+          kubectl logs -n "${STORM_NAMESPACE}" job/gfal-storm-tests --all-containers=true --tail=-1 || true
+          kubectl describe job -n "${STORM_NAMESPACE}" gfal-storm-tests || true
+          kubectl describe pod -n "${STORM_NAMESPACE}" -l job-name=gfal-storm-tests || true
+          exit 1
+        fi
+        kubectl logs -n "${STORM_NAMESPACE}" job/gfal-storm-tests --all-containers=true --tail=-1
 
     - name: Dump StoRM state on failure
       if: failure()
@@ -501,7 +697,11 @@ jobs:
 
     - name: Cleanup StoRM namespace
       if: always()
-      run: kubectl delete namespace "${STORM_NAMESPACE}" --ignore-not-found=true --wait=false || true
+      run: |
+        kubectl delete namespace "${STORM_NAMESPACE}" --ignore-not-found=true --wait=false || true
+        if [ -n "${STORM_CHART_DIR:-}" ]; then
+          rm -rf "${STORM_CHART_DIR}"
+        fi
 
   # ---------------------------------------------------------------------------
   # 2. Packaging
