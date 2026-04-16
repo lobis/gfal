@@ -476,7 +476,7 @@ _COMMAND_OPTION_GROUPS: dict[str, list[dict]] = {
             "name": "Copy Options",
             "options": [
                 "--force",
-                "--ignore-existing",
+                "--compare",
                 "--parent",
                 "--recursive",
                 "--from-file",

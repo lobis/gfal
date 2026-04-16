@@ -111,7 +111,7 @@ async def test_async_copy_reports_progress_and_start_callback(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_async_copy_skip_if_same_warns_and_skips(tmp_path):
+async def test_async_copy_compare_checksum_warns_and_skips(tmp_path):
     src = tmp_path / "src.txt"
     dst = tmp_path / "dst.txt"
     src.write_text("same content")
@@ -123,7 +123,7 @@ async def test_async_copy_skip_if_same_warns_and_skips(tmp_path):
     await client.copy(
         src.as_uri(),
         dst.as_uri(),
-        options=CopyOptions(skip_if_same=True),
+        options=CopyOptions(compare="checksum"),
         warn_callback=warnings.append,
     )
 

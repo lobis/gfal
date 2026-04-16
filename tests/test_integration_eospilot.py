@@ -455,7 +455,7 @@ class TestEosPilotStreamingCopy:
         assert rc == 0, err
         _verify_remote_batch(proxy_cert, pilot_dir, records)
 
-    def test_copy_ten_files_skip_if_same_with_existing_matches(
+    def test_copy_ten_files_compare_checksum_with_existing_matches(
         self, proxy_cert, pilot_dir, tmp_path
     ):
         """Existing matching remote files should be skipped while missing ones are copied."""
@@ -477,7 +477,8 @@ class TestEosPilotStreamingCopy:
             proxy_cert,
             "--from-file",
             str(sources_file),
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             pilot_dir,
         )
 
@@ -487,10 +488,10 @@ class TestEosPilotStreamingCopy:
             assert "matching ADLER32 checksum" in out
         _verify_remote_batch(proxy_cert, pilot_dir, records)
 
-    def test_copy_ten_files_skip_if_same_fails_on_checksum_mismatch(
+    def test_copy_ten_files_compare_checksum_copies_on_mismatch(
         self, proxy_cert, pilot_dir, tmp_path
     ):
-        """A pre-existing remote file with the wrong checksum should make the batch fail."""
+        """A pre-existing remote file with wrong content should be overwritten."""
         records = _write_batch_sources(tmp_path)
         sources_file = _write_sources_file(tmp_path, records)
         matching = records[:3]
@@ -522,13 +523,12 @@ class TestEosPilotStreamingCopy:
             proxy_cert,
             "--from-file",
             str(sources_file),
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             pilot_dir,
         )
 
-        assert rc != 0
-        assert mismatched["name"] in err
-        assert "exists and overwrite is not set" in err
+        assert rc == 0
         for record in matching:
             assert record["name"] in out
             assert "matching ADLER32 checksum" in out
@@ -620,16 +620,18 @@ class TestEosPilotStreamingCopyDocker:
         assert rc == 0, err
         assert "--preserve-times is only supported for local destinations" not in err
 
-    def test_skip_if_same_skips_matching_remote_and_fails_on_mismatch(self, proxy_cert):
-        remote = f"{_PILOT_BASE}/pytest-skip-if-same-{uuid.uuid4().hex[:8]}.txt"
+    def test_compare_checksum_skips_matching_remote_and_copies_on_mismatch(
+        self, proxy_cert
+    ):
+        remote = f"{_PILOT_BASE}/pytest-compare-checksum-{uuid.uuid4().hex[:8]}.txt"
         script = f"""
 set -e
 printf 'same-content\\n' >/tmp/src.txt
 gfal cp -t 20 file:///tmp/src.txt '{remote}'
-gfal cp -t 20 --skip-if-same file:///tmp/src.txt '{remote}' >/tmp/match.out 2>/tmp/match.err
+gfal cp -t 20 --compare checksum file:///tmp/src.txt '{remote}' >/tmp/match.out 2>/tmp/match.err
 printf 'different-content\\n' >/tmp/src2.txt
 set +e
-gfal cp -t 20 --skip-if-same file:///tmp/src2.txt '{remote}' >/tmp/mismatch.out 2>/tmp/mismatch.err
+gfal cp -t 20 --compare checksum file:///tmp/src2.txt '{remote}' >/tmp/mismatch.out 2>/tmp/mismatch.err
 mismatch_rc=$?
 set -e
 gfal cat '{remote}' >/tmp/final.out 2>/tmp/final.err
@@ -647,7 +649,7 @@ cat /tmp/rm.err >&2
 
         assert rc == 0, err
         assert "matching ADLER32 checksum" in out
-        assert "MISMATCH_RC=1" in out
+        assert "MISMATCH_RC=0" in out  # different content → copy (overwrite), not error
         assert "exists and overwrite is not set" in err
         assert "same-content" in out
 

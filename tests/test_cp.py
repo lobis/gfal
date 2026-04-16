@@ -98,22 +98,41 @@ class TestCopyToDirectory:
 
 
 # ---------------------------------------------------------------------------
-# Overwrite / --force
+# Overwrite / --force / --compare
 # ---------------------------------------------------------------------------
 
 
 class TestCopyOverwrite:
-    def test_no_overwrite_by_default(self, tmp_path):
+    def test_quick_compare_skips_when_mtime_and_size_match(self, tmp_path):
+        """Default quick compare: same mtime+size → skip."""
+        import os
+
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
-        src.write_bytes(b"new content")
-        dst.write_bytes(b"old content")
+        src.write_bytes(b"same content")
+        dst.write_bytes(b"same content")
+        # Force identical mtime so quick compare always sees a match
+        t = 1_000_000_000
+        os.utime(src, (t, t))
+        os.utime(dst, (t, t))
 
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
-        assert rc == 17
-        assert dst.read_bytes() == b"old content"
-        assert "exists and overwrite is not set" in err
+        assert rc == 0
+        assert dst.read_bytes() == b"same content"
+        assert "Skipping existing file" in out
+
+    def test_quick_compare_copies_when_size_differs(self, tmp_path):
+        """Default quick compare: different size → copy (overwrite)."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new longer content")
+        dst.write_bytes(b"old")
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"new longer content"
 
     def test_force_overwrite(self, tmp_path):
         src = tmp_path / "src.txt"
@@ -126,36 +145,41 @@ class TestCopyOverwrite:
         assert rc == 0
         assert dst.read_bytes() == b"new content"
 
-    def test_skip_if_same_skips_existing_match(self, tmp_path):
+    def test_compare_checksum_skips_matching(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"same content")
         dst.write_bytes(b"same content")
 
-        rc, out, err = run_gfal("cp", "--skip-if-same", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal(
+            "cp", "--compare", "checksum", src.as_uri(), dst.as_uri()
+        )
 
         assert rc == 0
         assert dst.read_bytes() == b"same content"
         assert "matching ADLER32 checksum" in out
 
-    def test_skip_if_same_still_fails_on_mismatch(self, tmp_path):
+    def test_compare_checksum_copies_when_different(self, tmp_path):
+        """--compare checksum: different content → copy (overwrite)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new content")
         dst.write_bytes(b"old content")
 
-        rc, out, err = run_gfal("cp", "--skip-if-same", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal(
+            "cp", "--compare", "checksum", src.as_uri(), dst.as_uri()
+        )
 
-        assert rc == 17
-        assert "exists and overwrite is not set" in err
+        assert rc == 0
+        assert dst.read_bytes() == b"new content"
 
-    def test_ignore_existing_skips_without_overwrite(self, tmp_path):
+    def test_compare_none_skips_unconditionally(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new content")
         dst.write_bytes(b"old content")
 
-        rc, out, err = run_gfal("cp", "--ignore-existing", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", "--compare", "none", src.as_uri(), dst.as_uri())
 
         assert rc == 0
         assert dst.read_bytes() == b"old content"
@@ -260,7 +284,7 @@ class TestCopyRecursive:
         assert not dstdir.exists()
         assert "Skipping directory" in out or "skip" in out.lower()
 
-    def test_recursive_skip_if_same(self, tmp_path):
+    def test_recursive_compare_checksum_skips_matching(self, tmp_path):
         srcdir = tmp_path / "srcdir"
         srcdir.mkdir()
         (srcdir / "same.txt").write_bytes(b"same")
@@ -271,7 +295,7 @@ class TestCopyRecursive:
         (dstdir / "same.txt").write_bytes(b"same")
 
         rc, out, err = run_gfal(
-            "cp", "-r", "--skip-if-same", srcdir.as_uri(), dstdir.as_uri()
+            "cp", "-r", "--compare", "checksum", srcdir.as_uri(), dstdir.as_uri()
         )
 
         assert rc == 0
@@ -511,7 +535,9 @@ class TestCopyFromFile:
         assert rc == 0
         assert (dstdir / "src.txt").read_bytes() == b"data"
 
-    def test_from_file_skip_if_same_skips_existing_match_in_directory(self, tmp_path):
+    def test_from_file_compare_checksum_skips_existing_match_in_directory(
+        self, tmp_path
+    ):
         src = tmp_path / "src.txt"
         src.write_bytes(b"same content")
         dstdir = tmp_path / "dstdir"
@@ -525,7 +551,8 @@ class TestCopyFromFile:
             "cp",
             "--from-file",
             str(sources_file),
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             dstdir.as_uri(),
         )
 
@@ -533,7 +560,7 @@ class TestCopyFromFile:
         assert (dstdir / "src.txt").read_bytes() == b"same content"
         assert "matching ADLER32 checksum" in out
 
-    def test_from_file_skip_if_same_fails_on_mismatch_in_directory(self, tmp_path):
+    def test_from_file_compare_checksum_copies_on_mismatch_in_directory(self, tmp_path):
         src = tmp_path / "src.txt"
         src.write_bytes(b"new content")
         dstdir = tmp_path / "dstdir"
@@ -547,13 +574,13 @@ class TestCopyFromFile:
             "cp",
             "--from-file",
             str(sources_file),
-            "--skip-if-same",
+            "--compare",
+            "checksum",
             dstdir.as_uri(),
         )
 
-        assert rc == 17
-        assert (dstdir / "src.txt").read_bytes() == b"old content"
-        assert "exists and overwrite is not set" in err
+        assert rc == 0
+        assert (dstdir / "src.txt").read_bytes() == b"new content"
 
 
 # ---------------------------------------------------------------------------
@@ -564,15 +591,15 @@ class TestCopyFromFile:
 class TestCopyAbortOnFailure:
     def test_abort_on_failure(self, tmp_path):
         """With --abort-on-failure the copy stops after the first error."""
-        src = tmp_path / "src.txt"
-        src.write_bytes(b"data")
-        dst1 = tmp_path / "dst1.txt"
-        dst1.write_bytes(b"old")
+        src_missing = tmp_path / "missing.txt"  # does not exist
+        dst = tmp_path / "dst.txt"
 
-        rc, out, err = run_gfal("cp", "--abort-on-failure", src.as_uri(), dst1.as_uri())
+        rc, out, err = run_gfal(
+            "cp", "--abort-on-failure", src_missing.as_uri(), dst.as_uri()
+        )
 
         assert rc != 0
-        assert dst1.read_bytes() == b"old"
+        assert not dst.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -723,17 +750,11 @@ class TestCopyCopyMode:
         combined = out + err
         assert "preserve-times" in combined
 
-    def test_skip_if_same_appears_in_help(self):
+    def test_compare_appears_in_help(self):
         rc, out, err = run_gfal("cp", "--help")
         assert rc == 0
         combined = out + err
-        assert "skip-if-same" in combined
-
-    def test_ignore_existing_appears_in_help(self):
-        rc, out, err = run_gfal("cp", "--help")
-        assert rc == 0
-        combined = out + err
-        assert "ignore-existing" in combined
+        assert "compare" in combined
 
 
 # ---------------------------------------------------------------------------
@@ -1117,14 +1138,14 @@ class TestCopyVerbose:
 
 
 class TestCopyQuiet:
-    def test_quiet_suppresses_ignore_warnings(self, tmp_path):
+    def test_quiet_suppresses_compare_none_warning(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new content")
         dst.write_bytes(b"old content")
 
         rc, out, err = run_gfal(
-            "cp", "-q", "--ignore-existing", src.as_uri(), dst.as_uri()
+            "cp", "-q", "--compare", "none", src.as_uri(), dst.as_uri()
         )
 
         assert rc == 0

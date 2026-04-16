@@ -65,7 +65,7 @@ class CopyOptions:
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
-    compare: Optional[str] = None  # None | "quick" | "checksum" | "off"
+    compare: Optional[str] = None  # None | "quick" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
@@ -781,9 +781,9 @@ class AsyncGfalClient:
         if compare is None:
             return False
 
-        if compare == "off":
+        if compare == "none":
             if warn_callback is not None:
-                warn_callback(f"Skipping existing file {dst_url} (--compare off)")
+                warn_callback(f"Skipping existing file {dst_url} (--compare none)")
             return True
 
         if compare == "quick":
@@ -800,7 +800,13 @@ class AsyncGfalClient:
                         )
                     return True
             except Exception:
-                pass
+                if warn_callback is not None:
+                    warn_callback(
+                        f"Quick compare failed for {dst_url}; "
+                        "proceeding with transfer. "
+                        "Use --compare=checksum for reliable deduplication "
+                        "or --compare=none to skip unconditionally."
+                    )
             return False
 
         if compare == "checksum":

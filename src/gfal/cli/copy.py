@@ -19,9 +19,6 @@ from gfal.core.api import (
     GfalClient,
 )
 from gfal.core.api import (
-    checksum_fs as _checksum_fs,
-)
-from gfal.core.api import (
     parse_checksum_arg as _parse_checksum_arg,
 )
 from gfal.core.api import (
@@ -63,11 +60,11 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--compare",
         type=str,
-        default=None,
-        choices=["quick", "checksum", "off"],
+        default="quick",
+        choices=["quick", "checksum", "none"],
         help="when destination exists and --force is not set, how to decide whether "
-        "to skip: quick = compare mtime and size (default when --compare is used), "
-        "checksum = compare checksums, off = skip unconditionally without any checks",
+        "to skip: quick (default) = compare mtime and size, "
+        "checksum = compare checksums, none = skip unconditionally without any checks",
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
@@ -380,33 +377,6 @@ class CommandCopy(base.CommandBase):
             pass
         except Exception:
             pass
-
-        if getattr(self.params, "skip_if_same", False) and not getattr(
-            self.params, "force", False
-        ):
-            src_fs, src_path = fs.url_to_fs(src_url, opts)
-            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
-            try:
-                dst_info = dst_fs.info(dst_path)
-                dst_mode = fs.StatInfo(dst_info).st_mode
-                if (
-                    stat.S_ISREG(dst_mode)
-                    and not _is_special_file(src_path)
-                    and not _is_special_file(dst_path)
-                ):
-                    algorithm = "ADLER32"
-                    if self.params.checksum:
-                        algorithm, _ = _parse_checksum_arg(self.params.checksum)
-                    if _checksum_fs(src_fs, src_path, algorithm) == _checksum_fs(
-                        dst_fs, dst_path, algorithm
-                    ):
-                        print(
-                            f"Skipping existing file {dst_url} "
-                            f"(matching {algorithm} checksum)"
-                        )
-                        return
-            except Exception:
-                pass
 
         src_size = None
         quiet = self._is_quiet()

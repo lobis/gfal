@@ -7,7 +7,6 @@ in the pytest process.
 
 import errno
 import os
-import stat
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -17,7 +16,6 @@ import pytest
 from gfal.cli.copy import (
     CommandCopy,
     CopyOptions,
-    _checksum_fs,
     _eos_mtime_url,
     _finalise_hasher,
     _is_special_file,
@@ -27,6 +25,7 @@ from gfal.cli.copy import (
     _update_hasher,
 )
 from gfal.core import fs
+from gfal.core.api import checksum_fs as _checksum_fs
 
 
 def _make_cmd():
@@ -48,8 +47,7 @@ def _default_params(**kwargs):
         "parent": False,
         "checksum": None,
         "checksum_mode": "both",
-        "skip_if_same": False,
-        "ignore_existing": False,
+        "compare": None,
         "recursive": False,
         "preserve_times": False,
         "from_file": None,
@@ -150,7 +148,7 @@ class TestExecuteCp:
         assert rc == 0
         assert dst.read_bytes() == b"new content"
 
-    def test_copy_skip_if_same_skips_existing_match(self, tmp_path, capsys):
+    def test_copy_compare_checksum_skips_matching(self, tmp_path, capsys):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"same content")
@@ -159,7 +157,7 @@ class TestExecuteCp:
         cmd.params = _default_params(
             src=src.as_uri(),
             dst=[dst.as_uri()],
-            skip_if_same=True,
+            compare="checksum",
         )
 
         rc = cmd.execute_cp()
@@ -169,7 +167,7 @@ class TestExecuteCp:
         out = capsys.readouterr().out
         assert "matching ADLER32 checksum" in out
 
-    def test_copy_skip_if_same_still_fails_on_mismatch(self, tmp_path):
+    def test_copy_compare_checksum_copies_when_different(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new content")
@@ -178,12 +176,13 @@ class TestExecuteCp:
         cmd.params = _default_params(
             src=src.as_uri(),
             dst=[dst.as_uri()],
-            skip_if_same=True,
+            compare="checksum",
         )
 
         rc = cmd.execute_cp()
 
-        assert rc == 17
+        assert rc == 0
+        assert dst.read_bytes() == b"new content"
 
     def test_copy_xrootd_permission_denied_returns_eacces(self, tmp_path):
         src = tmp_path / "src.txt"
@@ -209,7 +208,7 @@ class TestExecuteCp:
 
         assert rc == errno.EACCES
 
-    def test_copy_recursive_skip_if_same(self, tmp_path):
+    def test_copy_recursive_compare_checksum(self, tmp_path):
         src = tmp_path / "srcdir"
         src.mkdir()
         (src / "same.txt").write_bytes(b"same")
@@ -224,7 +223,7 @@ class TestExecuteCp:
             src=src.as_uri(),
             dst=[dst.as_uri()],
             recursive=True,
-            skip_if_same=True,
+            compare="checksum",
         )
 
         rc = cmd.execute_cp()
@@ -243,7 +242,7 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
         assert rc == 17
 
-    def test_copy_ignore_existing_skips(self, tmp_path):
+    def test_copy_compare_none_skips(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new")
@@ -252,7 +251,7 @@ class TestExecuteCp:
         cmd.params = _default_params(
             src=src.as_uri(),
             dst=[dst.as_uri()],
-            ignore_existing=True,
+            compare="none",
         )
 
         rc = cmd.execute_cp()
@@ -718,7 +717,9 @@ class TestCliUsesLibraryCopy:
         src.write_text("hello")
 
         cmd = _make_cmd()
-        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], compare="quick"
+        )
 
         with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
             mock_client = mock_client_cls.return_value
@@ -727,51 +728,28 @@ class TestCliUsesLibraryCopy:
 
         mock_client.copy.assert_called_once()
         _, kwargs = mock_client.copy.call_args
-        assert kwargs["options"] == CopyOptions()
+        assert kwargs["options"] == CopyOptions(compare="quick")
         assert callable(kwargs["progress_callback"])
         assert callable(kwargs["start_callback"])
 
-    def test_do_copy_skip_if_same_ignores_special_destination_precheck(self, tmp_path):
+    def test_do_copy_with_compare_none_delegates_correct_options(self, tmp_path):
+        """--compare none should be forwarded as CopyOptions(compare='none')."""
         src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
         src.write_text("hello")
-        src_stat = SimpleNamespace(st_size=src.stat().st_size, is_dir=lambda: False)
-        dst_info = {
-            "name": "/tmp/fifo",
-            "size": 0,
-            "mode": stat.S_IFIFO,
-            "type": "other",
-        }
 
         cmd = _make_cmd()
         cmd.params = _default_params(
-            src=src.as_uri(),
-            dst=["file:///tmp/fifo"],
-            skip_if_same=True,
+            src=src.as_uri(), dst=[dst.as_uri()], compare="none"
         )
 
-        with (
-            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
-            patch("gfal.cli.copy.fs.url_to_fs") as mock_url_to_fs,
-            patch(
-                "gfal.cli.copy._checksum_fs",
-                side_effect=AssertionError("checksum precheck should not run"),
-            ),
-            patch("sys.stdout.isatty", return_value=False),
-        ):
+        with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
             mock_client = mock_client_cls.return_value
-            mock_client.stat.side_effect = [src_stat, FileNotFoundError(), src_stat]
 
-            src_fs = MagicMock()
-            dst_fs = MagicMock()
-            dst_fs.info.return_value = dst_info
-            mock_url_to_fs.side_effect = [
-                (src_fs, str(src)),
-                (dst_fs, "/tmp/fifo"),
-            ]
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
 
-            cmd._do_copy(src.as_uri(), "file:///tmp/fifo", {"timeout": 1800})
-
-        mock_client.copy.assert_called_once()
+        _, kwargs = mock_client.copy.call_args
+        assert kwargs["options"].compare == "none"
 
 
 class TestTpcOnlyPreflight:
