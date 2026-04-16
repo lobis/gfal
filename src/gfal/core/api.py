@@ -65,7 +65,7 @@ class CopyOptions:
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
-    compare: Optional[str] = None  # None | "quick" | "checksum" | "none"
+    compare: Optional[str] = None  # None | "size_mtime" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
@@ -786,7 +786,7 @@ class AsyncGfalClient:
                 warn_callback(f"Skipping existing file {dst_url} (--compare none)")
             return True
 
-        if compare == "quick":
+        if compare == "size_mtime":
             try:
                 dst_info = dst_fs.info(dst_path)
                 dst_st = StatResult.from_info(dst_info)

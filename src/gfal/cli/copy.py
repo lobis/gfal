@@ -60,10 +60,10 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--compare",
         type=str,
-        default="quick",
-        choices=["quick", "checksum", "none"],
+        default="size_mtime",
+        choices=["size_mtime", "checksum", "none"],
         help="when destination exists and --force is not set, how to decide whether "
-        "to skip: quick (default) = compare mtime and size, "
+        "to skip: size_mtime (default) = compare mtime and size, "
         "checksum = compare checksums, none = skip unconditionally without any checks",
     )
     @base.arg(
