@@ -22,8 +22,10 @@ class DeploymentConfig:
     name: str
     http_writable_base: Optional[str]
     http_denied_base: Optional[str]
+    http_denied_markers: tuple[str, ...]
     root_writable_base: Optional[str]
     root_denied_base: Optional[str]
+    root_denied_markers: tuple[str, ...]
     verify_ssl: bool
     cert: Optional[str]
     key: Optional[str]
@@ -55,8 +57,16 @@ def load_deployment_config() -> Optional[DeploymentConfig]:
         name=os.environ.get("GFAL_DEPLOYMENT_NAME", "deployment"),
         http_writable_base=http_writable,
         http_denied_base=os.environ.get("GFAL_DEPLOYMENT_HTTP_DENIED_BASE"),
+        http_denied_markers=_env_csv(
+            "GFAL_DEPLOYMENT_HTTP_DENIED_MARKERS",
+            ("Permission denied", "403", "access denied"),
+        ),
         root_writable_base=root_writable,
         root_denied_base=os.environ.get("GFAL_DEPLOYMENT_ROOT_DENIED_BASE"),
+        root_denied_markers=_env_csv(
+            "GFAL_DEPLOYMENT_ROOT_DENIED_MARKERS",
+            ("Permission denied", "3010", "access denied"),
+        ),
         verify_ssl=_env_flag("GFAL_DEPLOYMENT_VERIFY_SSL", default=True),
         cert=cert,
         key=key,
@@ -101,3 +111,11 @@ def run_deployment_gfal(
         env = {"X509_USER_PROXY": config.proxy}
 
     return run_gfal(cmd, *cmd_args, *args, input=stdin_data, env=env)
+
+
+def _env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    parsed = tuple(item.strip() for item in value.split(",") if item.strip())
+    return parsed or default

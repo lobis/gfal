@@ -170,18 +170,15 @@ def test_remote_listing_sees_uploaded_file(deployment, tmp_path, kind):
         _cleanup_remote(deployment, target)
 
 
-@pytest.mark.parametrize(
-    "kind,error_markers",
-    [
-        ("http", ("Permission denied", "403", "access denied")),
-        ("root", ("Permission denied", "3010", "access denied")),
-    ],
-)
-def test_permission_denied_paths_reject_writes(
-    deployment, tmp_path, kind, error_markers
-):
+@pytest.mark.parametrize("kind", ["http", "root"])
+def test_permission_denied_paths_reject_writes(deployment, tmp_path, kind):
     denied_base = (
         deployment.http_denied_base if kind == "http" else deployment.root_denied_base
+    )
+    error_markers = (
+        deployment.http_denied_markers
+        if kind == "http"
+        else deployment.root_denied_markers
     )
     if kind == "http" and not denied_base:
         pytest.skip(f"{deployment.name} does not define an HTTPS denied path")

@@ -10,10 +10,11 @@ POD_NAME="$(
     -o jsonpath='{.items[0].metadata.name}'
 )"
 
-BASE_PATH="/data/sa/gfal-tests/${RUN_ID}"
+BASE_PATH="/data/gfal-tests/${RUN_ID}"
 WRITABLE_PATH="${BASE_PATH}/writable"
 DENIED_PATH="${BASE_PATH}/denied"
-SERVICE_HOST="storm-webdav.${NAMESPACE}.svc.cluster.local"
+SERVICE_HOST="${STORM_TEST_SERVICE_HOST:-storm-webdav.${NAMESPACE}.svc.cluster.local}"
+SERVICE_PORT="${STORM_TEST_SERVICE_PORT:-8085}"
 
 kubectl wait -n "${NAMESPACE}" --for=condition=Ready "pod/${POD_NAME}" --timeout=10m >/dev/null
 
@@ -28,6 +29,6 @@ cat <<EOF
 GFAL_DEPLOYMENT_NAME=storm-kind
 GFAL_DEPLOYMENT_VERIFY_SSL=0
 GFAL_DEPLOYMENT_SUPPORTS_LISTING=1
-GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=http://${SERVICE_HOST}:8085/sa/gfal-tests/${RUN_ID}/writable
-GFAL_DEPLOYMENT_HTTP_DENIED_BASE=http://${SERVICE_HOST}:8085/sa/gfal-tests/${RUN_ID}/denied
+GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=http://${SERVICE_HOST}:${SERVICE_PORT}/sa/gfal-tests/${RUN_ID}/writable
+GFAL_DEPLOYMENT_HTTP_DENIED_BASE=http://${SERVICE_HOST}:${SERVICE_PORT}/sa/gfal-tests/${RUN_ID}/denied
 EOF

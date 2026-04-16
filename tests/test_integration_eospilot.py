@@ -143,9 +143,12 @@ def pilot_dir(proxy_cert):
 # ---------------------------------------------------------------------------
 
 
-def _run(cmd, proxy_cert, *args):
+def _run(cmd, proxy_cert, *args, timeout=None):
     """Call run_gfal with the proxy cert and --no-verify flags pre-filled."""
-    return run_gfal(cmd, "-E", proxy_cert, "--no-verify", *args)
+    kwargs = {}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    return run_gfal(cmd, "-E", proxy_cert, "--no-verify", *args, **kwargs)
 
 
 def _run_repo_gfal_docker_script(shell_script, proxy_cert):
@@ -368,7 +371,7 @@ class TestEosPilotStreamingCopy:
         src.write_bytes(data)
 
         dst = f"{pilot_dir}/large.bin"
-        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst, timeout=90)
         assert rc == 0, err
 
         rc, out, err = _run("stat", proxy_cert, dst)
