@@ -5,6 +5,7 @@ SimpleNamespace) to avoid subprocess overhead and ensure coverage is collected
 in the pytest process.
 """
 
+import errno
 import sys
 import zlib
 from types import SimpleNamespace
@@ -350,7 +351,7 @@ class TestExecuteSum:
             checksum_type="ADLER32",
         )
         rc = cmd.execute_sum()
-        assert rc == 1
+        assert rc == errno.ENOENT
 
 
 # ---------------------------------------------------------------------------
