@@ -29,6 +29,7 @@ from gfal.core.errors import (
     GfalNotADirectoryError,
     GfalPermissionError,
     GfalTimeoutError,
+    is_xrootd_not_found_message,
     is_xrootd_permission_message,
 )
 
@@ -125,7 +126,11 @@ def exception_exit_code(e: Exception) -> int:
         if mapped is not None:
             return mapped
 
-    # 4. XRootD error messages that indicate permission denial
+    # 4. XRootD error messages
+    if is_xrootd_not_found_message(str(e)):
+        return errno.ENOENT
+
+    # 5. XRootD permission-denied messages
     if is_xrootd_permission_message(str(e)):
         return errno.EACCES
 

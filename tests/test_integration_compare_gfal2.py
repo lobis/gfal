@@ -331,7 +331,7 @@ class TestCompareExitCodesEosPilot:
             run_gfal("rm", "-E", proxy, "--no-verify", "-r", target)
 
     def test_cp_permission_denied_exit_code_matches_legacy(self):
-        """gfal cp to a denied path must return EACCES (13) like gfal2."""
+        """gfal cp to a denied path must return EACCES (13); legacy gfal2 may return 1 or 13."""
         _xfail_if_legacy_unusable()
         from test_integration_eospilot import _PILOT_NO_ACCESS
 
@@ -354,7 +354,9 @@ class TestCompareExitCodesEosPilot:
             )
 
             assert rc_new == 13, f"expected EACCES(13), got {rc_new}: {err_new}"
-            assert rc_old == 13, f"legacy returned {rc_old}: {err_old}"
+            assert rc_old in (1, 13), (
+                f"legacy returned unexpected code {rc_old}: {err_old}"
+            )
         finally:
             run_gfal("rm", "-E", proxy, "--no-verify", src)
 

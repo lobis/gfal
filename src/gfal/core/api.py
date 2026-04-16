@@ -25,6 +25,7 @@ from gfal.core.errors import (
     GfalNotADirectoryError,
     GfalPermissionError,
     GfalTimeoutError,
+    is_xrootd_not_found_message,
     is_xrootd_permission_message,
 )
 
@@ -893,6 +894,9 @@ class AsyncGfalClient:
                 return GfalNotADirectoryError(msg)
             if e.errno == errno.ETIMEDOUT:
                 return GfalTimeoutError(msg)
+
+        if is_xrootd_not_found_message(msg):
+            return GfalFileNotFoundError(msg)
 
         if is_xrootd_permission_message(msg):
             return GfalPermissionError(msg)
