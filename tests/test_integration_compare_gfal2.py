@@ -146,20 +146,32 @@ class TestLegacyGfal2Runtime:
         assert rc_old == 0, err_old
         assert not old_preserved
 
-    def test_copy_overwrite_error_matches_legacy(self):
+    def test_copy_existing_dst_behavior(self):
+        """gfal cp without -f to an existing dst now uses --compare quick by default.
+
+        The new CLI no longer returns EEXIST (17) unconditionally — it compares
+        mtime and size and copies when they differ. Legacy gfal2-utils still
+        return 17; this intentional divergence is documented here.
+        """
+        # src="src\n" (4 bytes) and dst="dst\n" (4 bytes) have the same size but
+        # were created at different times, so quick compare will see a mtime
+        # difference and proceed with the copy (rc=0).
         rc_new, err_new = _copy_existing_dst_error_in_docker(
             "cp -r /repo /tmp/gfal-src && "
             "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
             "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
-        assert rc_new == 17
-        assert "exists and overwrite is not set" in err_new
+        # New CLI: quick compare sees different mtime → copies → rc=0
+        assert rc_new == 0, (
+            f"expected 0 (quick compare copies), got {rc_new}: {err_new}"
+        )
 
         _xfail_if_legacy_unusable()
         rc_old, err_old = _copy_existing_dst_error_in_docker(
             "GFAL_PYTHONBIN=/usr/bin/python3.9 "
             "gfal-copy file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
+        # Legacy still returns EEXIST — intentional divergence
         assert rc_old == 17
         assert "exists and overwrite is not set" in err_old
 
@@ -363,8 +375,14 @@ class TestCompareExitCodesEosPilot:
         finally:
             run_gfal("rm", "-E", proxy, "--no-verify", src)
 
-    def test_copy_overwrite_exit_code_matches_legacy(self):
-        """gfal cp without -f to an existing dst must return EEXIST (17) like gfal2."""
+    def test_copy_existing_dst_behavior(self):
+        """gfal cp without -f to an existing dst now uses --compare quick by default.
+
+        The new CLI no longer returns EEXIST (17) — it compares mtime+size and
+        copies when they differ. Since src and dst have identical content but
+        were created at different moments, mtime will differ and the copy proceeds
+        (rc=0). Legacy gfal2-utils still return 17; intentional divergence.
+        """
         _xfail_if_legacy_unusable()
         proxy = _find_proxy()
         payload = "overwrite test\n"
@@ -376,9 +394,6 @@ class TestCompareExitCodesEosPilot:
             )
             assert rc == 0, err
 
-            rc_new, out_new, err_new = run_gfal(
-                "save", "-E", proxy, "--no-verify", dst, input=payload
-            )
             # save always overwrites (PUT), so test cp instead
             src_local = _unique_pilot_path("compare-exitcode-cp-overwrite-src.txt")
             try:
@@ -391,7 +406,12 @@ class TestCompareExitCodesEosPilot:
                     "copy", src_local, dst, proxy_cert=proxy
                 )
 
-                assert rc_new2 == 17, f"expected EEXIST(17), got {rc_new2}: {err_new2}"
+                # New CLI: quick compare sees different mtime → copies → rc=0
+                assert rc_new2 == 0, (
+                    f"expected 0 (quick compare copies on mtime diff), "
+                    f"got {rc_new2}: {err_new2}"
+                )
+                # Legacy still returns EEXIST — intentional divergence
                 assert rc_old == 17, f"legacy returned {rc_old}: {err_old}"
             finally:
                 run_gfal("rm", "-E", proxy, "--no-verify", src_local)
