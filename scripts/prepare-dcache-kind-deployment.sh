@@ -6,13 +6,17 @@ RELEASE="${2:-store}"
 NAMESPACE="${3:-default}"
 
 DOOR_POD="${RELEASE}-dcache-door-0"
-SERVICE_HOST="${RELEASE}-door-svc.${NAMESPACE}.svc.cluster.local"
-BASE_PATH="/data/gfal-tests/${RUN_ID}"
+SERVICE_HOST="${DCACHE_TEST_SERVICE_HOST:-${RELEASE}-door-svc.${NAMESPACE}.svc.cluster.local}"
+SERVICE_PORT="${DCACHE_TEST_SERVICE_PORT:-8083}"
+ROOT_HOST="${DCACHE_TEST_ROOT_HOST:-${SERVICE_HOST}}"
+ROOT_PORT="${DCACHE_TEST_ROOT_PORT:-1094}"
+PARENT_PATH="/data/pool-a/gfal-tests"
+BASE_PATH="/data/pool-a/gfal-tests/${RUN_ID}"
 WRITABLE_PATH="${BASE_PATH}/writable"
 DENIED_PATH="${BASE_PATH}/denied"
 
 dcache_chimera() {
-    kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
+    timeout 30 kubectl exec -n "${NAMESPACE}" "${DOOR_POD}" -- /opt/dcache/bin/chimera "$@"
 }
 
 run_chimera_allow_fail() {
@@ -34,8 +38,8 @@ run_chimera_allow_fail() {
 
 kubectl wait -n "${NAMESPACE}" --for=condition=Ready "pod/${DOOR_POD}" --timeout=10m >/dev/null
 
-run_chimera_allow_fail mkdir /data/gfal-tests
-run_chimera_allow_fail chmod 0777 /data/gfal-tests
+run_chimera_allow_fail mkdir "${PARENT_PATH}"
+run_chimera_allow_fail chmod 0777 "${PARENT_PATH}"
 run_chimera_allow_fail mkdir "${BASE_PATH}"
 run_chimera_allow_fail chmod 0755 "${BASE_PATH}"
 run_chimera_allow_fail mkdir "${WRITABLE_PATH}"
@@ -47,6 +51,8 @@ cat <<EOF
 GFAL_DEPLOYMENT_NAME=dcache-kind
 GFAL_DEPLOYMENT_VERIFY_SSL=0
 GFAL_DEPLOYMENT_SUPPORTS_LISTING=1
-GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=https://${SERVICE_HOST}:8083${WRITABLE_PATH}
-GFAL_DEPLOYMENT_HTTP_DENIED_BASE=https://${SERVICE_HOST}:8083${DENIED_PATH}
+GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE=https://${SERVICE_HOST}:${SERVICE_PORT}${WRITABLE_PATH}
+GFAL_DEPLOYMENT_HTTP_DENIED_BASE=https://${SERVICE_HOST}:${SERVICE_PORT}${DENIED_PATH}
+GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE=root://${ROOT_HOST}:${ROOT_PORT}/${WRITABLE_PATH}
+GFAL_DEPLOYMENT_ROOT_DENIED_BASE=root://${ROOT_HOST}:${ROOT_PORT}/${DENIED_PATH}
 EOF

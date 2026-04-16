@@ -28,8 +28,10 @@ def test_run_deployment_gfal_passes_proxy_as_cert_for_https(tmp_path, monkeypatc
         name="eos-kind",
         http_writable_base="https://example.test/writable",
         http_denied_base=None,
+        http_denied_markers=("Permission denied", "403", "access denied"),
         root_writable_base="root://example.test//writable",
         root_denied_base=None,
+        root_denied_markers=("Permission denied", "3010", "access denied"),
         verify_ssl=False,
         cert=None,
         key=None,
@@ -73,8 +75,10 @@ def test_run_deployment_gfal_prefers_explicit_cert_and_key(tmp_path, monkeypatch
         name="storm-kind",
         http_writable_base="https://example.test/writable",
         http_denied_base=None,
+        http_denied_markers=("Permission denied", "403", "access denied"),
         root_writable_base=None,
         root_denied_base=None,
+        root_denied_markers=("Permission denied", "3010", "access denied"),
         verify_ssl=True,
         cert=str(cert),
         key=str(key),
@@ -95,3 +99,19 @@ def test_run_deployment_gfal_prefers_explicit_cert_and_key(tmp_path, monkeypatch
         "https://example.test/writable",
     )
     assert calls["env"] is None
+
+
+def test_load_deployment_config_accepts_backend_specific_denied_markers(monkeypatch):
+    monkeypatch.setenv("GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE", "https://example.test/w")
+    monkeypatch.setenv("GFAL_DEPLOYMENT_HTTP_DENIED_BASE", "https://example.test/d")
+    monkeypatch.setenv("GFAL_DEPLOYMENT_HTTP_DENIED_MARKERS", "403, 500 ,HTTP error")
+
+    config = deployment_env.load_deployment_config()
+
+    assert config is not None
+    assert config.http_denied_markers == ("403", "500", "HTTP error")
+    assert config.root_denied_markers == (
+        "Permission denied",
+        "3010",
+        "access denied",
+    )

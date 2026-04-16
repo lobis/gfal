@@ -10,7 +10,7 @@ tls:
     enabled: false
 
 extraEnv:
-  STORM_WEBDAV_HOSTNAME_0: "storm-webdav.storm.svc.cluster.local"
+  STORM_WEBDAV_HOSTNAME_0: "storm-webdav.local"
   STORM_WEBDAV_VOMS_TRUST_STORE_DIR: "/etc/grid-security/certificates"
   STORM_WEBDAV_REQUIRE_CLIENT_CERT: "false"
   STORM_WEBDAV_CERTIFICATE_PATH: "/etc/grid-security/storm-webdav/tls.crt"
@@ -20,7 +20,7 @@ extraEnv:
 healthcheck:
   enabled: true
   test: >
-    curl -ks -o /dev/null -w '%{http_code}' http://localhost:8085/sa/ |
+    curl -ks -o /dev/null -w '%{http_code}' http://localhost:8085/sa |
     grep -Eq '20[0-9]|40[01]'
   interval: 30
   timeout: 10
@@ -35,9 +35,32 @@ config:
   application:
     oidc:
       enabled: false
+    extraConfig: |
+      storm:
+        authz:
+          policies:
+            - sa: sa
+              actions:
+                - all
+              effect: deny
+              description: Deny writes in the CI denied tree
+              principals:
+                - type: anyone
+              paths:
+                - /gfal-tests/*/denied
+                - /gfal-tests/*/denied/**
+            - sa: sa
+              actions:
+                - all
+              effect: permit
+              description: Permit anonymous CI traffic in the writable test tree
+              principals:
+                - type: anyone
+              paths:
+                - /gfal-tests/**
   storageAreas:
     - name: sa
-      rootPath: /data/sa
+      rootPath: /data
       accessPoints:
         - /sa
       orgs: []
@@ -46,4 +69,4 @@ config:
       orgsGrantReadPermission: false
       orgsGrantWritePermission: false
       wlcgScopeAuthzEnabled: false
-      fineGrainedAuthzEnabled: false
+      fineGrainedAuthzEnabled: true
