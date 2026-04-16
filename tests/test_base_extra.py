@@ -101,12 +101,14 @@ class TestArgspecToClickOption:
         assert spec["kind"] == "option"
         assert spec["click_kw"]["is_flag"] is True
         assert spec["click_kw"]["default"] is False
+        assert spec["click_kw"]["flag_value"] is True
 
     def test_store_true_with_default(self):
         spec = _argspec_to_click_option(
             ("--flag",), {"action": "store_true", "default": True}
         )
         assert spec["click_kw"]["default"] is True
+        assert spec["click_kw"]["flag_value"] is True
 
     def test_store_false(self):
         spec = _argspec_to_click_option(("--no-flag",), {"action": "store_false"})

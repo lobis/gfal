@@ -320,6 +320,11 @@ def _argspec_to_click_option(args, kwargs):
     if action == "store_true":
         click_kw["is_flag"] = True
         click_kw["default"] = default if default is not None else False
+        # Explicitly set flag_value=True so Click never auto-derives it
+        # from the default.  Click 8.0 auto-sets flag_value=not(default),
+        # which turns ``--preserve-times`` (default True) into a toggle
+        # that *disables* the feature when the flag is present.
+        click_kw["flag_value"] = True
         return {
             "kind": "option",
             "param_decls": option_names,
