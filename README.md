@@ -9,6 +9,9 @@
 
 A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with optional **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd).
 
+The Textual terminal UI now lives in the separate
+[`gfal-tui`](https://github.com/lobis/gfal-tui) repository/package.
+
 ## Python library API
 
 `gfal` is available as both an async-first library API and a synchronous facade:

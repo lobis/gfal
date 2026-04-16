@@ -28,9 +28,6 @@ gfal = "gfal.cli.shell:main"
 rich-click = [
     "rich-click>=1.7.0",
 ]
-tui = [
-    "textual>=8.2.3",
-]
 xrootd = [
     "fsspec-xrootd>=0.5.1; python_version == '3.9'",
     "fsspec-xrootd>=0.5.3; python_version >= '3.10'",
@@ -38,7 +35,6 @@ xrootd = [
 ]
 all = [
     "rich-click>=1.7.0",
-    "textual>=8.2.3",
     "fsspec-xrootd>=0.5.1; python_version == '3.9'",
     "fsspec-xrootd>=0.5.3; python_version >= '3.10'",
     "xrootd>=5.9.2",

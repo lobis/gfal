@@ -28,8 +28,8 @@ def _find_binary(cmd: str) -> Optional[str]:
     """Locate the gfal binary, preferring the active venv over PATH.
 
     Using shutil.which() alone can pick up a system-installed binary whose
-    shebang points at a Python that lacks this project's dependencies (e.g.
-    textual).  The venv that runs pytest always has the right packages.
+    shebang points at a Python that lacks this project's dependencies. The
+    venv that runs pytest always has the right packages.
     """
     from pathlib import Path
 

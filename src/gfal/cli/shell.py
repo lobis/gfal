@@ -16,21 +16,6 @@ from gfal.cli import (
     tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict/token)
 )
 
-try:
-    import gfal.tui  # noqa: F401  – registers CommandTui subclass
-except ImportError:
-    # textual not installed — register a stub that prints a friendly error
-    class _CommandTuiStub(base.CommandBase):
-        @base.arg("src", nargs="?", help="source path")
-        @base.arg("dst", nargs="?", help="destination path")
-        def execute_tui(self):
-            """Launch the Text User Interface (requires gfal[tui])."""
-            sys.stderr.write(
-                "error: the TUI requires optional dependencies.\n"
-                "Install them with:  pip install 'gfal[tui]'\n"
-            )
-            sys.exit(1)
-
 
 def _ensure_xrootd_dylib_path():
     """macOS-only: ensure the pyxrootd plugin directory is in DYLD_LIBRARY_PATH.
