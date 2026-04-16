@@ -65,6 +65,7 @@ class CopyOptions:
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
+    preserve_times_explicit: bool = False  # True only when user passed --preserve-times
     compare: Optional[str] = None  # None | "size" | "size_mtime" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
@@ -279,6 +280,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> Any:
         def _runner() -> Any:
             try:
@@ -289,7 +291,7 @@ class AsyncGfalClient:
                     progress_callback,
                     start_callback,
                     warn_callback,
-                    None,
+                    cancel_event,
                 )
             except Exception as e:
                 raise self._map_error(e, src_url) from e
@@ -573,6 +575,7 @@ class AsyncGfalClient:
                 dst_url,
                 options,
                 warn_callback,
+                cancel_event,
             ):
                 return None
 
@@ -776,6 +779,7 @@ class AsyncGfalClient:
         dst_url: str,
         options: CopyOptions,
         warn_callback: WarnCallback = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> bool:
         compare = options.compare
         if compare is None:
@@ -833,8 +837,8 @@ class AsyncGfalClient:
             algorithm = "ADLER32"
             if options.checksum is not None:
                 algorithm = options.checksum.algorithm.upper()
-            src_checksum = checksum_fs(src_fs, src_path, algorithm)
-            dst_checksum = checksum_fs(dst_fs, dst_path, algorithm)
+            src_checksum = checksum_fs(src_fs, src_path, algorithm, cancel_event)
+            dst_checksum = checksum_fs(dst_fs, dst_path, algorithm, cancel_event)
             if src_checksum != dst_checksum:
                 return False
             if warn_callback is not None:
@@ -870,7 +874,7 @@ class AsyncGfalClient:
 
         dst_local = local_destination_path(dst_url, dst_path)
         if dst_local is None:
-            if warn_callback is not None:
+            if warn_callback is not None and options.preserve_times_explicit:
                 normalized = fs.normalize_url(dst_url)
                 scheme = urlparse(normalized).scheme.lower() or "unknown"
                 warn_callback(
@@ -1046,6 +1050,7 @@ class GfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> Any:
         return run_sync(
             self._async_client.copy,
@@ -1055,6 +1060,7 @@ class GfalClient:
             progress_callback=progress_callback,
             start_callback=start_callback,
             warn_callback=warn_callback,
+            cancel_event=cancel_event,
         )
 
     def start_copy(
@@ -1143,10 +1149,17 @@ def is_special_file(path: str) -> bool:
         return False
 
 
-def checksum_fs(fso: Any, path: str, algorithm: str) -> str:
+def checksum_fs(
+    fso: Any,
+    path: str,
+    algorithm: str,
+    cancel_event: Optional[threading.Event] = None,
+) -> str:
     hasher = make_hasher(algorithm)
     with fso.open(path, "rb") as handle:
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise GfalError("Transfer cancelled", errno.ECANCELED)
             chunk = handle.read(fs.CHUNK_SIZE)
             if not chunk:
                 break

@@ -11,7 +11,7 @@ import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -781,6 +781,7 @@ class CommandBase:
         self.err_console = get_console(stderr=True)
         self.params = None
         self.prog = None
+        self._cancel_event = Event()
 
     @contextlib.contextmanager
     def spinner(self, message):
