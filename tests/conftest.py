@@ -297,6 +297,39 @@ def _wait_for_https(url, timeout=10.0, method="HEAD"):
     return False
 
 
+def _find_xrdhttp_lib():
+    """Locate the XrdHttp shared library for XRootD HTTPS support.
+
+    Returns the path string to pass in ``xrd.protocol http:PORT <lib>``,
+    or None when the library cannot be found.
+    """
+    import ctypes.util
+    import sys
+
+    if sys.platform == "darwin":
+        # Homebrew on Apple Silicon / Intel
+        for candidate in (
+            "/opt/homebrew/lib/libXrdHttp-5.so",
+            "/usr/local/lib/libXrdHttp-5.so",
+        ):
+            if Path(candidate).exists():
+                return candidate
+    else:
+        # Linux — try the linker search path first, then common locations.
+        found = ctypes.util.find_library("XrdHttp-5")
+        if found:
+            return found
+        for candidate in (
+            "/lib/x86_64-linux-gnu/libXrdHttp-5.so",
+            "/usr/lib64/libXrdHttp-5.so",
+            "/usr/lib/libXrdHttp-5.so",
+        ):
+            if Path(candidate).exists():
+                return candidate
+
+    return None
+
+
 @pytest.fixture(scope="session")
 def xrootd_server(tmp_path_factory):
     """Start a local XRootD server (root:// + https://) for integration tests.
@@ -312,12 +345,12 @@ def xrootd_server(tmp_path_factory):
 
     xrootd_bin = shutil.which("xrootd")
     if xrootd_bin is None:
-        pytest.skip("xrootd binary not found; skipping XRootD server tests")
+        require_test_prereq(False, "xrootd binary not found")
 
     try:
         import fsspec_xrootd  # noqa: F401
     except ImportError:
-        pytest.skip("fsspec-xrootd not installed; skipping XRootD server tests")
+        require_test_prereq(False, "fsspec-xrootd not installed")
 
     base = tmp_path_factory.mktemp("xrootd")
     data_dir = base / "data"
@@ -364,11 +397,17 @@ def xrootd_server(tmp_path_factory):
         "sec.protbind * none",
     ]
     if has_tls:
-        cfg_lines += [
-            f"xrd.protocol http:{http_port} /opt/homebrew/lib/libXrdHttp-5.so",
-            f"http.cert {cert_pem}",
-            f"http.key {key_pem}",
-        ]
+        # Find the XrdHttp shared library.  On macOS (Homebrew) it lives under
+        # /opt/homebrew/lib; on Linux it is in the standard system library path.
+        xrdhttp_lib = _find_xrdhttp_lib()
+        if xrdhttp_lib is None:
+            has_tls = False
+        else:
+            cfg_lines += [
+                f"xrd.protocol http:{http_port} {xrdhttp_lib}",
+                f"http.cert {cert_pem}",
+                f"http.key {key_pem}",
+            ]
 
     cfg_file = cfg_dir / "xrootd.cfg"
     cfg_file.write_text("\n".join(cfg_lines) + "\n")
@@ -382,7 +421,11 @@ def xrootd_server(tmp_path_factory):
 
     if not _wait_for_port("localhost", xroot_port, timeout=10.0):
         proc.kill()
-        pytest.skip("XRootD server did not start in time")
+        log_content = log_file.read_text() if log_file.exists() else "(no log)"
+        require_test_prereq(
+            False,
+            f"XRootD server did not start in time.\nLog:\n{log_content}",
+        )
 
     https_url = None
     if has_tls:

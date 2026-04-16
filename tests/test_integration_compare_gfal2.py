@@ -126,7 +126,8 @@ class TestLegacyGfal2Runtime:
             )
         assert ok, reason
 
-    def test_copy_does_not_preserve_mtime(self):
+    def test_copy_preserves_mtime_by_default(self):
+        """New gfal cp preserves mtime by default (--preserve-times defaults on)."""
         new_cmd = (
             "cp -r /repo /tmp/gfal-src && "
             "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
@@ -134,8 +135,10 @@ class TestLegacyGfal2Runtime:
         )
         rc_new, new_preserved, err_new = _copy_preserves_mtime_in_docker(new_cmd)
         assert rc_new == 0, err_new
-        assert not new_preserved
+        assert new_preserved
 
+    def test_legacy_copy_does_not_preserve_mtime(self):
+        """Legacy gfal2-util gfal-copy does NOT preserve mtime by default."""
         _xfail_if_legacy_unusable()
         rc_old, old_preserved, err_old = _copy_preserves_mtime_in_docker(
             "GFAL_PYTHONBIN=/usr/bin/python3.9 "
