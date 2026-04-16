@@ -1,5 +1,6 @@
 """Tests for gfal-cp / gfal-copy — mirrors reference gfal2-util/test/functional/test_copy.py."""
 
+import errno
 import hashlib
 import os
 import zlib
@@ -193,10 +194,36 @@ class TestCopyToDirectory:
 
 
 class TestCopyOverwrite:
-    # --- --compare size (default) -------------------------------------------
+    # --- default (no --compare) ----------------------------------------------
 
-    def test_size_default_skips_when_size_matches(self, tmp_path):
-        """Default (size): same size → skip, regardless of content or mtime."""
+    def test_default_no_compare_errors_when_dst_exists(self, tmp_path):
+        """Default (no --compare): destination exists → error (EEXIST), not skipped."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"hello")
+        dst.write_bytes(b"hello")
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == errno.EEXIST
+        assert "Skipping existing file" not in out
+        assert dst.read_bytes() == b"hello"
+
+    def test_default_no_compare_copies_when_dst_absent(self, tmp_path):
+        """Default (no --compare): destination does not exist → copy succeeds."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"hello")
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"hello"
+
+    # --- --compare size ------------------------------------------------------
+
+    def test_size_skips_when_size_matches(self, tmp_path):
+        """--compare size: same size → skip, regardless of content or mtime."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"same content")
@@ -205,51 +232,39 @@ class TestCopyOverwrite:
         os.utime(src, (1_000_000_000, 1_000_000_000))
         os.utime(dst, (2_000_000_000, 2_000_000_000))
 
-        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", "--compare", "size", src.as_uri(), dst.as_uri())
 
         assert rc == 0
         assert "Skipping existing file" in out
         assert dst.read_bytes() == b"same content"
 
-    def test_size_default_skips_same_size_different_content(self, tmp_path):
-        """Default (size): same size but different bytes → skip (size-only is a
+    def test_size_skips_same_size_different_content(self, tmp_path):
+        """--compare size: same size but different bytes → skip (size-only is a
         false-positive here; use --compare checksum for content accuracy)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"AAAA")
         dst.write_bytes(b"BBBB")  # same length, different content
 
-        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", "--compare", "size", src.as_uri(), dst.as_uri())
 
         assert rc == 0
         assert "Skipping existing file" in out
         # dst is NOT overwritten because size matched
         assert dst.read_bytes() == b"BBBB"
 
-    def test_size_default_copies_when_size_differs(self, tmp_path):
-        """Default (size): different size → copy (overwrite)."""
+    def test_size_copies_when_size_differs(self, tmp_path):
+        """--compare size: different size → copy (overwrite)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new longer content")
         dst.write_bytes(b"old")
 
-        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", "--compare", "size", src.as_uri(), dst.as_uri())
 
         assert rc == 0
         assert dst.read_bytes() == b"new longer content"
         assert "Skipping existing file" not in out
-
-    def test_size_explicit_flag_same_as_default(self, tmp_path):
-        """--compare size is explicit and behaves identically to the default."""
-        src = tmp_path / "src.txt"
-        dst = tmp_path / "dst.txt"
-        src.write_bytes(b"hello")
-        dst.write_bytes(b"hello")
-
-        rc, out, err = run_gfal("cp", "--compare", "size", src.as_uri(), dst.as_uri())
-
-        assert rc == 0
-        assert "Skipping existing file" in out
 
     # --- --compare size_mtime -----------------------------------------------
 

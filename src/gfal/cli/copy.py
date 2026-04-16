@@ -61,12 +61,13 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--compare",
         type=str,
-        default="size",
+        default=None,
         choices=["size", "size_mtime", "checksum", "none"],
         help="when destination exists and --force is not set, how to decide whether "
-        "to skip: size (default) = compare file size only, "
+        "to skip: size = compare file size only, "
         "size_mtime = compare both size and mtime, "
-        "checksum = compare checksums, none = skip unconditionally without any checks",
+        "checksum = compare checksums, none = skip unconditionally without any checks. "
+        "Default (unset): error if destination exists",
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"

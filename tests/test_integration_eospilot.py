@@ -379,8 +379,8 @@ class TestEosPilotStreamingCopy:
         assert str(len(data)) in out
 
     def test_no_overwrite_without_force(self, proxy_cert, pilot_dir, tmp_path):
-        """Default quick compare copies when mtime differs; --compare none skips always;
-        --compare checksum skips when content matches."""
+        """Without -f and no --compare, cp to an existing dst returns EEXIST (17).
+        --compare none skips always; --compare checksum skips when content matches."""
         src = tmp_path / "overwrite_src.bin"
         src.write_bytes(b"original")
         dst = f"{pilot_dir}/overwrite_test.bin"
@@ -389,12 +389,15 @@ class TestEosPilotStreamingCopy:
         rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
         assert rc == 0, err
 
-        # Default quick compare: EOS sets its own mtime, so local mtime != remote
-        # mtime → quick compare sees a difference → file is overwritten (rc=0)
+        # Default (no --compare): EEXIST (17) — destination already exists
         rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
-        assert rc == 0, (
-            f"Expected quick compare to copy (mtime differs on remote): {err}"
+        assert rc == 17, (
+            f"Expected EEXIST (17) when dst exists and no --compare set: {err}"
         )
+
+        # Re-upload using -f so subsequent steps have a known remote state
+        rc, out, err = _run("cp", proxy_cert, "-f", src.as_uri(), dst)
+        assert rc == 0, err
 
         # --compare none: always skips without any check (rc=0, content unchanged)
         src_v2 = tmp_path / "overwrite_src_v2.bin"
