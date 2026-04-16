@@ -7,6 +7,18 @@ from pathlib import Path
 
 import pytest
 
+CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
+
+
+def require_test_prereq(condition: bool, reason: str) -> None:
+    """Skip locally when a test prereq is missing, but fail in CI."""
+    if condition:
+        return
+    if CI:
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
 # ---------------------------------------------------------------------------
 # Retry hook: automatically rerun any test tagged @pytest.mark.network
 # ---------------------------------------------------------------------------

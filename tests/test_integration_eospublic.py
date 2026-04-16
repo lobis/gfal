@@ -29,6 +29,7 @@ import socket
 
 import pytest
 
+from conftest import CI, require_test_prereq
 from helpers import run_gfal
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ def _tcp_reachable(host: str, port: int, timeout: float = 5.0) -> bool:
 
 
 requires_http = pytest.mark.skipif(
-    not _tcp_reachable(_HTTP_HOST, _HTTP_PORT),
+    not _tcp_reachable(_HTTP_HOST, _HTTP_PORT) and not CI,
     reason=f"{_HTTP_HOST}:{_HTTP_PORT} not reachable",
 )
 
@@ -64,9 +65,29 @@ def _xrootd_available() -> bool:
 
 
 requires_xrootd = pytest.mark.skipif(
-    not _tcp_reachable(_HTTP_HOST, _XROOTD_PORT) or not _xrootd_available(),
+    (not _tcp_reachable(_HTTP_HOST, _XROOTD_PORT) or not _xrootd_available())
+    and not CI,
     reason=f"XRootD not available (port {_XROOTD_PORT} unreachable or xrootd package not installed)",
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _require_ci_eospublic_prereqs():
+    if not CI:
+        return
+    require_test_prereq(
+        _tcp_reachable(_HTTP_HOST, _HTTP_PORT),
+        f"{_HTTP_HOST}:{_HTTP_PORT} not reachable",
+    )
+    require_test_prereq(
+        _tcp_reachable(_HTTP_HOST, _XROOTD_PORT),
+        f"{_HTTP_HOST}:{_XROOTD_PORT} not reachable",
+    )
+    require_test_prereq(
+        _xrootd_available(),
+        "XRootD Python bindings are not installed for eospublic integration tests",
+    )
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 

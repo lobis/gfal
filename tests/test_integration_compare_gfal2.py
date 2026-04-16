@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 
+from conftest import CI, require_test_prereq
 from helpers import (
     _docker_run_command,
     docker_available,
@@ -56,7 +57,7 @@ def _skip_if_known_public_http_flake(rc: int, err: str):
         or "connection reset by peer" in lowered
         or "result (neon)" in lowered
     ):
-        pytest.skip(f"Known flaky public HTTP transport failure in CI: {err}")
+        require_test_prereq(False, f"Known flaky public HTTP transport failure: {err}")
 
 
 def _unique_pilot_path(stem: str) -> str:
@@ -106,10 +107,11 @@ cat /tmp/copy.err
 
 
 requires_docker = pytest.mark.skipif(
-    not docker_available(), reason="Docker image xrootd-cern-test not available"
+    not docker_available() and not CI,
+    reason="Docker image xrootd-cern-test not available",
 )
 requires_proxy = pytest.mark.skipif(
-    _find_proxy() is None,
+    _find_proxy() is None and not CI,
     reason="No X.509 proxy found (set X509_USER_PROXY or run voms-proxy-init)",
 )
 
@@ -119,7 +121,9 @@ class TestLegacyGfal2Runtime:
     def test_legacy_probe_reports_usable_runtime(self):
         ok, reason = _legacy_gfal2_probe()
         if not ok and "gfal-stat: command not found" in reason.lower():
-            pytest.skip("Legacy gfal2-utils are not installed in this Docker image")
+            require_test_prereq(
+                False, "Legacy gfal2-utils are not installed in this Docker image"
+            )
         assert ok, reason
 
     def test_copy_does_not_preserve_mtime(self):

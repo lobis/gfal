@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import CI, require_test_prereq
 from helpers import _docker_run_command, docker_available, run_gfal, run_gfal_docker
 
 pytestmark = [pytest.mark.integration, pytest.mark.network]
@@ -94,17 +95,18 @@ def _eospilot_reachable():
 
 
 requires_eospilot = pytest.mark.skipif(
-    not _eospilot_reachable(),
+    not _eospilot_reachable() and not CI,
     reason="eospilot.cern.ch:443 not reachable",
 )
 
 requires_proxy = pytest.mark.skipif(
-    _find_proxy() is None,
+    _find_proxy() is None and not CI,
     reason="No X.509 proxy found (set X509_USER_PROXY or run voms-proxy-init)",
 )
 
 requires_docker = pytest.mark.skipif(
-    not docker_available(), reason="Docker image xrootd-cern-test not available"
+    not docker_available() and not CI,
+    reason="Docker image xrootd-cern-test not available",
 )
 
 # ---------------------------------------------------------------------------
@@ -116,8 +118,10 @@ requires_docker = pytest.mark.skipif(
 def proxy_cert():
     """Return the path to the X.509 proxy certificate."""
     path = _find_proxy()
-    if path is None:
-        pytest.skip("No X.509 proxy found")
+    require_test_prereq(
+        path is not None,
+        "No X.509 proxy found (set X509_USER_PROXY or provision the CI proxy)",
+    )
     return path
 
 
@@ -127,8 +131,7 @@ def pilot_dir(proxy_cert):
     name = f"pytest-{uuid.uuid4().hex[:8]}"
     url = f"{_PILOT_BASE}/{name}"
     rc, out, err = run_gfal("mkdir", "-E", proxy_cert, "--no-verify", url)
-    if rc != 0:
-        pytest.skip(f"Could not create pilot_dir {url}: {err.strip()}")
+    require_test_prereq(rc == 0, f"Could not create pilot_dir {url}: {err.strip()}")
     yield url
     # Cleanup — ignore errors
     run_gfal("rm", "-r", "-E", proxy_cert, "--no-verify", url)
@@ -1015,7 +1018,7 @@ def _xrootd_gsi_native() -> bool:
 
 
 requires_xrootd_env = pytest.mark.skipif(
-    not docker_available() and not _xrootd_gsi_native(),
+    (not docker_available() and not _xrootd_gsi_native()) and not CI,
     reason=(
         "XRootD GSI tests require either the xrootd-cern-test Docker image "
         "or Linux with /etc/grid-security/certificates (XRD_CADIR) set up"
@@ -1060,8 +1063,9 @@ class TestEosPilotXrootd:
         https_url = f"{_PILOT_BASE}/{name}"
         xrd_url = f"{self._XROOTD_BASE}/{name}"
         rc, out, err = run_gfal("mkdir", "-E", proxy_cert, "--no-verify", https_url)
-        if rc != 0:
-            pytest.skip(f"Could not create xrootd_pilot_dir: {err.strip()}")
+        require_test_prereq(
+            rc == 0, f"Could not create xrootd_pilot_dir: {err.strip()}"
+        )
         yield xrd_url
         run_gfal("rm", "-r", "-E", proxy_cert, "--no-verify", https_url)
 
