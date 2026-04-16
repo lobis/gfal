@@ -509,27 +509,6 @@ class AsyncGfalClient:
         if dst_exists and not dst_isdir and src_isdir:
             raise IsADirectoryError("Cannot copy a directory over a file")
 
-        if (
-            not options.just_copy
-            and dst_exists
-            and not dst_isdir
-            and not options.overwrite
-            and not is_special_file(dst_path)
-        ):
-            if self._existing_file_matches_source(
-                src_fs,
-                src_path,
-                dst_fs,
-                dst_path,
-                dst_url,
-                options,
-                warn_callback,
-            ):
-                return None
-            raise GfalFileExistsError(
-                f"Destination {dst_url} exists and overwrite is not set"
-            )
-
         if src_isdir:
             if not options.recursive:
                 if warn_callback is not None:
@@ -564,6 +543,35 @@ class AsyncGfalClient:
         if dst_isdir:
             dst_url = dst_url.rstrip("/") + "/" + Path(src_path.rstrip("/")).name
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+            dst_exists = False
+            dst_isdir = False
+            try:
+                dst_info = dst_fs.info(dst_path)
+                dst_exists = True
+                dst_isdir = StatResult.from_info(dst_info).is_dir()
+            except Exception:
+                pass
+
+        if (
+            not options.just_copy
+            and dst_exists
+            and not dst_isdir
+            and not options.overwrite
+            and not is_special_file(dst_path)
+        ):
+            if self._existing_file_matches_source(
+                src_fs,
+                src_path,
+                dst_fs,
+                dst_path,
+                dst_url,
+                options,
+                warn_callback,
+            ):
+                return None
+            raise GfalFileExistsError(
+                f"Destination {dst_url} exists and overwrite is not set"
+            )
 
         tpc_supported = tpc_applicable(src_url, dst_url)
         explicit_tpc = options.tpc in {"auto", "only"} and tpc_supported

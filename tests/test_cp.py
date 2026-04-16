@@ -499,6 +499,50 @@ class TestCopyFromFile:
         assert rc == 0
         assert (dstdir / "src.txt").read_bytes() == b"data"
 
+    def test_from_file_skip_if_same_skips_existing_match_in_directory(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"same content")
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+        (dstdir / "src.txt").write_bytes(b"same content")
+
+        sources_file = tmp_path / "sources.txt"
+        sources_file.write_text(f"{src.as_uri()}\n")
+
+        rc, out, err = run_gfal(
+            "cp",
+            "--from-file",
+            str(sources_file),
+            "--skip-if-same",
+            dstdir.as_uri(),
+        )
+
+        assert rc == 0
+        assert (dstdir / "src.txt").read_bytes() == b"same content"
+        assert "matching ADLER32 checksum" in out
+
+    def test_from_file_skip_if_same_fails_on_mismatch_in_directory(self, tmp_path):
+        src = tmp_path / "src.txt"
+        src.write_bytes(b"new content")
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+        (dstdir / "src.txt").write_bytes(b"old content")
+
+        sources_file = tmp_path / "sources.txt"
+        sources_file.write_text(f"{src.as_uri()}\n")
+
+        rc, out, err = run_gfal(
+            "cp",
+            "--from-file",
+            str(sources_file),
+            "--skip-if-same",
+            dstdir.as_uri(),
+        )
+
+        assert rc == 17
+        assert (dstdir / "src.txt").read_bytes() == b"old content"
+        assert "exists and overwrite is not set" in err
+
 
 # ---------------------------------------------------------------------------
 # --abort-on-failure

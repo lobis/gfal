@@ -35,6 +35,7 @@ import socket
 import sys
 import textwrap
 import uuid
+import zlib
 from pathlib import Path
 
 import pytest
@@ -234,6 +235,61 @@ def _preserve_times_cleanup(kind, url):
     return f"gfal rm -t 20 --no-verify '{url}' >/dev/null 2>/dev/null || true\n"
 
 
+def _batch_copy_payloads():
+    """Return ten deterministic file payloads covering varied local-file cases."""
+    return [
+        ("batch_00_empty.bin", b""),
+        ("batch_01_one_byte.bin", b"x"),
+        ("batch_02_text.txt", b"hello from gfal\n"),
+        ("batch_03_lines.txt", b"line one\nline two\nline three\n"),
+        ("batch_04_binary.bin", bytes(range(32))),
+        ("batch_05_nulls.bin", b"\x00\x01\x00\x02" * 32),
+        ("batch_06_chunk_edge.bin", b"A" * 4097),
+        ("batch_07_medium.bin", b"medium-payload-" * 4096),
+        ("batch_08_ascii.txt", b"The quick brown fox jumps over the lazy dog.\n" * 16),
+        ("batch_09_repeated.bin", bytes(range(256)) * 32),
+    ]
+
+
+def _adler32_hex(data):
+    """Return lowercase ADLER32 in the same hex form gfal prints."""
+    return f"{zlib.adler32(data) & 0xFFFFFFFF:08x}"
+
+
+def _write_batch_sources(tmp_path):
+    """Create the deterministic 10-file batch locally and return metadata."""
+    records = []
+    for name, data in _batch_copy_payloads():
+        path = tmp_path / name
+        path.write_bytes(data)
+        records.append(
+            {
+                "name": name,
+                "path": path,
+                "uri": path.as_uri(),
+                "data": data,
+                "adler32": _adler32_hex(data),
+            }
+        )
+    return records
+
+
+def _write_sources_file(tmp_path, records):
+    """Write a --from-file source list for the provided local records."""
+    sources = tmp_path / "sources.txt"
+    sources.write_text("\n".join(record["uri"] for record in records) + "\n")
+    return sources
+
+
+def _verify_remote_batch(proxy_cert, pilot_dir, records):
+    """Verify every remote file exists and matches the local ADLER32 checksum."""
+    for record in records:
+        remote = f"{pilot_dir}/{record['name']}"
+        rc, out, err = _run("sum", proxy_cert, remote, "ADLER32")
+        assert rc == 0, f"checksum failed for {record['name']}: {err}"
+        assert record["adler32"] in out.lower(), out
+
+
 # ---------------------------------------------------------------------------
 # TestEosPilotStreamingCopy
 # ---------------------------------------------------------------------------
@@ -375,6 +431,115 @@ class TestEosPilotStreamingCopy:
             dst = f"{pilot_dir}/multi_{i}.bin"
             rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
             assert rc == 0, f"file {i} failed: {err}"
+
+    def test_copy_ten_local_files_from_file_with_checksum(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """Batch-upload 10 local files to EOS and verify checksum-checked success."""
+        records = _write_batch_sources(tmp_path)
+        sources_file = _write_sources_file(tmp_path, records)
+
+        rc, _out, err = _run(
+            "cp",
+            proxy_cert,
+            "--from-file",
+            str(sources_file),
+            "-K",
+            "ADLER32",
+            pilot_dir,
+        )
+
+        assert rc == 0, err
+        _verify_remote_batch(proxy_cert, pilot_dir, records)
+
+    def test_copy_ten_files_skip_if_same_with_existing_matches(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """Existing matching remote files should be skipped while missing ones are copied."""
+        records = _write_batch_sources(tmp_path)
+        sources_file = _write_sources_file(tmp_path, records)
+        existing = records[:4]
+
+        for record in existing:
+            rc, out, err = _run(
+                "cp",
+                proxy_cert,
+                record["uri"],
+                f"{pilot_dir}/{record['name']}",
+            )
+            assert rc == 0, err
+
+        rc, out, err = _run(
+            "cp",
+            proxy_cert,
+            "--from-file",
+            str(sources_file),
+            "--skip-if-same",
+            pilot_dir,
+        )
+
+        assert rc == 0, err
+        for record in existing:
+            assert record["name"] in out
+            assert "matching ADLER32 checksum" in out
+        _verify_remote_batch(proxy_cert, pilot_dir, records)
+
+    def test_copy_ten_files_skip_if_same_fails_on_checksum_mismatch(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """A pre-existing remote file with the wrong checksum should make the batch fail."""
+        records = _write_batch_sources(tmp_path)
+        sources_file = _write_sources_file(tmp_path, records)
+        matching = records[:3]
+        mismatched = records[3]
+        absent = records[4:]
+
+        for record in matching:
+            rc, out, err = _run(
+                "cp",
+                proxy_cert,
+                record["uri"],
+                f"{pilot_dir}/{record['name']}",
+            )
+            assert rc == 0, err
+
+        wrong_local = tmp_path / "wrong_checksum.bin"
+        wrong_local.write_bytes(b"remote checksum mismatch\n")
+        rc, out, err = _run(
+            "cp",
+            proxy_cert,
+            wrong_local.as_uri(),
+            f"{pilot_dir}/{mismatched['name']}",
+        )
+        assert rc == 0, err
+
+        wrong_checksum = _adler32_hex(wrong_local.read_bytes())
+        rc, out, err = _run(
+            "cp",
+            proxy_cert,
+            "--from-file",
+            str(sources_file),
+            "--skip-if-same",
+            pilot_dir,
+        )
+
+        assert rc != 0
+        assert mismatched["name"] in err
+        assert "exists and overwrite is not set" in err
+        for record in matching:
+            assert record["name"] in out
+            assert "matching ADLER32 checksum" in out
+
+        remote_mismatch = f"{pilot_dir}/{mismatched['name']}"
+        rc, out, err = _run("sum", proxy_cert, remote_mismatch, "ADLER32")
+        assert rc == 0, err
+        assert wrong_checksum in out.lower(), out
+
+        for record in absent:
+            remote = f"{pilot_dir}/{record['name']}"
+            rc, out, err = _run("sum", proxy_cert, remote, "ADLER32")
+            assert rc == 0, f"missing copied file {record['name']}: {err}"
+            assert record["adler32"] in out.lower(), out
 
     def test_copy_preserves_binary_content(self, proxy_cert, pilot_dir, tmp_path):
         """Binary data including null bytes should survive the round-trip."""
