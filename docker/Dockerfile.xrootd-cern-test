@@ -75,10 +75,7 @@ RUN mkdir -p /etc/grid-security/certificates \
     && update-ca-trust \
     && rm -f /tmp/cern-*.pem /tmp/cern-*.der
 
-# Install xrootd Python bindings, gfal runtime deps, and the temporary
-# fsspec-xrootd fork explicitly. The package metadata must stay PyPI-safe, so
-# the test image owns the fork installation instead of relying on pyproject
-# direct references.
+# Install xrootd Python bindings, gfal runtime deps, and fsspec-xrootd from PyPI.
 RUN python3.12 -m pip install --no-cache-dir \
         xrootd \
         "fsspec>=2023.1.0" \
@@ -87,8 +84,7 @@ RUN python3.12 -m pip install --no-cache-dir \
         truststore \
         "rich>=13.0.0" \
         "click>=8.0.0" \
-    && python3.12 -m pip install --no-cache-dir --no-deps \
-        "git+https://github.com/scikit-hep/fsspec-xrootd.git@gfal3-updates"
+        "fsspec-xrootd>=0.5.3"
 
 # Make python3.12 the default python3 so that run_gfal_docker scripts work.
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
