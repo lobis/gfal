@@ -26,12 +26,13 @@ requirements:
     - aiohttp >=3.8.0
     - click >=8.0.0
     - fsspec >=2023.1.0
-    - fsspec-xrootd >=0.5.1
+    - fsspec-xrootd >=0.5.1  # [py==39]
+    - fsspec-xrootd >=0.5.3  # [py>=310]
     - python >=3.9
     - rich >=13.0.0
     - truststore  # [py>=310]
     - urllib3 >=2.0.0
-    - xrootd >=5.9.1
+    - xrootd >=5.9.2
 
 test:
   imports:

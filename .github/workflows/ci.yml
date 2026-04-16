@@ -1012,6 +1012,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [ build-conda, test-conda-install ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
     steps:
@@ -1097,9 +1099,11 @@ jobs:
 
   verify-deployment:
     name: Verify Deployment 🔍 (${{ matrix.target.name }})
-    needs: [ update-repo, publish-to-pypi, github-release ]
+    needs: [ update-repo, publish-to-pypi, publish-conda, github-release ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    env:
+      ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -1162,7 +1166,11 @@ jobs:
             done
     container: ${{ matrix.target.container }}
     steps:
+    - name: Skip Conda verification when upload is unavailable
+      if: matrix.target.name == 'Conda' && env.ANACONDA_API_TOKEN == ''
+      run: echo "ANACONDA_API_TOKEN is not configured; skipping Conda verification."
     - name: Install and Verify
+      if: matrix.target.name != 'Conda' || env.ANACONDA_API_TOKEN != ''
       run: |
         EXPECTED_VERSION=${{ github.ref_name }}
         EXPECTED_VERSION=${EXPECTED_VERSION#v}
