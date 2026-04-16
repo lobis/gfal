@@ -328,15 +328,19 @@ def _argspec_to_click_option(args, kwargs):
         }
 
     if action == "store_false":
-        # When flag is present → False; absent → True (default)
+        # Treat like store_const with const=False.  Click's ``flag_value``
+        # parameter does not reliably invert a boolean default, so we reuse
+        # the ``const_option`` machinery which already handles "set *dest*
+        # to *const* when the flag is present".
         click_kw["is_flag"] = True
-        click_kw["flag_value"] = False
-        click_kw["default"] = default if default is not None else True
+        click_kw["default"] = False
+        click_kw["hidden"] = True
         return {
-            "kind": "option",
+            "kind": "const_option",
             "param_decls": option_names,
             "click_kw": click_kw,
             "dest": dest,
+            "const": False,
         }
 
     if action == "store_const":

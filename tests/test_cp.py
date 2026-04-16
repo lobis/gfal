@@ -66,6 +66,78 @@ class TestCopyBasic:
         assert rc == 0
         assert int(dst.stat().st_mtime) == 946684800
 
+    def test_copy_preserve_times_explicit_flag(self, tmp_path):
+        """Explicit --preserve-times flag also works."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        rc, out, err = run_gfal("cp", "--preserve-times", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) == 946684800
+
+    def test_copy_preserve_times_atime_and_mtime(self, tmp_path):
+        """Both atime and mtime are set based on the source mtime.
+
+        Note: fsspec's LocalFileSystem does not report ``atime``, so the
+        preserved atime equals the source mtime (best-effort).
+        """
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("data")
+        os.utime(src, (1000000000, 1100000000))
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        st = dst.stat()
+        assert int(st.st_mtime) == 1100000000
+        # atime falls back to mtime when the source fs doesn't report atime
+        assert int(st.st_atime) == 1100000000
+
+    def test_copy_preserve_times_recent_timestamp(self, tmp_path):
+        """Recent timestamps are also preserved (not just old ones)."""
+        import time
+
+        recent = int(time.time()) - 3600  # one hour ago
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("recent")
+        os.utime(src, (recent, recent))
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) == recent
+
+    def test_copy_preserve_times_to_directory(self, tmp_path):
+        """Times are preserved when copying to a directory target."""
+        src = tmp_path / "src.txt"
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        rc, out, err = run_gfal("cp", src.as_uri(), dstdir.as_uri())
+
+        assert rc == 0
+        assert int((dstdir / "src.txt").stat().st_mtime) == 946684800
+
+    def test_copy_preserve_times_overwrite(self, tmp_path):
+        """Times are preserved when overwriting with --force."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        dst.write_text("old")
+        os.utime(src, (946684800, 946684800))
+
+        rc, out, err = run_gfal("cp", "-f", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) == 946684800
+
     def test_copy_no_preserve_times_file(self, tmp_path):
         """--no-preserve-times disables mtime preservation."""
         src = tmp_path / "src.txt"
@@ -474,6 +546,41 @@ class TestCopyRecursive:
         assert int((dstdir / "sub" / "child.txt").stat().st_mtime) == 981173100
         assert int((dstdir / "sub").stat().st_mtime) == 946684740
         assert int(dstdir.stat().st_mtime) == 946684680
+
+    def test_recursive_preserve_times_explicit(self, tmp_path):
+        """Explicit --preserve-times flag works with recursive copy."""
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        f = srcdir / "a.txt"
+        f.write_text("a")
+        os.utime(f, (946684800, 946684800))
+        os.utime(srcdir, (946684800, 946684800))
+        dstdir = tmp_path / "dstdir"
+
+        rc, out, err = run_gfal(
+            "cp", "-r", "--preserve-times", srcdir.as_uri(), dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert int((dstdir / "a.txt").stat().st_mtime) == 946684800
+        assert int(dstdir.stat().st_mtime) == 946684800
+
+    def test_recursive_no_preserve_times(self, tmp_path):
+        """--no-preserve-times disables mtime preservation for recursive copy."""
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        f = srcdir / "a.txt"
+        f.write_text("a")
+        os.utime(f, (946684800, 946684800))
+        os.utime(srcdir, (946684800, 946684800))
+        dstdir = tmp_path / "dstdir"
+
+        rc, out, err = run_gfal(
+            "cp", "-r", "--no-preserve-times", srcdir.as_uri(), dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert int((dstdir / "a.txt").stat().st_mtime) != 946684800
 
     def test_dir_skipped_without_recursive(self, tmp_path):
         """Reference: test_copy_dir — copying a directory without -r is skipped."""
