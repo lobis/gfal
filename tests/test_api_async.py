@@ -159,7 +159,7 @@ async def test_async_copy_remote_preserve_times_warns(monkeypatch, tmp_path):
     await client.copy(
         src.as_uri(),
         "https://example.com/file.txt",
-        options=CopyOptions(preserve_times=True),
+        options=CopyOptions(preserve_times=True, preserve_times_explicit=True),
         warn_callback=warnings.append,
     )
 
