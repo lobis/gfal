@@ -65,6 +65,7 @@ class CopyOptions:
     recursive: bool = False
     preserve_times: bool = False
     skip_if_same: bool = False
+    ignore_existing: bool = False
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
@@ -559,6 +560,10 @@ class AsyncGfalClient:
             and not options.overwrite
             and not is_special_file(dst_path)
         ):
+            if options.ignore_existing:
+                if warn_callback is not None:
+                    warn_callback(f"Skipping existing file {dst_url} (--ignore-existing)")
+                return None
             if self._existing_file_matches_source(
                 src_fs,
                 src_path,

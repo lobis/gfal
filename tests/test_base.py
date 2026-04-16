@@ -100,7 +100,7 @@ class TestCommandBase:
         assert len(subs) >= 4
 
     def test_common_args_present(self, tmp_path):
-        """All commands should accept -v, -t, -E, --key, --log-file, --no-verify."""
+        """All commands should accept -v/-q, -t, -E, --key, --log-file, --no-verify."""
         from helpers import run_gfal
 
         f = tmp_path / "test.txt"
@@ -108,6 +108,10 @@ class TestCommandBase:
 
         # -v should not cause an error
         rc, out, err = run_gfal("stat", "-v", f.as_uri())
+        assert rc == 0
+
+        # -q should not cause an error
+        rc, out, err = run_gfal("stat", "-q", f.as_uri())
         assert rc == 0
 
     def test_timeout_arg(self, tmp_path):

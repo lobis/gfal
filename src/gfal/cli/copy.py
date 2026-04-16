@@ -68,6 +68,11 @@ class CommandCopy(base.CommandBase):
         "and skip the copy if source and destination already match",
     )
     @base.arg(
+        "--ignore-existing",
+        action="store_true",
+        help="when destination exists, skip copying without performing any checks",
+    )
+    @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
     )
     @base.arg(
@@ -230,10 +235,11 @@ class CommandCopy(base.CommandBase):
         }
         for flag, val in _ignored.items():
             if val is not None:
-                sys.stderr.write(
-                    f"{self.prog}: warning: {flag} is not supported in this "
-                    "implementation and will be ignored\n"
-                )
+                if not self._is_quiet():
+                    sys.stderr.write(
+                        f"{self.prog}: warning: {flag} is not supported in this "
+                        "implementation and will be ignored\n"
+                    )
 
         opts = fs.build_storage_options(self.params)
         self._preserve_times_warned = set()
@@ -338,6 +344,7 @@ class CommandCopy(base.CommandBase):
             recursive=getattr(self.params, "recursive", False),
             preserve_times=getattr(self.params, "preserve_times", False),
             skip_if_same=getattr(self.params, "skip_if_same", False),
+            ignore_existing=getattr(self.params, "ignore_existing", False),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),
             no_delegation=getattr(self.params, "no_delegation", False),
@@ -412,7 +419,8 @@ class CommandCopy(base.CommandBase):
                 pass
 
         src_size = None
-        show_progress = sys.stdout.isatty() and not self.params.verbose
+        quiet = self._is_quiet()
+        show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
         progress_started = [False]
         transfer_start = time.monotonic()
 
@@ -430,7 +438,8 @@ class CommandCopy(base.CommandBase):
                 self.progress_bar.update(total_size=src_size if src_size else None)
                 self.progress_bar.start()
             else:
-                print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+                if not quiet:
+                    print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
 
         def _progress(bytes_transferred):
             _start_progress()
@@ -442,6 +451,8 @@ class CommandCopy(base.CommandBase):
                 )
 
         def _warn(message):
+            if quiet:
+                return
             if message.startswith("Skipping existing file ") or message.startswith(
                 "Skipping directory "
             ):

@@ -341,7 +341,14 @@ def _argspec_to_click_argument(args, kwargs, has_preceding_optional=False):
     }
 
 
-_COMMON_GENERAL_OPTS = ["--help", "--version", "--verbose", "--timeout", "--log-file"]
+_COMMON_GENERAL_OPTS = [
+    "--help",
+    "--version",
+    "--verbose",
+    "--quiet",
+    "--timeout",
+    "--log-file",
+]
 _COMMON_AUTH_OPTS = ["--cert", "--key", "--no-verify"]
 _COMMON_COMPAT_OPTS = ["--definition", "--client-info", "--ipv4", "--ipv6"]
 
@@ -354,6 +361,7 @@ _COMMAND_OPTION_GROUPS: dict[str, list[dict]] = {
             "name": "Copy Options",
             "options": [
                 "--force",
+                "--ignore-existing",
                 "--parent",
                 "--recursive",
                 "--from-file",
@@ -550,6 +558,12 @@ def _build_common_params():
             help="Enable verbose mode (-v warnings, -vv info, -vvv debug).",
         ),
         click.Option(
+            ["-q", "--quiet"],
+            is_flag=True,
+            default=False,
+            help="Suppress warnings and informational messages; only errors are shown.",
+        ),
+        click.Option(
             ["-t", "--timeout"],
             type=int,
             default=1800,
@@ -651,7 +665,7 @@ class CommandBase:
         """Displays a rich status spinner for blocking operations.
         Quiet in GFAL2 compat mode.
         """
-        if is_gfal2_compat():
+        if is_gfal2_compat() or self._is_quiet():
             yield
         else:
             with self.err_console.status(message) as status:
@@ -666,9 +680,12 @@ class CommandBase:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _setup_logger(level, log_file):
+    def _setup_logger(level, log_file, quiet=False):
         level = max(0, min(3, level))
-        log_level = logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
+        if quiet:
+            log_level = logging.ERROR
+        else:
+            log_level = logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
 
         root = logging.getLogger()
         root.setLevel(log_level)
@@ -681,6 +698,9 @@ class CommandBase:
         fmt = logging.Formatter("%(levelname)s %(name)s: %(message)s")
         handler.setFormatter(fmt)
         root.addHandler(handler)
+
+    def _is_quiet(self):
+        return bool(getattr(self.params, "quiet", False))
 
     # ------------------------------------------------------------------
     # Argument parsing (Click-based)
@@ -944,7 +964,11 @@ class CommandBase:
             if default_proxy.exists():
                 os.environ["X509_USER_PROXY"] = str(default_proxy)
 
-        self._setup_logger(self.params.verbose, self.params.log_file)
+        self._setup_logger(
+            self.params.verbose,
+            self.params.log_file,
+            quiet=getattr(self.params, "quiet", False),
+        )
 
         # Interactive commands must run in the main thread (e.g. TUI signal handling).
         # This bypasses the worker thread and timeout logic.

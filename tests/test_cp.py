@@ -149,6 +149,18 @@ class TestCopyOverwrite:
         assert rc == 17
         assert "exists and overwrite is not set" in err
 
+    def test_ignore_existing_skips_without_overwrite(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new content")
+        dst.write_bytes(b"old content")
+
+        rc, out, err = run_gfal("cp", "--ignore-existing", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert dst.read_bytes() == b"old content"
+        assert "Skipping existing file" in out
+
 
 # ---------------------------------------------------------------------------
 # Chained copy (src→dst1, dst1→dst2)
@@ -717,6 +729,12 @@ class TestCopyCopyMode:
         combined = out + err
         assert "skip-if-same" in combined
 
+    def test_ignore_existing_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "ignore-existing" in combined
+
 
 # ---------------------------------------------------------------------------
 # --just-copy
@@ -1096,3 +1114,20 @@ class TestCopyVerbose:
 
         assert rc == 0
         assert dst.read_bytes() == b"hello"
+
+
+class TestCopyQuiet:
+    def test_quiet_suppresses_ignore_warnings(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new content")
+        dst.write_bytes(b"old content")
+
+        rc, out, err = run_gfal(
+            "cp", "-q", "--ignore-existing", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert dst.read_bytes() == b"old content"
+        assert "Skipping existing file" not in out
+        assert "warning" not in err.lower()

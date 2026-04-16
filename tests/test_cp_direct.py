@@ -42,12 +42,14 @@ def _default_params(**kwargs):
         "timeout": 1800,
         "ssl_verify": True,
         "verbose": 0,
+        "quiet": False,
         "log_file": None,
         "force": False,
         "parent": False,
         "checksum": None,
         "checksum_mode": "both",
         "skip_if_same": False,
+        "ignore_existing": False,
         "recursive": False,
         "preserve_times": False,
         "from_file": None,
@@ -240,6 +242,23 @@ class TestExecuteCp:
         cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()], force=False)
         rc = cmd.execute_cp()
         assert rc == 17
+
+    def test_copy_ignore_existing_skips(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"new")
+        dst.write_bytes(b"old")
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            ignore_existing=True,
+        )
+
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert dst.read_bytes() == b"old"
 
     def test_copy_from_file_and_src_returns_error(self, tmp_path):
         src = tmp_path / "src.txt"
