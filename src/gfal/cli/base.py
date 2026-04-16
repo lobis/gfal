@@ -682,10 +682,11 @@ class CommandBase:
     @staticmethod
     def _setup_logger(level, log_file, quiet=False):
         level = max(0, min(3, level))
-        if quiet:
-            log_level = logging.ERROR
-        else:
-            log_level = logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
+        log_level = (
+            logging.ERROR
+            if quiet
+            else logging.ERROR - level * 10  # 0→ERROR, 1→WARN, 2→INFO, 3→DEBUG
+        )
 
         root = logging.getLogger()
         root.setLevel(log_level)

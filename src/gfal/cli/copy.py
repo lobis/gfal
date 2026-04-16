@@ -234,12 +234,11 @@ class CommandCopy(base.CommandBase):
             "--dst-spacetoken": self.params.dst_spacetoken,
         }
         for flag, val in _ignored.items():
-            if val is not None:
-                if not self._is_quiet():
-                    sys.stderr.write(
-                        f"{self.prog}: warning: {flag} is not supported in this "
-                        "implementation and will be ignored\n"
-                    )
+            if val is not None and not self._is_quiet():
+                sys.stderr.write(
+                    f"{self.prog}: warning: {flag} is not supported in this "
+                    "implementation and will be ignored\n"
+                )
 
         opts = fs.build_storage_options(self.params)
         self._preserve_times_warned = set()

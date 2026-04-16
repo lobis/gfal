@@ -562,7 +562,9 @@ class AsyncGfalClient:
         ):
             if options.ignore_existing:
                 if warn_callback is not None:
-                    warn_callback(f"Skipping existing file {dst_url} (--ignore-existing)")
+                    warn_callback(
+                        f"Skipping existing file {dst_url} (--ignore-existing)"
+                    )
                 return None
             if self._existing_file_matches_source(
                 src_fs,
