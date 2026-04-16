@@ -300,6 +300,7 @@ jobs:
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  cp -a /src/. /app
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev,all]'
                   export PYTHONDONTWRITEBYTECODE=1
@@ -321,12 +322,16 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                - name: app-src
+                  mountPath: /src
                   readOnly: true
                 - name: proxydir
                   mountPath: /proxy
                   readOnly: true
               volumes:
               - name: app
+                emptyDir: {}
+              - name: app-src
                 hostPath:
                   path: ${GFAL_HOST_WORKSPACE}
                   type: Directory
@@ -486,6 +491,7 @@ jobs:
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  cp -a /src/. /app
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev,all]'
                   export PYTHONDONTWRITEBYTECODE=1
@@ -514,9 +520,13 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                - name: app-src
+                  mountPath: /src
                   readOnly: true
               volumes:
               - name: app
+                emptyDir: {}
+              - name: app-src
                 hostPath:
                   path: ${GITHUB_WORKSPACE}
                   type: Directory
@@ -655,6 +665,7 @@ jobs:
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+                  cp -a /src/. /app
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev]'
                   export PYTHONDONTWRITEBYTECODE=1
@@ -675,9 +686,13 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                - name: app-src
+                  mountPath: /src
                   readOnly: true
               volumes:
               - name: app
+                emptyDir: {}
+              - name: app-src
                 hostPath:
                   path: ${GITHUB_WORKSPACE}
                   type: Directory
