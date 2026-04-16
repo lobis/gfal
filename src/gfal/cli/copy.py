@@ -60,10 +60,11 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--compare",
         type=str,
-        default="size_mtime",
-        choices=["size_mtime", "checksum", "none"],
+        default="size",
+        choices=["size", "size_mtime", "checksum", "none"],
         help="when destination exists and --force is not set, how to decide whether "
-        "to skip: size_mtime (default) = compare mtime and size, "
+        "to skip: size (default) = compare file size only, "
+        "size_mtime = compare both size and mtime, "
         "checksum = compare checksums, none = skip unconditionally without any checks",
     )
     @base.arg(
@@ -72,7 +73,14 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--preserve-times",
         action="store_true",
-        help="preserve source access and modification times when supported",
+        default=True,
+        help="preserve source access and modification times when supported (default: on)",
+    )
+    @base.arg(
+        "--no-preserve-times",
+        action="store_false",
+        dest="preserve_times",
+        help="do not preserve source timestamps at the destination",
     )
     @base.arg(
         "--from-file",
@@ -330,7 +338,7 @@ class CommandCopy(base.CommandBase):
             tpc=tpc,
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
-            preserve_times=getattr(self.params, "preserve_times", False),
+            preserve_times=getattr(self.params, "preserve_times", True),
             compare=getattr(self.params, "compare", None),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),

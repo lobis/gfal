@@ -55,15 +55,30 @@ class TestCopyBasic:
         assert not dst.exists()
 
     def test_copy_preserve_times_file(self, tmp_path):
+        """Times are preserved by default (no flag needed)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_text("hello")
         os.utime(src, (946684800, 946684800))
 
-        rc, out, err = run_gfal("cp", "--preserve-times", src.as_uri(), dst.as_uri())
+        rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
         assert rc == 0
         assert int(dst.stat().st_mtime) == 946684800
+
+    def test_copy_no_preserve_times_file(self, tmp_path):
+        """--no-preserve-times disables mtime preservation."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        rc, out, err = run_gfal(
+            "cp", "--no-preserve-times", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) != 946684800
 
 
 # ---------------------------------------------------------------------------
@@ -103,18 +118,17 @@ class TestCopyToDirectory:
 
 
 class TestCopyOverwrite:
-    def test_quick_compare_skips_when_mtime_and_size_match(self, tmp_path):
-        """Default quick compare: same mtime+size → skip."""
+    def test_size_compare_skips_when_size_matches(self, tmp_path):
+        """Default size compare: same size → skip (regardless of mtime)."""
         import os
 
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"same content")
         dst.write_bytes(b"same content")
-        # Force identical mtime so quick compare always sees a match
-        t = 1_000_000_000
-        os.utime(src, (t, t))
-        os.utime(dst, (t, t))
+        # Different mtimes to confirm size-only comparison is used
+        os.utime(src, (1_000_000_000, 1_000_000_000))
+        os.utime(dst, (2_000_000_000, 2_000_000_000))
 
         rc, out, err = run_gfal("cp", src.as_uri(), dst.as_uri())
 
@@ -122,8 +136,8 @@ class TestCopyOverwrite:
         assert dst.read_bytes() == b"same content"
         assert "Skipping existing file" in out
 
-    def test_quick_compare_copies_when_size_differs(self, tmp_path):
-        """Default quick compare: different size → copy (overwrite)."""
+    def test_size_compare_copies_when_size_differs(self, tmp_path):
+        """Default size compare: different size → copy (overwrite)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new longer content")
@@ -133,6 +147,45 @@ class TestCopyOverwrite:
 
         assert rc == 0
         assert dst.read_bytes() == b"new longer content"
+
+    def test_size_mtime_compare_skips_when_both_match(self, tmp_path):
+        """--compare size_mtime: same size AND mtime → skip."""
+        import os
+
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"same content")
+        dst.write_bytes(b"same content")
+        t = 1_000_000_000
+        os.utime(src, (t, t))
+        os.utime(dst, (t, t))
+
+        rc, out, err = run_gfal(
+            "cp", "--compare", "size_mtime", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert dst.read_bytes() == b"same content"
+        assert "Skipping existing file" in out
+
+    def test_size_mtime_compare_copies_when_mtime_differs(self, tmp_path):
+        """--compare size_mtime: same size but different mtime → copy."""
+        import os
+
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"same content")
+        dst.write_bytes(b"same content")
+        os.utime(src, (1_000_000_000, 1_000_000_000))
+        os.utime(dst, (2_000_000_000, 2_000_000_000))
+
+        rc, out, err = run_gfal(
+            "cp", "--compare", "size_mtime", src.as_uri(), dst.as_uri()
+        )
+
+        assert rc == 0
+        assert dst.read_bytes() == b"same content"
+        assert "Skipping existing file" not in out
 
     def test_force_overwrite(self, tmp_path):
         src = tmp_path / "src.txt"
@@ -262,9 +315,7 @@ class TestCopyRecursive:
         os.utime(srcdir, (946684680, 946684680))
         dstdir = tmp_path / "dstdir"
 
-        rc, out, err = run_gfal(
-            "cp", "-r", "--preserve-times", srcdir.as_uri(), dstdir.as_uri()
-        )
+        rc, out, err = run_gfal("cp", "-r", srcdir.as_uri(), dstdir.as_uri())
 
         assert rc == 0
         assert int((dstdir / "top.txt").stat().st_mtime) == 946688460

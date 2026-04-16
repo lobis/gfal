@@ -305,7 +305,7 @@ class TestExitCodesCopy:
         assert rc == errno.ENOENT, f"expected {errno.ENOENT}, got {rc}"
 
     def test_cp_without_force_copies_on_size_mismatch(self, tmp_path):
-        """Default quick compare: different sizes → copy (no error, no -f needed)."""
+        """Default size compare: different sizes → copy (no error, no -f needed)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_bytes(b"new longer content")

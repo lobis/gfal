@@ -65,7 +65,7 @@ class CopyOptions:
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
-    compare: Optional[str] = None  # None | "size_mtime" | "checksum" | "none"
+    compare: Optional[str] = None  # None | "size" | "size_mtime" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
@@ -786,6 +786,26 @@ class AsyncGfalClient:
                 warn_callback(f"Skipping existing file {dst_url} (--compare none)")
             return True
 
+        if compare == "size":
+            try:
+                dst_info = dst_fs.info(dst_path)
+                dst_st = StatResult.from_info(dst_info)
+                if src_st.st_size == dst_st.st_size:
+                    if warn_callback is not None:
+                        warn_callback(
+                            f"Skipping existing file {dst_url} (matching size)"
+                        )
+                    return True
+            except Exception:
+                if warn_callback is not None:
+                    warn_callback(
+                        f"size compare failed for {dst_url}; "
+                        "proceeding with transfer. "
+                        "Use --compare=checksum for reliable deduplication "
+                        "or --compare=none to skip unconditionally."
+                    )
+            return False
+
         if compare == "size_mtime":
             try:
                 dst_info = dst_fs.info(dst_path)
@@ -802,7 +822,7 @@ class AsyncGfalClient:
             except Exception:
                 if warn_callback is not None:
                     warn_callback(
-                        f"Quick compare failed for {dst_url}; "
+                        f"size_mtime compare failed for {dst_url}; "
                         "proceeding with transfer. "
                         "Use --compare=checksum for reliable deduplication "
                         "or --compare=none to skip unconditionally."

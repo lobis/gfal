@@ -49,7 +49,7 @@ def _default_params(**kwargs):
         "checksum_mode": "both",
         "compare": None,
         "recursive": False,
-        "preserve_times": False,
+        "preserve_times": True,
         "from_file": None,
         "dry_run": False,
         "abort_on_failure": False,
@@ -421,6 +421,7 @@ class TestExecuteCp:
         assert dst.read_bytes() == b"hello"
 
     def test_copy_preserve_times_file(self, tmp_path):
+        """Times are preserved by default (preserve_times=True is the default)."""
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
         src.write_text("hello")
@@ -430,14 +431,32 @@ class TestExecuteCp:
         cmd.params = _default_params(
             src=src.as_uri(),
             dst=[dst.as_uri()],
-            preserve_times=True,
         )
         rc = cmd.execute_cp()
 
         assert rc == 0
         assert int(dst.stat().st_mtime) == 946684800
 
+    def test_copy_no_preserve_times_file(self, tmp_path):
+        """preserve_times=False disables mtime preservation."""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+        os.utime(src, (946684800, 946684800))
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            preserve_times=False,
+        )
+        rc = cmd.execute_cp()
+
+        assert rc == 0
+        assert int(dst.stat().st_mtime) != 946684800
+
     def test_copy_preserve_times_recursive(self, tmp_path):
+        """Recursive copy preserves times by default."""
         src = tmp_path / "srcdir"
         src.mkdir()
         nested = src / "sub"
@@ -457,7 +476,6 @@ class TestExecuteCp:
             src=src.as_uri(),
             dst=[dst.as_uri()],
             recursive=True,
-            preserve_times=True,
         )
         rc = cmd.execute_cp()
 
@@ -718,7 +736,7 @@ class TestCliUsesLibraryCopy:
 
         cmd = _make_cmd()
         cmd.params = _default_params(
-            src=src.as_uri(), dst=[dst.as_uri()], compare="quick"
+            src=src.as_uri(), dst=[dst.as_uri()], compare="size"
         )
 
         with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
@@ -728,7 +746,7 @@ class TestCliUsesLibraryCopy:
 
         mock_client.copy.assert_called_once()
         _, kwargs = mock_client.copy.call_args
-        assert kwargs["options"] == CopyOptions(compare="quick")
+        assert kwargs["options"] == CopyOptions(compare="size", preserve_times=True)
         assert callable(kwargs["progress_callback"])
         assert callable(kwargs["start_callback"])
 
