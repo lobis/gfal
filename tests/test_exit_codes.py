@@ -357,6 +357,10 @@ class TestExitCodesLs:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows WSA error codes (e.g. ECONNREFUSED=10061) exceed the 0-255 exit code range",
+)
 class TestExitCodesNetworkErrors:
     """Verify correct exit codes for network-level failures."""
 
