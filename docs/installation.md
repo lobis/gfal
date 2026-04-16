@@ -20,6 +20,18 @@ pip install 'gfal[xrootd]'
 
 This pulls in both `xrootd` and `fsspec-xrootd`.
 
+### Conda with XRootD support
+
+For conda environments, install `gfal` from the `lobis` channel with
+`conda-forge` enabled for dependencies:
+
+```bash
+conda install -c lobis -c conda-forge gfal
+```
+
+This package depends on both `xrootd` and `fsspec-xrootd`, so `root://` support
+is available immediately after install.
+
 ---
 
 ## Native Repositories (Auto-updates)

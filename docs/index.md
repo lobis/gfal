@@ -51,6 +51,15 @@ pip install 'gfal[xrootd]'
 
 This installs the optional XRootD dependencies: `xrootd` and `fsspec-xrootd`.
 
+### From Conda with XRootD support
+
+```bash
+conda install -c lobis -c conda-forge gfal
+```
+
+The conda package depends on both `xrootd` and `fsspec-xrootd`, so XRootD
+support is included out of the box.
+
 ### From Native Repository (Recommended for Updates)
 
 Enable the repository to receive automatic updates via `dnf update`.
@@ -87,7 +96,8 @@ After installation the `gfal` command is available on your `PATH`. Run `gfal --h
 
 All commands accept any URL that fsspec understands. Local paths must be given as `file://` URIs.
 If you installed only `pip install gfal`, start with the `https://` examples below.
-The `root://` examples require `pip install 'gfal[xrootd]'`.
+The `root://` examples require either `pip install 'gfal[xrootd]'` or
+`conda install -c lobis -c conda-forge gfal`.
 
 ```bash
 # Stat a real EOS public file (HTTPS)

@@ -8,6 +8,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        exclude: ^recipe/meta\.yaml$
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
