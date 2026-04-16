@@ -1,23 +1,11 @@
-FROM python:3.12-slim
+FROM condaforge/miniforge3:latest
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1
 
-# Tests run as an unprivileged user by default. If a mounted X.509 credential is
-# only readable by root inside the container, callers can override with
-# `--user root`.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    cmake \
-    git \
-    libkrb5-dev \
-    libssl-dev \
-    pkg-config \
-    uuid-dev \
-    zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN conda install -y -n base -c conda-forge python=3.12 xrootd && \
+    conda clean -afy
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 testrunner
 
@@ -26,7 +14,7 @@ WORKDIR /app
 COPY --chown=testrunner:testrunner . /app
 
 RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir ".[dev,all]"
+    pip install --no-cache-dir ".[dev]"
 
 USER testrunner
 

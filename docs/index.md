@@ -1,6 +1,6 @@
 # gfal — Grid File Access Library
 
-**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with optional **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd).
+**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available in the environment.
 
 ## Python library API
 
@@ -46,10 +46,16 @@ This installs the base package with local-file and HTTP/HTTPS support.
 ### From PyPI with XRootD support
 
 ```bash
-pip install 'gfal[xrootd]'
+pip install gfal
 ```
 
-This installs the optional XRootD dependencies: `xrootd` and `fsspec-xrootd`.
+This installs the Python dependencies, including `fsspec-xrootd`. For `root://`
+support you also need XRootD bindings available in the environment. In conda
+environments, install them from conda-forge:
+
+```bash
+conda install -c conda-forge xrootd
+```
 
 ### From Conda with XRootD support
 
@@ -96,8 +102,8 @@ After installation the `gfal` command is available on your `PATH`. Run `gfal --h
 
 All commands accept any URL that fsspec understands. Local paths must be given as `file://` URIs.
 If you installed only `pip install gfal`, start with the `https://` examples below.
-The `root://` examples require either `pip install 'gfal[xrootd]'` or
-`conda install -c lobis -c conda-forge gfal`.
+The `root://` examples require XRootD bindings in the environment, for example
+via `conda install -c conda-forge xrootd` or `conda install -c lobis -c conda-forge gfal`.
 
 ```bash
 # Stat a real EOS public file (HTTPS)

@@ -229,7 +229,7 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
     except ImportError as exc:
         raise NotImplementedError(
             "XRootD support is not installed; "
-            "install it with: pip install 'gfal[xrootd]'"
+            "install XRootD bindings in your environment, for example with: conda install -c conda-forge xrootd"
         ) from exc
 
     if verbose:
