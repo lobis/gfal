@@ -196,6 +196,11 @@ jobs:
       GFAL_HOST_WORKSPACE: ${{ github.workspace }}
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
+    - name: Repair self-hosted workspace permissions
+      run: |
+        sudo mkdir -p "${GITHUB_WORKSPACE}"
+        sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
+        sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
     - uses: actions/checkout@v6
 
     - uses: actions/setup-python@v6
@@ -297,6 +302,8 @@ jobs:
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev,all]'
+                  export PYTHONDONTWRITEBYTECODE=1
+                  export PYTEST_ADDOPTS='-p no:cacheprovider'
                   export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
                   export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
                   export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
@@ -314,6 +321,7 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                  readOnly: true
                 - name: proxydir
                   mountPath: /proxy
                   readOnly: true
@@ -372,6 +380,11 @@ jobs:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       DCACHE_NAMESPACE: dcache-${{ github.run_id }}
     steps:
+    - name: Repair self-hosted workspace permissions
+      run: |
+        sudo mkdir -p "${GITHUB_WORKSPACE}"
+        sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
+        sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
     - uses: actions/checkout@v6
 
     - uses: actions/setup-python@v6
@@ -475,6 +488,8 @@ jobs:
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev,all]'
+                  export PYTHONDONTWRITEBYTECODE=1
+                  export PYTEST_ADDOPTS='-p no:cacheprovider'
                   export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
                   export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
                   export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
@@ -499,6 +514,7 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                  readOnly: true
               volumes:
               - name: app
                 hostPath:
@@ -550,6 +566,11 @@ jobs:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       STORM_NAMESPACE: storm-${{ github.run_id }}
     steps:
+    - name: Repair self-hosted workspace permissions
+      run: |
+        sudo mkdir -p "${GITHUB_WORKSPACE}"
+        sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
+        sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
     - uses: actions/checkout@v6
 
     - uses: actions/setup-python@v6
@@ -636,6 +657,8 @@ jobs:
                   apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev]'
+                  export PYTHONDONTWRITEBYTECODE=1
+                  export PYTEST_ADDOPTS='-p no:cacheprovider'
                   export GFAL_DEPLOYMENT_NAME='${GFAL_DEPLOYMENT_NAME}'
                   export GFAL_DEPLOYMENT_VERIFY_SSL='${GFAL_DEPLOYMENT_VERIFY_SSL}'
                   export GFAL_DEPLOYMENT_SUPPORTS_LISTING='${GFAL_DEPLOYMENT_SUPPORTS_LISTING}'
@@ -652,6 +675,7 @@ jobs:
                 volumeMounts:
                 - name: app
                   mountPath: /app
+                  readOnly: true
               volumes:
               - name: app
                 hostPath:
