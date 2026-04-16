@@ -297,6 +297,10 @@ class CommandCopy(base.CommandBase):
         If ``--skip-if-same`` is set, computes and compares checksums.
         Returns True if the file would be skipped, False if it would be copied.
         Either way the appropriate line is printed.
+
+        :param src_url: Source URL.
+        :param dst_url: Destination URL.
+        :param opts: Storage options dict (from :func:`build_storage_options`).
         """
         if getattr(self.params, "skip_if_same", False) and not getattr(
             self.params, "force", False
@@ -333,6 +337,11 @@ class CommandCopy(base.CommandBase):
         ``Mkdir …`` line is printed.  For every file either a ``Copy …``
         or a ``Skipping existing file …`` line is printed (the latter only
         when ``--skip-if-same`` matches).
+
+        :param src_url: Source directory URL.
+        :param dst_url: Destination directory URL.
+        :param client: :class:`GfalClient` instance.
+        :param opts: Storage options dict (from :func:`build_storage_options`).
         """
         if _root and not client.exists(dst_url):
             print(f"Mkdir {dst_url}")

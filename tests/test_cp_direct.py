@@ -977,6 +977,7 @@ class TestPreserveTimesWarningOnce:
     def test_warning_fires_once_for_recursive_copy(self, tmp_path, capsys):
         """Simulate a non-local (http) dst: the warning fires only once even
         though there are multiple files."""
+        import contextlib
         import sys
         from io import StringIO
         from urllib.parse import urlparse
@@ -997,23 +998,20 @@ class TestPreserveTimesWarningOnce:
         # Directly exercise the _preserve_times_warned dedup logic by
         # simulating five warning calls for the same scheme.
         stderr_buf = StringIO()
-        old_err = sys.stderr
-        sys.stderr = stderr_buf
-
         cmd._preserve_times_warned = set()
-        for _ in range(5):
-            normalized = "https://example.com/dst/"
-            scheme = urlparse(normalized).scheme.lower() or "unknown"
-            msg = (
-                "--preserve-times is only supported for local destinations; "
-                f"skipping for {scheme} targets"
-            )
-            if scheme in cmd._preserve_times_warned:
-                continue
-            cmd._preserve_times_warned.add(scheme)
-            sys.stderr.write(f"{cmd.prog}: warning: {msg}\n")
+        with contextlib.redirect_stderr(stderr_buf):
+            for _ in range(5):
+                normalized = "https://example.com/dst/"
+                scheme = urlparse(normalized).scheme.lower() or "unknown"
+                msg = (
+                    "--preserve-times is only supported for local destinations; "
+                    f"skipping for {scheme} targets"
+                )
+                if scheme in cmd._preserve_times_warned:
+                    continue
+                cmd._preserve_times_warned.add(scheme)
+                sys.stderr.write(f"{cmd.prog}: warning: {msg}\n")
 
-        sys.stderr = old_err
         warning_output = stderr_buf.getvalue()
         # Should appear exactly once
         assert warning_output.count("--preserve-times") == 1
