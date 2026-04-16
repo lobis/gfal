@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from gfal.cli import base
+from gfal.cli.base import exception_exit_code
 from gfal.core.api import GfalClient
 from gfal.core.errors import GfalFileNotFoundError, GfalIsADirectoryError
 
@@ -88,12 +89,12 @@ class CommandRm(base.CommandBase):
             print(f"{url}\tDELETED")
         except (IsADirectoryError, GfalIsADirectoryError) as e:
             sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
-            self._set_error(1)
+            self._set_error(errno.EISDIR)
         except GfalFileNotFoundError:
             self._set_error(errno.ENOENT)
             print(f"{url}\tMISSING")
         except Exception as e:
-            self._set_error(1)
+            self._set_error(exception_exit_code(e))
             print(f"{url}\tFAILED: {e}")
 
     def _do_rmdir(self, url, client):

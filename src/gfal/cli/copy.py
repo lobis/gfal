@@ -2,7 +2,6 @@
 gfal cp implementation.
 """
 
-import errno
 import stat
 import sys
 import time
@@ -10,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from gfal.cli import base
+from gfal.cli.base import exception_exit_code
 from gfal.cli.progress import Progress
 from gfal.core import api as core_api
 from gfal.core import fs
@@ -27,7 +27,6 @@ from gfal.core.api import (
 from gfal.core.api import (
     tpc_applicable as _tpc_applicable,
 )
-from gfal.core.errors import is_xrootd_permission_message
 
 _make_hasher = core_api.make_hasher
 _update_hasher = core_api.update_hasher
@@ -276,12 +275,7 @@ class CommandCopy(base.CommandBase):
                     self._do_copy(src, dst, opts)
             except Exception as e:
                 self._print_error(e)
-                ecode = getattr(e, "errno", None)
-                if (
-                    not isinstance(ecode, int) or ecode == 0
-                ) and is_xrootd_permission_message(str(e)):
-                    ecode = errno.EACCES
-                rc = ecode if ecode and 0 < ecode <= 255 else 1
+                rc = exception_exit_code(e)
                 if self.params.abort_on_failure:
                     return rc
 

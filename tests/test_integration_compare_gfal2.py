@@ -213,6 +213,188 @@ class TestCompareEosPublic:
 
 
 @requires_docker
+class TestCompareExitCodesEosPublic:
+    """Compare exact exit codes for error scenarios (not just rc != 0)."""
+
+    def test_stat_nonexistent_exit_code_matches_legacy(self):
+        """gfal stat on a missing path must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        missing = (
+            "root://eospublic.cern.ch//eos/opendata/phenix/does_not_exist_gfal_test"
+        )
+
+        rc_new, out_new, err_new = run_gfal_docker("stat", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("stat", missing)
+
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_ls_nonexistent_exit_code_matches_legacy(self):
+        """gfal ls on a missing path must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        missing = "root://eospublic.cern.ch//eos/opendata/phenix/no_such_dir_gfal_test/"
+
+        rc_new, out_new, err_new = run_gfal_docker("ls", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("ls", missing)
+
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_stat_http_nonexistent_exit_code(self):
+        """gfal stat on a non-existent HTTPS file must return ENOENT (2)."""
+        _xfail_if_legacy_unusable()
+        missing = "https://eospublic.cern.ch//eos/opendata/phenix/does_not_exist_gfal_test.txt"
+
+        rc_new, out_new, err_new = run_gfal_docker("stat", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("stat", missing)
+
+        _skip_if_known_public_http_flake(rc_new, err_new)
+        _skip_if_known_public_http_flake(rc_old, err_old)
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_cat_nonexistent_exit_code_matches_legacy(self):
+        """gfal cat on a missing file must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        missing = "https://eospublic.cern.ch//eos/opendata/phenix/does_not_exist_gfal_test.txt"
+
+        rc_new, out_new, err_new = run_gfal_docker("cat", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("cat", missing)
+
+        _skip_if_known_public_http_flake(rc_new, err_new)
+        _skip_if_known_public_http_flake(rc_old, err_old)
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+
+@requires_docker
+@requires_proxy
+class TestCompareExitCodesEosPilot:
+    """Compare exact exit codes for writable-pilot error scenarios."""
+
+    def test_stat_nonexistent_exit_code_matches_legacy(self):
+        """gfal stat on a missing pilot path must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        missing = f"{_PILOT_BASE}/does_not_exist_gfal_exitcode_test_{__import__('uuid').uuid4().hex}.txt"
+
+        rc_new, out_new, err_new = run_gfal("stat", "-E", proxy, "--no-verify", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("stat", missing, proxy_cert=proxy)
+
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_ls_nonexistent_exit_code_matches_legacy(self):
+        """gfal ls on a missing pilot path must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        missing = f"{_PILOT_BASE}/does_not_exist_dir_gfal_exitcode_test_{__import__('uuid').uuid4().hex}/"
+
+        rc_new, out_new, err_new = run_gfal("ls", "-E", proxy, "--no-verify", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("ls", missing, proxy_cert=proxy)
+
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_rm_nonexistent_exit_code_matches_legacy(self):
+        """gfal rm on a missing file must return ENOENT (2) like gfal2."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        missing = f"{_PILOT_BASE}/does_not_exist_rm_gfal_exitcode_test_{__import__('uuid').uuid4().hex}.txt"
+
+        rc_new, out_new, err_new = run_gfal("rm", "-E", proxy, "--no-verify", missing)
+        rc_old, out_old, err_old = run_gfal2_docker("rm", missing, proxy_cert=proxy)
+
+        assert rc_new == 2, f"expected ENOENT(2), got {rc_new}: {err_new}"
+        assert rc_old == 2, f"legacy returned {rc_old}: {err_old}"
+
+    def test_mkdir_existing_exit_code_matches_legacy(self):
+        """gfal mkdir on an existing dir (without -p) must return EEXIST (17) like gfal2."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        target = _unique_pilot_path("compare-exitcode-mkdir-existing")
+
+        try:
+            rc, out, err = run_gfal("mkdir", "-E", proxy, "--no-verify", target)
+            assert rc == 0, err
+
+            rc_new, out_new, err_new = run_gfal(
+                "mkdir", "-E", proxy, "--no-verify", target
+            )
+            rc_old, out_old, err_old = run_gfal2_docker(
+                "mkdir", target, proxy_cert=proxy
+            )
+
+            assert rc_new == 17, f"expected EEXIST(17), got {rc_new}: {err_new}"
+            assert rc_old == 17, f"legacy returned {rc_old}: {err_old}"
+        finally:
+            run_gfal("rm", "-E", proxy, "--no-verify", "-r", target)
+
+    def test_cp_permission_denied_exit_code_matches_legacy(self):
+        """gfal cp to a denied path must return EACCES (13) like gfal2."""
+        _xfail_if_legacy_unusable()
+        from test_integration_eospilot import _PILOT_NO_ACCESS
+
+        proxy = _find_proxy()
+        payload = "permission denied test\n"
+        src = _unique_pilot_path("compare-exitcode-cp-perm-src.txt")
+        dst = f"{_PILOT_NO_ACCESS}/denied_gfal_exitcode_test.txt"
+
+        try:
+            rc, out, err = run_gfal(
+                "save", "-E", proxy, "--no-verify", src, input=payload
+            )
+            assert rc == 0, err
+
+            rc_new, out_new, err_new = run_gfal(
+                "cp", "-E", proxy, "--no-verify", src, dst
+            )
+            rc_old, out_old, err_old = run_gfal2_docker(
+                "copy", src, dst, proxy_cert=proxy
+            )
+
+            assert rc_new == 13, f"expected EACCES(13), got {rc_new}: {err_new}"
+            assert rc_old == 13, f"legacy returned {rc_old}: {err_old}"
+        finally:
+            run_gfal("rm", "-E", proxy, "--no-verify", src)
+
+    def test_copy_overwrite_exit_code_matches_legacy(self):
+        """gfal cp without -f to an existing dst must return EEXIST (17) like gfal2."""
+        _xfail_if_legacy_unusable()
+        proxy = _find_proxy()
+        payload = "overwrite test\n"
+        dst = _unique_pilot_path("compare-exitcode-cp-overwrite.txt")
+
+        try:
+            rc, out, err = run_gfal(
+                "save", "-E", proxy, "--no-verify", dst, input=payload
+            )
+            assert rc == 0, err
+
+            rc_new, out_new, err_new = run_gfal(
+                "save", "-E", proxy, "--no-verify", dst, input=payload
+            )
+            # save always overwrites (PUT), so test cp instead
+            src_local = _unique_pilot_path("compare-exitcode-cp-overwrite-src.txt")
+            try:
+                run_gfal("save", "-E", proxy, "--no-verify", src_local, input=payload)
+
+                rc_new2, out_new2, err_new2 = run_gfal(
+                    "cp", "-E", proxy, "--no-verify", src_local, dst
+                )
+                rc_old, out_old, err_old = run_gfal2_docker(
+                    "copy", src_local, dst, proxy_cert=proxy
+                )
+
+                assert rc_new2 == 17, f"expected EEXIST(17), got {rc_new2}: {err_new2}"
+                assert rc_old == 17, f"legacy returned {rc_old}: {err_old}"
+            finally:
+                run_gfal("rm", "-E", proxy, "--no-verify", src_local)
+        finally:
+            run_gfal("rm", "-E", proxy, "--no-verify", dst)
+
+
+@requires_docker
 @requires_proxy
 class TestCompareEosPilot:
     def test_mkdir_and_ls_match_legacy(self):

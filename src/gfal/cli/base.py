@@ -22,6 +22,70 @@ except ImportError:
 
 from rich.console import Console
 
+from gfal.core.errors import is_xrootd_permission_message
+
+
+def exception_exit_code(e: Exception) -> int:
+    """Return the most appropriate process exit code for an exception.
+
+    Priority:
+    1. ``e.errno`` — explicit POSIX errno already set (GfalError, OSError).
+    2. Python built-in exception type → corresponding errno.
+    3. HTTP status code (aiohttp ``ClientResponseError``) → POSIX errno.
+    4. XRootD permission-denied messages → EACCES.
+    5. Fallback: 1.
+    """
+    # 1. Explicit errno attribute (GfalError subclasses, standard OSError)
+    ecode = getattr(e, "errno", None)
+    if isinstance(ecode, int) and 0 < ecode <= 255:
+        return ecode
+
+    # 2. Python built-in exception type mapping (fsspec often raises these
+    #    with just a message, leaving errno=None)
+    _type_map = (
+        (FileNotFoundError, errno.ENOENT),
+        (PermissionError, errno.EACCES),
+        (FileExistsError, errno.EEXIST),
+        (IsADirectoryError, errno.EISDIR),
+        (NotADirectoryError, errno.ENOTDIR),
+        (TimeoutError, errno.ETIMEDOUT),
+        (InterruptedError, errno.EINTR),
+        (ConnectionRefusedError, errno.ECONNREFUSED),
+        (ConnectionResetError, errno.ECONNRESET),
+    )
+    for exc_type, code in _type_map:
+        if isinstance(e, exc_type):
+            return code
+
+    # 3. HTTP status code → POSIX errno (aiohttp ClientResponseError, etc.)
+    status = getattr(e, "status", None)
+    if isinstance(status, int):
+        _http_map: dict[int, int] = {
+            400: errno.EINVAL,  # Bad Request
+            401: errno.EACCES,  # Unauthorized
+            403: errno.EACCES,  # Forbidden
+            404: errno.ENOENT,  # Not Found
+            408: errno.ETIMEDOUT,  # Request Timeout
+            409: errno.EEXIST,  # Conflict
+            410: errno.ENOENT,  # Gone
+            413: errno.EFBIG,  # Payload Too Large
+            423: errno.EACCES,  # Locked
+            500: errno.EIO,  # Internal Server Error
+            502: errno.EIO,  # Bad Gateway
+            503: errno.EAGAIN,  # Service Unavailable
+            504: errno.ETIMEDOUT,  # Gateway Timeout
+        }
+        mapped = _http_map.get(status)
+        if mapped is not None:
+            return mapped
+
+    # 4. XRootD error messages that indicate permission denial
+    if is_xrootd_permission_message(str(e)):
+        return errno.EACCES
+
+    return 1
+
+
 try:
     VERSION = _pkg_version("gfal")
 except PackageNotFoundError:
@@ -910,12 +974,8 @@ class CommandBase:
             if isinstance(e, OSError) and e.errno == errno.EPIPE:
                 self.return_code = 0
                 return
-            ecode = getattr(e, "errno", None)
             self._print_error(e)
-            if ecode and 0 < ecode <= 255:
-                self.return_code = ecode
-            else:
-                self.return_code = 1
+            self.return_code = exception_exit_code(e)
 
     def execute(self, func):
         # Forced IP family (IPv4/v6)
