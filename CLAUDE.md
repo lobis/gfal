@@ -53,6 +53,12 @@ pip install -e .
 
 This registers all `gfal-*` executables as console scripts. Reinstall after changes to `pyproject.toml` (new entry points). Source edits in `src/` are picked up immediately without reinstalling.
 
+## Commit authorship policy
+
+All commits in this repository must be authored by the human developer (Luis Antonio Obis Aparicio).
+**Never** include AI/assistant attribution in commit messages, author fields, or `Co-Authored-By:` trailers.
+Do not mention Claude, Codex, Copilot, or any other AI tool in commit messages.
+
 ## GitHub push auth for this repo
 
 This repo should use the normal default SSH configuration for GitHub pushes.

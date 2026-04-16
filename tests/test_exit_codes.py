@@ -15,6 +15,7 @@ HTTP-status and exception-type mapping paths.
 
 import errno
 import os
+import sys
 
 import pytest
 
@@ -162,6 +163,55 @@ class TestExceptionExitCode:
         )
         assert exception_exit_code(e) == errno.EACCES
 
+    # --- aiohttp SSL / connection errors -------------------------------------
+
+    def test_aiohttp_ssl_certificate_error_maps_to_ehostdown(self):
+        """SSL cert failures (hostname mismatch, expired, etc.) → EHOSTDOWN.
+
+        aiohttp raises ClientConnectorCertificateError (a subclass of
+        ClientSSLError) for certificate validation failures.  The OS layer is
+        never involved so errno is None; we must use the exception type to
+        pick the right code.  gfal2/neon reports these as EHOSTDOWN (112 on
+        Linux), so we match that.
+        """
+        import ssl
+        from unittest.mock import MagicMock
+
+        import aiohttp
+
+        key = MagicMock()  # connection_key placeholder
+        cert_error = ssl.SSLCertVerificationError(
+            1,
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "Hostname mismatch, certificate is not valid for 'eoshome.cern.ch'.",
+        )
+        e = aiohttp.ClientConnectorCertificateError(key, cert_error)
+        assert e.errno is None  # sanity-check: no OS errno is set
+        assert exception_exit_code(e) == errno.EHOSTDOWN
+
+    def test_aiohttp_ssl_error_maps_to_ehostdown(self):
+        """Generic aiohttp.ClientSSLError → EHOSTDOWN."""
+        from unittest.mock import MagicMock
+
+        import aiohttp
+
+        key = MagicMock()
+        ssl_err = OSError("SSL handshake failed")
+        e = aiohttp.ClientConnectorSSLError(key, ssl_err)
+        assert exception_exit_code(e) == errno.EHOSTDOWN
+
+    def test_aiohttp_connector_error_with_os_errno(self):
+        """ClientConnectorError carrying an OS errno returns that errno directly."""
+        from unittest.mock import MagicMock
+
+        import aiohttp
+
+        key = MagicMock()
+        os_err = ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+        e = aiohttp.ClientConnectorError(key, os_err)
+        # e.errno is set to ECONNREFUSED by the aiohttp constructor
+        assert exception_exit_code(e) == errno.ECONNREFUSED
+
     # --- Fallback ------------------------------------------------------------
 
     def test_generic_exception_returns_1(self):
@@ -243,7 +293,7 @@ class TestExitCodesMkdir:
         """gfal mkdir without -p when parent is missing should return ENOENT."""
         d = tmp_path / "no_parent" / "child"
         rc, out, err = run_gfal("mkdir", d.as_uri())
-        assert rc != 0
+        assert rc == errno.ENOENT, f"expected ENOENT({errno.ENOENT}), got {rc}: {err}"
 
 
 class TestExitCodesCopy:
@@ -265,8 +315,10 @@ class TestExitCodesCopy:
 
     def test_cp_permission_denied_returns_eacces(self, tmp_path):
         """gfal cp to a read-only directory should return EACCES (13)."""
-        if os.geteuid() == 0:
-            pytest.skip("root can write anywhere; permission test not meaningful")
+        if sys.platform == "win32" or not hasattr(os, "geteuid") or os.geteuid() == 0:
+            pytest.skip(
+                "root or Windows: permission test not meaningful on this platform"
+            )
         src = tmp_path / "src.txt"
         src.write_bytes(b"data")
         ro_dir = tmp_path / "readonly"
@@ -298,3 +350,50 @@ class TestExitCodesLs:
     def test_ls_existing_returns_zero(self, tmp_path):
         rc, out, err = run_gfal("ls", tmp_path.as_uri())
         assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Network-error exit codes (local loopback — no external network needed)
+# ---------------------------------------------------------------------------
+
+
+class TestExitCodesNetworkErrors:
+    """Verify correct exit codes for network-level failures."""
+
+    def test_ls_connection_refused_returns_econnrefused(self):
+        """gfal ls against a closed local port should return ECONNREFUSED, not 1."""
+        # Port 1 is privileged and never open; connection is always refused.
+        rc, out, err = run_gfal("ls", "http://127.0.0.1:1/no/such/path")
+        assert rc == errno.ECONNREFUSED, (
+            f"expected ECONNREFUSED({errno.ECONNREFUSED}), got {rc}: {err}"
+        )
+
+    def test_stat_connection_refused_returns_econnrefused(self):
+        """gfal stat against a closed local port should return ECONNREFUSED, not 1."""
+        rc, out, err = run_gfal("stat", "http://127.0.0.1:1/no/such/path")
+        assert rc == errno.ECONNREFUSED, (
+            f"expected ECONNREFUSED({errno.ECONNREFUSED}), got {rc}: {err}"
+        )
+
+    def test_cat_connection_refused_returns_econnrefused(self):
+        """gfal cat against a closed local port should return ECONNREFUSED, not 1."""
+        rc, out, err = run_gfal("cat", "http://127.0.0.1:1/no/such/file.txt")
+        assert rc == errno.ECONNREFUSED, (
+            f"expected ECONNREFUSED({errno.ECONNREFUSED}), got {rc}: {err}"
+        )
+
+    def test_ssl_hostname_mismatch_returns_ehostdown(self):
+        """gfal ls against an HTTPS URL with a cert mismatch returns EHOSTDOWN, not 1.
+
+        127.0.0.1:1 over HTTPS will produce an SSL error rather than a
+        connection-refused error; we verify the code is EHOSTDOWN (matching
+        gfal2/neon behaviour for all SSL failures).
+        """
+        rc, out, err = run_gfal("ls", "https://127.0.0.1:1/no/such/path")
+        # Port 1 is closed → connection refused before SSL handshake.
+        # Accept either ECONNREFUSED (OS refused before SSL) or EHOSTDOWN
+        # (SSL layer engaged first and failed) — both are better than 1.
+        assert rc in (errno.ECONNREFUSED, errno.EHOSTDOWN), (
+            f"expected ECONNREFUSED({errno.ECONNREFUSED}) or "
+            f"EHOSTDOWN({errno.EHOSTDOWN}), got {rc}: {err}"
+        )

@@ -250,7 +250,7 @@ class GfalCommands(base.CommandBase):
             sys.stdout.write(f"{self.params.file} {checksum}\n")
         except Exception as e:
             self._print_error(e)
-            return 1
+            return exception_exit_code(e)
 
     # ------------------------------------------------------------------
     # xattr

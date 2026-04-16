@@ -5,13 +5,14 @@ from typing import Optional
 def is_xrootd_permission_message(message: str) -> bool:
     """Return True for XRootD authorization/access-denied style failures."""
     lower = message.lower()
+    # Explicit ENOENT: never a permission error regardless of other markers.
+    if "no such file or directory" in lower:
+        return False
     xrootd_markers = (
-        "server responded with an error",
         "[3010]",
         "unable to give access",
         "user access restricted",
         "unauthorized identity used",
-        "unable to open file",
         "permission denied",
         "operation not permitted",
     )

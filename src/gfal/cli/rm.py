@@ -139,7 +139,7 @@ class CommandRm(base.CommandBase):
                 self._set_error(errno.ENOENT)
                 print(f"{url}\tMISSING")
             except Exception as e:
-                self._set_error(1)
+                self._set_error(exception_exit_code(e))
                 print(f"{url}\tFAILED: {e}")
 
     def _set_error(self, code):

@@ -22,7 +22,15 @@ except ImportError:
 
 from rich.console import Console
 
-from gfal.core.errors import is_xrootd_permission_message
+from gfal.core.errors import (
+    GfalFileExistsError,
+    GfalFileNotFoundError,
+    GfalIsADirectoryError,
+    GfalNotADirectoryError,
+    GfalPermissionError,
+    GfalTimeoutError,
+    is_xrootd_permission_message,
+)
 
 
 def exception_exit_code(e: Exception) -> int:
@@ -32,10 +40,28 @@ def exception_exit_code(e: Exception) -> int:
     1. ``e.errno`` — explicit POSIX errno already set (GfalError, OSError).
     2. Python built-in exception type → corresponding errno.
     3. HTTP status code (aiohttp ``ClientResponseError``) → POSIX errno.
-    4. XRootD permission-denied messages → EACCES.
-    5. Fallback: 1.
+    4. aiohttp SSL / connection errors (errno not set by OS layer).
+    5. XRootD permission-denied messages → EACCES.
+    6. Fallback: 1.
     """
-    # 1. Explicit errno attribute (GfalError subclasses, standard OSError)
+    # 1a. GfalError subclasses carry well-known semantic meaning; map them to
+    #     their canonical POSIX errno regardless of platform (avoids Windows
+    #     WSA codes like WSAETIMEDOUT=10060 which exceed the 0-255 range).
+    _gfal_type_map = (
+        (GfalFileNotFoundError, errno.ENOENT),
+        (GfalPermissionError, errno.EACCES),
+        (GfalFileExistsError, errno.EEXIST),
+        (GfalIsADirectoryError, errno.EISDIR),
+        (GfalNotADirectoryError, errno.ENOTDIR),
+        (GfalTimeoutError, errno.ETIMEDOUT),
+    )
+    for exc_type, code in _gfal_type_map:
+        if isinstance(e, exc_type):
+            return code
+
+    # 1b. Explicit errno attribute (standard OSError and
+    #    aiohttp.ClientConnectorError which inherits from OSError and
+    #    stores the underlying OS errno directly on self.errno).
     ecode = getattr(e, "errno", None)
     if isinstance(ecode, int) and 0 < ecode <= 255:
         return ecode
@@ -79,7 +105,26 @@ def exception_exit_code(e: Exception) -> int:
         if mapped is not None:
             return mapped
 
-    # 4. XRootD error messages that indicate permission denial
+    # 4. aiohttp SSL / connection errors where errno is not set by the OS.
+    #    aiohttp.ClientConnectorError inherits from OSError and stores the
+    #    OS errno on self.errno (handled above).  SSL errors are a special
+    #    case: the Python SSL layer raises them without an OS-level errno, so
+    #    they reach here with errno=None.  Map to EHOSTDOWN to match the
+    #    gfal2/neon/davix behaviour ("Host is down" for all connection
+    #    failures including cert mismatches).
+    try:
+        import aiohttp as _aiohttp
+
+        if isinstance(e, _aiohttp.ClientSSLError):
+            # Catches ClientConnectorCertificateError and ClientConnectorSSLError.
+            return errno.EHOSTDOWN
+        if isinstance(e, _aiohttp.ClientConnectionError):
+            # Any other aiohttp connection-level error without an OS errno.
+            return errno.ECONNREFUSED
+    except ImportError:
+        pass
+
+    # 5. XRootD error messages that indicate permission denial
     if is_xrootd_permission_message(str(e)):
         return errno.EACCES
 
@@ -637,13 +682,11 @@ def _build_common_params():
             default=None,
             help="Write log output to this file instead of stderr.",
         ),
-        # --no-verify: Click name will be 'no_verify'; we rename to 'ssl_verify' in parse()
+        # --verify/--no-verify: Click name will be 'verify'; we rename to 'ssl_verify' in parse()
         click.Option(
-            ["--no-verify"],
-            is_flag=True,
-            flag_value=False,
+            ["--verify/--no-verify"],
             default=True,
-            help="Skip SSL certificate verification (insecure; for self-signed certs).",
+            help="Skip SSL certificate verification with --no-verify (insecure; for self-signed certs).",
         ),
         click.Option(
             ["-D", "--definition"],
@@ -681,7 +724,7 @@ def _build_common_params():
 # Renames applied to common options after parsing
 # (Click's derived name → desired self.params attribute name)
 _COMMON_RENAME_MAP = {
-    "no_verify": "ssl_verify",
+    "verify": "ssl_verify",
     "ipv4": "ipv4_only",
     "ipv6": "ipv6_only",
     "client_info": "client_info",  # already correct, kept for explicitness
