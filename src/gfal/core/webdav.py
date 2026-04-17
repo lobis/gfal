@@ -338,6 +338,7 @@ class _SyncAiohttpSession:
         headers: dict[str, str] | None = None,
         data: Any = None,
         timeout: float | None = None,
+        allow_redirects: bool = True,
     ) -> _SyncAiohttpResponse:
         request_headers = dict(self.headers)
         if headers:
@@ -360,6 +361,7 @@ class _SyncAiohttpSession:
                     url,
                     headers=request_headers,
                     data=data,
+                    allow_redirects=allow_redirects,
                 )
                 body = await resp.read()
                 return _SyncAiohttpResponse(
@@ -396,6 +398,7 @@ class _SyncAiohttpSession:
         headers: dict[str, str] | None = None,
         data: Any = None,
         timeout: float | None = None,
+        allow_redirects: bool = True,
     ) -> _StreamingAiohttpResponse:
         request_headers = dict(self.headers)
         if headers:
@@ -419,6 +422,7 @@ class _SyncAiohttpSession:
                     url,
                     headers=request_headers,
                     data=data,
+                    allow_redirects=allow_redirects,
                 )
                 break
             except asyncio.TimeoutError as exc:
@@ -488,6 +492,7 @@ class _SyncAiohttpSession:
         data: Any = None,
         timeout: float | None = None,
         stream: bool = False,
+        allow_redirects: bool = True,
     ) -> _SyncAiohttpResponse | _StreamingAiohttpResponse:
         if stream:
             return self._run(
@@ -497,6 +502,7 @@ class _SyncAiohttpSession:
                     headers=headers,
                     data=data,
                     timeout=timeout,
+                    allow_redirects=allow_redirects,
                 )
             )
         return self._run(
@@ -506,6 +512,7 @@ class _SyncAiohttpSession:
                 headers=headers,
                 data=data,
                 timeout=timeout,
+                allow_redirects=allow_redirects,
             )
         )
 
@@ -528,8 +535,16 @@ class _SyncAiohttpSession:
         data: Any = None,
         timeout: float | None = None,
         headers: dict[str, str] | None = None,
+        allow_redirects: bool = True,
     ):
-        return self.request("PUT", url, headers=headers, data=data, timeout=timeout)
+        return self.request(
+            "PUT",
+            url,
+            headers=headers,
+            data=data,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+        )
 
     async def _request_upload_stream_async(
         self,
@@ -537,6 +552,7 @@ class _SyncAiohttpSession:
         url: str,
         *,
         body_queue: queue.Queue[object],
+        content_length: int | None = None,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> _SyncAiohttpResponse:
@@ -555,13 +571,37 @@ class _SyncAiohttpSession:
         session = self._make_client_session(timeout=client_timeout)
         resp = None
 
+        async def _next_body_item():
+            item = await asyncio.to_thread(body_queue.get)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+
+        class _QueuePayload(aiohttp.payload.Payload):
+            def __init__(self, size: int) -> None:
+                super().__init__(body_queue)
+                self._size = size
+
+            @property
+            def size(self) -> int:
+                return self._size
+
+            def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+                del encoding, errors
+                return ""
+
+            async def write(self, writer) -> None:
+                while True:
+                    item = await _next_body_item()
+                    if item is _STREAM_EOF:
+                        break
+                    await writer.write(item)
+
         async def _iter_body():
             while True:
-                item = await asyncio.to_thread(body_queue.get)
+                item = await _next_body_item()
                 if item is _STREAM_EOF:
                     break
-                if isinstance(item, BaseException):
-                    raise item
                 yield item
 
         try:
@@ -569,7 +609,11 @@ class _SyncAiohttpSession:
                 method,
                 url,
                 headers=request_headers,
-                data=_iter_body(),
+                data=(
+                    _QueuePayload(content_length)
+                    if content_length is not None
+                    else _iter_body()
+                ),
             )
             body = await resp.read()
             return _SyncAiohttpResponse(
@@ -594,6 +638,7 @@ class _SyncAiohttpSession:
         url: str,
         *,
         body_queue: queue.Queue[object],
+        content_length: int | None = None,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> concurrent.futures.Future:
@@ -603,6 +648,7 @@ class _SyncAiohttpSession:
                 method,
                 url,
                 body_queue=body_queue,
+                content_length=content_length,
                 headers=headers,
                 timeout=timeout,
             ),
@@ -801,10 +847,12 @@ class _StreamingRequestsPutFile(io.RawIOBase):
         session,
         url: str,
         timeout: float | None = None,
+        content_length: int | None = None,
     ) -> None:
         self._session = session
         self._url = url
         self._timeout = timeout
+        self._content_length = content_length
         self._body_queue: queue.Queue[object] = queue.Queue(maxsize=4)
         self._upload_future: concurrent.futures.Future | None = None
 
@@ -822,6 +870,7 @@ class _StreamingRequestsPutFile(io.RawIOBase):
             "PUT",
             self._url,
             body_queue=self._body_queue,
+            content_length=self._content_length,
             timeout=self._timeout,
         )
 
@@ -854,6 +903,52 @@ class _StreamingRequestsPutFile(io.RawIOBase):
                         continue
                 resp = self._upload_future.result()
                 _raise_for_status(resp, self._url)
+            finally:
+                super().close()
+
+
+class _StreamingRequestsGetFile(io.RawIOBase):
+    """Read-only file object backed by a streaming HTTP GET response."""
+
+    def __init__(self, response: _StreamingAiohttpResponse) -> None:
+        self._response = response
+        self._buffer = bytearray()
+        self._eof = False
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def _fill_buffer(self, min_bytes: int) -> None:
+        while not self._eof and len(self._buffer) < min_bytes:
+            item = self._response._body_queue.get()
+            if item is _STREAM_EOF:
+                self._eof = True
+                break
+            if isinstance(item, BaseException):
+                raise item
+            self._buffer.extend(item)
+
+    def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+        if size == 0:
+            return b""
+        if size < 0:
+            self._fill_buffer(float("inf"))
+            data = bytes(self._buffer)
+            self._buffer.clear()
+            return data
+
+        self._fill_buffer(size)
+        data = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return data
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._response.close()
             finally:
                 super().close()
 
@@ -1057,13 +1152,56 @@ class WebDAVFileSystem(AbstractFileSystem):
     # file I/O \u2014 delegate to fsspec's HTTPFileSystem
     # ------------------------------------------------------------------
 
+    def _is_eos_namespace_url(self, path: str) -> bool:
+        parsed = urlparse(path)
+        host = parsed.hostname or ""
+        return (
+            parsed.scheme in {"http", "https"}
+            and host.startswith("eos")
+            and host.endswith(".cern.ch")
+            and parsed.path.startswith("//eos/")
+            and not parsed.query
+        )
+
+    def _resolve_stream_write_url(self, path: str) -> str:
+        if not self._is_eos_namespace_url(path):
+            return path
+
+        resp = self._session.put(
+            path,
+            data=b"",
+            timeout=self._timeout,
+            headers={"Content-Length": "0"},
+            allow_redirects=False,
+        )
+        location = resp.headers.get("Location", "")
+        if resp.status_code in {307, 308} and location:
+            return location
+        return path
+
     def open(self, path: str, mode: str = "rb", **kwargs):
         if "w" in mode:
             return _RequestsPutFile(self._session, path, self._timeout)
         return self._http_fs.open(path, mode, **kwargs)
 
-    def open_stream_write(self, path: str):
-        return _StreamingRequestsPutFile(self._session, path, self._timeout)
+    def open_stream_read(self, path: str):
+        """Open *path* for sequential streaming reads during copy operations."""
+        response = self._session.request(
+            "GET",
+            path,
+            timeout=self._timeout,
+            stream=True,
+        )
+        _raise_for_status(response, path)
+        return _StreamingRequestsGetFile(response)
+
+    def open_stream_write(self, path: str, *, content_length: int | None = None):
+        return _StreamingRequestsPutFile(
+            self._session,
+            self._resolve_stream_write_url(path),
+            self._timeout,
+            content_length=content_length,
+        )
 
     def checksum(self, path: str, algorithm: str) -> str:
         """Fetch server-side checksum via HTTP HEAD and the Digest header."""

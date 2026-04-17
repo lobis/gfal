@@ -861,11 +861,25 @@ class AsyncGfalClient:
 
         try:
             with ExitStack() as stack:
-                src_f = stack.enter_context(src_fs.open(src_path, "rb"))
+                if hasattr(src_fs, "open_stream_read"):
+                    try:
+                        src_f = stack.enter_context(src_fs.open_stream_read(src_path))
+                    except TypeError:
+                        src_f = stack.enter_context(src_fs.open(src_path, "rb"))
+                else:
+                    src_f = stack.enter_context(src_fs.open(src_path, "rb"))
                 if hasattr(write_dst_fs, "open_stream_write"):
-                    dst_f = stack.enter_context(
-                        write_dst_fs.open_stream_write(write_dst_path)
-                    )
+                    try:
+                        dst_f = stack.enter_context(
+                            write_dst_fs.open_stream_write(
+                                write_dst_path,
+                                content_length=src_st.st_size,
+                            )
+                        )
+                    except TypeError:
+                        dst_f = stack.enter_context(
+                            write_dst_fs.open_stream_write(write_dst_path)
+                        )
                 else:
                     dst_f = stack.enter_context(write_dst_fs.open(write_dst_path, "wb"))
                 while True:

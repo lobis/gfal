@@ -157,8 +157,15 @@ class _DelayedReader:
 class _FakeSourceFs:
     def __init__(self, state: _StreamingCopyState) -> None:
         self._state = state
+        self.open_calls = 0
+        self.open_stream_read_calls = 0
 
     def open(self, _path: str, _mode: str):
+        self.open_calls += 1
+        return _DelayedReader(self._state)
+
+    def open_stream_read(self, _path: str):
+        self.open_stream_read_calls += 1
         return _DelayedReader(self._state)
 
 
@@ -172,12 +179,13 @@ class _FakeUploadSession:
         _url: str,
         *,
         body_queue,
+        content_length=None,
         headers=None,
         timeout=None,
     ):
         import concurrent.futures
 
-        del headers, timeout
+        del content_length, headers, timeout
         future: concurrent.futures.Future = concurrent.futures.Future()
 
         def _consume() -> None:
@@ -219,6 +227,7 @@ class TestStreamingCopyRegression:
         src_st = StatResult.from_info(
             {"name": "src", "size": total_size, "type": "file"}
         )
+        fake_src_fs = _FakeSourceFs(state)
         fake_dst_fs = _FakeDestinationFs(state)
 
         monkeypatch.setattr(
@@ -228,7 +237,7 @@ class TestStreamingCopyRegression:
 
         client._copy_file(
             "file:///tmp/source.bin",
-            _FakeSourceFs(state),
+            fake_src_fs,
             "/tmp/source.bin",
             "https://example.invalid/sink.bin",
             fake_dst_fs,
@@ -246,6 +255,8 @@ class TestStreamingCopyRegression:
         assert state.source_finished_at is not None
         assert state.put_bytes == total_size
         assert state.first_put_byte_at < state.source_finished_at
+        assert fake_src_fs.open_stream_read_calls == 1
+        assert fake_src_fs.open_calls == 0
 
 
 @requires_benchmark_opt_in

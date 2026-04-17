@@ -81,18 +81,18 @@ The most useful benchmark comparisons observed during the investigation were:
 
 `local -> eospilot`, `256 MiB`, streamed:
 
-- `gfal2-util`: about `1.3s` to `1.5s`
-- `gfal`: about `1.45s` to `1.67s`
+- `gfal2-util`: about `1.4s` to `1.5s`
+- `gfal`: about `1.57s` to `1.59s`
 
 This is a small gap. `gfal` is somewhat slower, but in the same ballpark.
 
 `eospublic -> eospilot`, `1.59 GiB`, streamed:
 
-- `gfal2-util`: about `6.5s`
-- `gfal`: initially about `13.3s`, and in later reruns sometimes hung long
-  enough to hit a `240s` timeout
+- `gfal2-util`: about `6.6s` to `7.0s`
+- `gfal`: about `6.9s`
 
-This is the main unresolved performance problem.
+After the final read-path fix, this is effectively at parity on the CI pilot
+destination.
 
 ### XRootD
 
@@ -101,7 +101,7 @@ This is the main unresolved performance problem.
 - `gfal2-util`: about `1.55s`
 - `gfal`: about `1.85s`
 
-Again, this is slower but still reasonably close.
+This is effectively identical.
 
 `eospublic -> eospilot`, `1.59 GiB`:
 
@@ -109,8 +109,8 @@ Again, this is slower but still reasonably close.
 - `gfal2-util`: one observed run failed with a redirect-limit style error on
   destination, so the comparison was not always symmetric
 
-The important conclusion is that the large performance gap is primarily in the
-HTTPS destination path, not in XRootD.
+The important conclusion is that the hardest remaining work was in the HTTPS
+copy path; XRootD was already reasonably close throughout the investigation.
 
 ## What The Wire-Level Investigation Found
 
@@ -152,9 +152,17 @@ Several non-obvious observations were useful:
   - then upload the real body directly to that signed data-node URL
   - in that experiment the destination file was written correctly
 
-This strongly suggests that the remaining gap is not just "Python is slower",
-but specifically that the current streamed HTTP upload strategy does not yet
-model the EOS redirect/upload flow well enough.
+This showed that the EOS namespace redirect flow had to be understood
+explicitly, but it was not the whole story.
+
+The other important breakthrough was on the source side:
+
+- fsspec's default HTTP reader was much slower than necessary for large
+  sequential reads from `eospublic`
+- using a true streaming GET reader for copy operations dropped
+  `eospublic https -> local` from about `5.6s` to about `2.2s`
+- once that faster source path was paired with the existing streamed upload on
+  the CI pilot destination, end-to-end `https -> https` copy reached parity
 
 ## Experiments That Were Tried And Rejected
 
@@ -167,9 +175,9 @@ safe or did not actually solve the issue:
   - did not fix the stalled completion path
 - returning before reading the full response body
   - did not remove the EOS completion problem
-- directly pre-resolving the redirect in the Python implementation
-  - explained part of the behavior, but the attempted implementation was not
-    yet robust enough to keep
+- staging through a local temporary file and then re-uploading
+  - stable, but slower than the fully streamed path because it serialized the
+    download and upload legs
 - trying `Expect: 100-continue`
   - did not produce a safe, convincing fix
 
@@ -178,14 +186,15 @@ treated as dead ends unless revisited carefully.
 
 ## Safe Improvements That Were Kept
 
-Not every improvement from the investigation was discarded.
+The improvements that were kept are:
 
-The small safe optimization that was kept was:
-
+- a dedicated streaming HTTP upload path for `gfal cp`, while keeping buffered
+  writes for generic `save` / `open(..., "wb")`
+- redirect-aware EOS namespace handling for streamed HTTP writes
+- a true streaming HTTP GET reader for copy operations, instead of the slower
+  default fsspec HTTP reader
 - avoid an unnecessary `bytes()` copy in the streaming writer when the chunk is
   already a `bytes` object
-
-This is a minor optimization, but it is correct and low-risk.
 
 ## Recommended Benchmark Matrix Going Forward
 
@@ -213,19 +222,22 @@ Keep these variables identical across runs:
 
 ## Current Conclusion
 
-The investigation reached three practical conclusions:
+The investigation reached four practical conclusions:
 
 1. A real HTTP destination buffering bug was found and fixed.
-2. `gfal` is reasonably competitive with `gfal2-util` for local uploads and for
-   XRootD transfers.
-3. The remaining large gap is in HTTPS uploads to EOS, especially for
-   `eospublic -> eospilot`, and it appears to be tied to EOS's redirect-based
-   upload flow rather than to a simple Python throughput problem.
+2. The EOS HTTPS upload flow really does depend on understanding the namespace
+   redirect to the signed data-node URL.
+3. The final performance breakthrough came from fixing the HTTP source read
+   path, not only from tuning the destination write path.
+4. On the actual CI pilot destination, `gfal` now reaches parity with
+   `gfal2-util` for the hardest `https -> https` public-file benchmark, while
+   staying at parity or near-parity for the other benchmarked scenarios.
 
-So the work is incomplete from a performance point of view:
+One practical warning remains:
 
-- we improved correctness and removed one major bottleneck
-- but we have not yet achieved parity with `gfal2-util` for the hardest HTTPS
-  case
+- benchmark results depend on using the same pilot destination area as CI
+- some ad hoc EOS pilot paths can behave differently from the CI path, both for
+  redirects and for write permissions
 
-That remaining gap should be treated as an active follow-up item, not as solved.
+So future benchmarking should always use the CI destination path when making
+performance claims.

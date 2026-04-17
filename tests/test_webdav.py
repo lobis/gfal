@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import posixpath
+import queue
 import socket
 import ssl
 import threading
@@ -27,6 +28,7 @@ from gfal.core.webdav import (
     _http_fs_opts,
     _parse_propfind,
     _should_suppress_loop_exception,
+    _StreamingRequestsGetFile,
     _StreamingRequestsPutFile,
     _SyncAiohttpSession,
 )
@@ -412,8 +414,15 @@ class TestSyncAiohttpSession:
                 self.closed = False
                 self.close_cancelled = False
 
-            async def request(self, method, url, headers=None, data=None):
-                del method, url, headers, data
+            async def request(
+                self,
+                method,
+                url,
+                headers=None,
+                data=None,
+                allow_redirects=True,
+            ):
+                del method, url, headers, data, allow_redirects
                 return _FakeResponse()
 
             async def close(self):
@@ -562,8 +571,15 @@ class TestSyncAiohttpSession:
                 self.should_fail = should_fail
                 self.closed = False
 
-            async def request(self, method, url, headers=None, data=None):
-                del method, url, headers, data
+            async def request(
+                self,
+                method,
+                url,
+                headers=None,
+                data=None,
+                allow_redirects=True,
+            ):
+                del method, url, headers, data, allow_redirects
                 if self.should_fail:
                     raise aiohttp.ClientConnectionError("Connection lost")
                 return _FakeResponse()
@@ -601,6 +617,68 @@ class TestSyncAiohttpSession:
         assert len(sessions) == 3
         assert sessions[0].closed is True
         assert sessions[1].closed is True
+
+    def test_request_upload_stream_async_uses_fixed_length_payload(self, monkeypatch):
+        seen = {}
+
+        class _FakeWriter:
+            def __init__(self):
+                self.chunks = []
+
+            async def write(self, chunk):
+                self.chunks.append(chunk)
+
+        class _FakeResponse:
+            status = 201
+            headers = {"Content-Length": "0"}
+            url = "https://example.org/file"
+
+            async def read(self):
+                return b""
+
+            def close(self):
+                return None
+
+        class _FakeSession:
+            def __init__(self):
+                self.closed = False
+
+            async def request(self, method, url, headers=None, data=None):
+                del method, url, headers
+                seen["size"] = getattr(data, "size", None)
+                writer = _FakeWriter()
+                await data.write(writer)
+                seen["body"] = b"".join(writer.chunks)
+                return _FakeResponse()
+
+            async def close(self):
+                self.closed = True
+
+        fake_session = _FakeSession()
+        monkeypatch.setattr(
+            _SyncAiohttpSession,
+            "_make_client_session",
+            lambda self, timeout: fake_session,
+        )
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        body_queue: queue.Queue[object] = queue.Queue()
+        body_queue.put(b"payload")
+        body_queue.put(_STREAM_EOF)
+
+        resp = asyncio.run(
+            session._request_upload_stream_async(
+                "PUT",
+                "https://example.org/file",
+                body_queue=body_queue,
+                content_length=7,
+            )
+        )
+
+        assert resp.status_code == 201
+        assert seen["size"] == 7
+        assert seen["body"] == b"payload"
+        assert fake_session.closed is True
 
 
 # ---------------------------------------------------------------------------
@@ -1232,13 +1310,18 @@ class TestStreamingRequestsPutFile:
         session.request_upload_stream.return_value = upload_future
 
         payload = b"payload"
-        writer = _StreamingRequestsPutFile(session, "https://example.org/file")
+        writer = _StreamingRequestsPutFile(
+            session,
+            "https://example.org/file",
+            content_length=len(payload),
+        )
         assert writer.write(payload) == len(payload)
         writer.close()
 
         body_queue = session.request_upload_stream.call_args.kwargs["body_queue"]
         first_item = body_queue.get_nowait()
         assert first_item is payload
+        assert session.request_upload_stream.call_args.kwargs["content_length"] == 7
 
     def test_write_starts_upload_before_close(self):
         first_chunk = threading.Event()
@@ -1251,10 +1334,11 @@ class TestStreamingRequestsPutFile:
                 url,
                 *,
                 body_queue,
+                content_length,
                 timeout,
                 headers=None,
             ):
-                del method, url, timeout, headers
+                del method, url, content_length, timeout, headers
 
                 def _consume():
                     chunk = body_queue.get(timeout=1)
@@ -1288,3 +1372,99 @@ class TestStreamingRequestsPutFile:
             writer.close()
 
         session.request_upload_stream.assert_called_once()
+
+
+class TestWebDAVStreamWriteResolution:
+    def test_open_stream_write_resolves_eos_redirect(self):
+        fs = WebDAVFileSystem()
+        response = MagicMock()
+        response.status_code = 307
+        response.headers = {
+            "Location": "http://data-node.cern.ch:8443/eos/test/file?token=abc"
+        }
+        fs._session.put = MagicMock(return_value=response)
+
+        writer = fs.open_stream_write(
+            "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/file.bin",
+            content_length=123,
+        )
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        upload_response = MagicMock()
+        upload_response.status_code = 201
+        upload_response.headers = {}
+        upload_future.set_result(upload_response)
+        writer._upload_future = upload_future
+
+        assert writer._url == "http://data-node.cern.ch:8443/eos/test/file?token=abc"
+        fs._session.put.assert_called_once_with(
+            "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/file.bin",
+            data=b"",
+            timeout=fs._timeout,
+            headers={"Content-Length": "0"},
+            allow_redirects=False,
+        )
+        assert writer._content_length == 123
+        writer.close()
+
+    def test_open_stream_write_skips_preflight_for_non_eos_urls(self):
+        fs = WebDAVFileSystem()
+        fs._session.put = MagicMock()
+
+        writer = fs.open_stream_write(
+            "https://example.org/upload.bin",
+            content_length=321,
+        )
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        upload_response = MagicMock()
+        upload_response.status_code = 201
+        upload_response.headers = {}
+        upload_future.set_result(upload_response)
+        writer._upload_future = upload_future
+
+        assert writer._url == "https://example.org/upload.bin"
+        assert writer._content_length == 321
+        fs._session.put.assert_not_called()
+        writer.close()
+
+
+class TestWebDAVStreamRead:
+    def test_streaming_get_file_reads_from_response_queue(self):
+        body_queue: queue.Queue[object] = queue.Queue()
+        body_queue.put(b"abclo")
+        body_queue.put(b"world")
+        body_queue.put(_STREAM_EOF)
+        completion_future: concurrent.futures.Future = concurrent.futures.Future()
+        completion_future.set_result(None)
+        response = MagicMock()
+        response._body_queue = body_queue
+        response.close = MagicMock()
+
+        reader = _StreamingRequestsGetFile(response)
+
+        assert reader.read(3) == b"abc"
+        assert reader.read(4) == b"lowo"
+        assert reader.read(10) == b"rld"
+        assert reader.read(1) == b""
+        reader.close()
+        response.close.assert_called_once()
+
+    def test_open_stream_read_uses_streaming_get_session(self):
+        fs = WebDAVFileSystem()
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {}
+        response._body_queue = queue.Queue()
+        completion_future: concurrent.futures.Future = concurrent.futures.Future()
+        completion_future.set_result(None)
+        response.close = MagicMock()
+        fs._session.request = MagicMock(return_value=response)
+
+        reader = fs.open_stream_read("https://example.org/data.bin")
+
+        assert isinstance(reader, _StreamingRequestsGetFile)
+        fs._session.request.assert_called_once_with(
+            "GET",
+            "https://example.org/data.bin",
+            timeout=fs._timeout,
+            stream=True,
+        )
