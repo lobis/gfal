@@ -480,15 +480,25 @@ class TestSplitTimestampNs:
         assert 0 <= nanos < 1_000_000_000
 
     def test_overflow_nanoseconds(self):
-        # A timestamp that produces nanoseconds >= 1e9 due to floating point
-        # This tests the overflow correction path
-        seconds, nanos = split_timestamp_ns(0.9999999999)
+        # Construct a timestamp where floating point rounding causes nanos >= 1e9
+        # e.g. 1.9999999999 -> seconds=1, nanos rounds to 1_000_000_000
+        # The overflow correction should bump seconds and reduce nanos
+        seconds, nanos = split_timestamp_ns(1.9999999999)
         assert 0 <= nanos < 1_000_000_000
+        assert seconds >= 1
 
     def test_exact_integer(self):
         seconds, nanos = split_timestamp_ns(42.0)
         assert seconds == 42
         assert nanos == 0
+
+    def test_overflow_correction_explicit(self):
+        # Directly test the overflow path by finding a value that triggers it
+        # When round((ts - int(ts)) * 1e9) >= 1e9
+        # Use a value very close to the next integer
+        ts = 100 + (1 - 1e-10)  # 99.9999999999
+        seconds, nanos = split_timestamp_ns(ts)
+        assert 0 <= nanos < 1_000_000_000
 
 
 # ---------------------------------------------------------------------------
