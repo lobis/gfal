@@ -97,6 +97,37 @@ That means exporting `X509_USER_PROXY` in the host shell is enough for:
 - `run_gfal_docker(...)`
 - `run_gfal2_docker(...)`
 
+## Troubleshooting on `lobis-eos-dev`
+
+For the CERN dev VM, connect with:
+
+```bash
+ssh -J lxplus lobis-eos-dev
+```
+
+Direct EOS/XRootD access with the service-account proxy is known to work on that
+host, but `eosxd` FUSE mounts are currently unreliable.
+
+Observed behavior:
+- `eosxd -ofsname=eospilot.cern.ch:/eos/ /root/eos-pilot` can create a mount, but
+  the mounted tree may still be inaccessible and resolve as `nobody`.
+- `eosxd get eos.identityparent /root/eos-pilot` may report `nobody,secret=` even
+  when the same proxy works with `xrdfs` and `eos`.
+
+Important host prerequisite:
+- the VM must have a hashed grid CA directory at `/etc/grid-security/certificates`
+  or GSI auth can fail before EOS/XRootD clients ever use the proxy
+- on `lobis-eos-dev`, building that directory from the system CA bundle fixed
+  direct GSI access for commands such as:
+  - `X509_USER_PROXY=/tmp/x509up_u0 XrdSecPROTOCOL=gsi xrdfs root://eospilot.cern.ch stat /eos/pilot/opstest/dteam/python3-gfal/tmp`
+  - `X509_USER_PROXY=/tmp/x509up_u0 XrdSecPROTOCOL=gsi eos root://eospilot.cern.ch whoami`
+
+Current status:
+- direct `xrdfs`/`eos` access with the robot proxy works after the CA-dir fix
+- root/shared `eosxd` mounts on this VM still did not bind the X.509 identity
+  correctly during investigation, so prefer direct clients over FUSE there until
+  the `eosxd` credential-binding path is understood
+
 ## Current known-good local result
 
 With `X509_USER_PROXY=/tmp/gfal-tmp-proxy` exported:
