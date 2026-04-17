@@ -1758,3 +1758,390 @@ class TestEosPilotCopyMode:
         )
 
         assert rc == 0, err
+
+
+# ---------------------------------------------------------------------------
+# TestEosPilotRecursiveCopy
+# ---------------------------------------------------------------------------
+
+
+@requires_eospilot
+@requires_proxy
+class TestEosPilotRecursiveCopy:
+    """Recursive copy (-r) between local and EOS HTTPS."""
+
+    def test_upload_directory_tree_to_eos(self, proxy_cert, pilot_dir, tmp_path):
+        """cp -r of a local dir to EOS should upload all files recursively."""
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        (srcdir / "a.txt").write_text("file a")
+        (srcdir / "b.txt").write_text("file b")
+        subdir = srcdir / "sub"
+        subdir.mkdir()
+        (subdir / "c.txt").write_text("file c")
+
+        dst = f"{pilot_dir}/uploaded_tree"
+        rc, out, err = _run("cp", proxy_cert, "-r", srcdir.as_uri(), dst, timeout=60)
+        assert rc == 0, err
+
+        # Verify each file exists and has the correct content
+        for name, content in [("a.txt", "file a"), ("b.txt", "file b")]:
+            rc, out, err = _run("cat", proxy_cert, f"{dst}/{name}")
+            assert rc == 0, f"{name}: {err}"
+            assert out == content
+
+        rc, out, err = _run("cat", proxy_cert, f"{dst}/sub/c.txt")
+        assert rc == 0, err
+        assert out == "file c"
+
+    def test_download_directory_tree_from_eos(self, proxy_cert, pilot_dir, tmp_path):
+        """cp -r of an EOS dir to local should recreate the full tree."""
+        # First upload a tree
+        srcdir = tmp_path / "src"
+        srcdir.mkdir()
+        (srcdir / "x.bin").write_bytes(b"xdata")
+        (srcdir / "y.bin").write_bytes(b"ydata")
+        sub = srcdir / "nested"
+        sub.mkdir()
+        (sub / "z.bin").write_bytes(b"zdata")
+
+        remote = f"{pilot_dir}/dl_tree"
+        rc, out, err = _run("cp", proxy_cert, "-r", srcdir.as_uri(), remote, timeout=60)
+        assert rc == 0, err
+
+        # Now download it back
+        dstdir = tmp_path / "dst"
+        rc, out, err = _run("cp", proxy_cert, "-r", remote, dstdir.as_uri(), timeout=60)
+        assert rc == 0, err
+
+        assert (dstdir / "x.bin").read_bytes() == b"xdata"
+        assert (dstdir / "y.bin").read_bytes() == b"ydata"
+        assert (dstdir / "nested" / "z.bin").read_bytes() == b"zdata"
+
+    def test_recursive_copy_with_parallel_1(self, proxy_cert, pilot_dir, tmp_path):
+        """--parallel 1 forces sequential upload; all files should still arrive."""
+        srcdir = tmp_path / "par1_src"
+        srcdir.mkdir()
+        for i in range(5):
+            (srcdir / f"f{i}.bin").write_bytes(f"content {i}".encode())
+
+        dst = f"{pilot_dir}/par1_dst"
+        rc, out, err = _run(
+            "cp", proxy_cert, "-r", "--parallel", "1", srcdir.as_uri(), dst, timeout=90
+        )
+        assert rc == 0, err
+
+        for i in range(5):
+            rc, out, err = _run("stat", proxy_cert, f"{dst}/f{i}.bin")
+            assert rc == 0, f"f{i}.bin missing: {err}"
+
+    def test_recursive_copy_with_parallel_3(self, proxy_cert, pilot_dir, tmp_path):
+        """--parallel 3 uploads 3 files concurrently; all files should arrive."""
+        srcdir = tmp_path / "par3_src"
+        srcdir.mkdir()
+        for i in range(6):
+            (srcdir / f"p{i}.bin").write_bytes(f"parallel file {i}".encode())
+
+        dst = f"{pilot_dir}/par3_dst"
+        rc, out, err = _run(
+            "cp", proxy_cert, "-r", "--parallel", "3", srcdir.as_uri(), dst, timeout=90
+        )
+        assert rc == 0, err
+
+        for i in range(6):
+            rc, out, err = _run("stat", proxy_cert, f"{dst}/p{i}.bin")
+            assert rc == 0, f"p{i}.bin missing: {err}"
+
+    def test_recursive_copy_continues_after_partial_failure(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """Without --abort-on-failure, recursive copy continues past EEXIST errors."""
+        import errno as _errno
+
+        srcdir = tmp_path / "partial_src"
+        srcdir.mkdir()
+        (srcdir / "existing.bin").write_bytes(b"original")
+        (srcdir / "new.bin").write_bytes(b"fresh")
+
+        dst = f"{pilot_dir}/partial_dst"
+        # Create the destination dir and pre-upload one file so it already exists
+        rc, out, err = _run("mkdir", proxy_cert, dst)
+        assert rc == 0, err
+        rc, out, err = _run(
+            "cp", proxy_cert, (srcdir / "existing.bin").as_uri(), f"{dst}/existing.bin"
+        )
+        assert rc == 0, err
+
+        # Recursive copy: existing.bin should fail with EEXIST, new.bin should succeed
+        rc, out, err = _run("cp", proxy_cert, "-r", srcdir.as_uri(), dst, timeout=60)
+
+        assert rc == _errno.EEXIST, f"Expected EEXIST (17) but got rc={rc}: {err}"
+
+        # The new file must have been copied despite the partial failure
+        rc_new, _, _ = _run("stat", proxy_cert, f"{dst}/new.bin")
+        assert rc_new == 0, "new.bin should have been copied despite partial failure"
+
+    def test_recursive_copy_abort_on_failure(self, proxy_cert, pilot_dir, tmp_path):
+        """--abort-on-failure stops recursive copy after the first error."""
+        srcdir = tmp_path / "abort_src"
+        srcdir.mkdir()
+        (srcdir / "existing.bin").write_bytes(b"pre-exists")
+        (srcdir / "also_new.bin").write_bytes(b"also new")
+
+        dst = f"{pilot_dir}/abort_dst"
+        rc, out, err = _run("mkdir", proxy_cert, dst)
+        assert rc == 0, err
+        rc, out, err = _run(
+            "cp", proxy_cert, (srcdir / "existing.bin").as_uri(), f"{dst}/existing.bin"
+        )
+        assert rc == 0, err
+
+        # With --abort-on-failure, the copy should fail immediately
+        rc, out, err = _run(
+            "cp",
+            proxy_cert,
+            "-r",
+            "--abort-on-failure",
+            srcdir.as_uri(),
+            dst,
+            timeout=60,
+        )
+        assert rc != 0, "Expected failure with --abort-on-failure"
+
+    def test_recursive_copy_with_checksum(self, proxy_cert, pilot_dir, tmp_path):
+        """Recursive copy with -K ADLER32 should verify each file."""
+        srcdir = tmp_path / "ck_src"
+        srcdir.mkdir()
+        (srcdir / "ck1.bin").write_bytes(b"checksum data 1")
+        (srcdir / "ck2.bin").write_bytes(b"checksum data 2")
+
+        dst = f"{pilot_dir}/ck_dst"
+        rc, out, err = _run(
+            "cp", proxy_cert, "-r", "-K", "ADLER32", srcdir.as_uri(), dst, timeout=60
+        )
+        assert rc == 0, err
+
+    def test_recursive_dry_run_prints_but_does_not_copy(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """--dry-run on a directory should print the plan but upload nothing."""
+        srcdir = tmp_path / "dry_src"
+        srcdir.mkdir()
+        (srcdir / "dry1.bin").write_bytes(b"dry run data")
+
+        dst = f"{pilot_dir}/dry_dst"
+        rc, out, err = _run(
+            "cp", proxy_cert, "-r", "--dry-run", srcdir.as_uri(), dst, timeout=30
+        )
+        assert rc == 0, err
+        assert "dry1.bin" in out or "Copy" in out
+
+        # Destination directory should NOT have been created
+        rc, _, _ = _run("stat", proxy_cert, dst)
+        assert rc != 0, "dry-run should not create the destination"
+
+    def test_recursive_copy_force_overwrites_existing_files(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """With -f, recursive copy should overwrite existing destination files."""
+        srcdir = tmp_path / "force_src"
+        srcdir.mkdir()
+        (srcdir / "overwrite_me.bin").write_bytes(b"version1")
+
+        dst = f"{pilot_dir}/force_dst"
+        # First upload
+        rc, out, err = _run("cp", proxy_cert, "-r", srcdir.as_uri(), dst, timeout=60)
+        assert rc == 0, err
+
+        # Modify the source and force-overwrite
+        (srcdir / "overwrite_me.bin").write_bytes(b"version2")
+        rc, out, err = _run(
+            "cp", proxy_cert, "-r", "-f", srcdir.as_uri(), dst, timeout=60
+        )
+        assert rc == 0, err
+
+        # Verify the new content
+        rc, out, err = _run("cat", proxy_cert, f"{dst}/overwrite_me.bin")
+        assert rc == 0, err
+        assert out == "version2"
+
+    def test_recursive_copy_compare_checksum_skips_matching(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """Recursive --compare checksum should skip unchanged files."""
+        srcdir = tmp_path / "cmp_ck_src"
+        srcdir.mkdir()
+        (srcdir / "same.bin").write_bytes(b"same content")
+        (srcdir / "new.bin").write_bytes(b"new content")
+
+        dst = f"{pilot_dir}/cmp_ck_dst"
+        # Pre-upload the "same" file so it already exists with matching content
+        rc, out, err = _run("mkdir", proxy_cert, dst)
+        assert rc == 0, err
+        rc, out, err = _run(
+            "cp", proxy_cert, (srcdir / "same.bin").as_uri(), f"{dst}/same.bin"
+        )
+        assert rc == 0, err
+
+        rc, out, err = _run(
+            "cp",
+            proxy_cert,
+            "-r",
+            "--compare",
+            "checksum",
+            srcdir.as_uri(),
+            dst,
+            timeout=60,
+        )
+        assert rc == 0, err
+        assert "same.bin" in out
+        assert "matching" in out
+
+
+# ---------------------------------------------------------------------------
+# TestEosPilotCopyToStdout
+# ---------------------------------------------------------------------------
+
+
+@requires_eospilot
+@requires_proxy
+class TestEosPilotCopyToStdout:
+    """Tests for ``gfal cp <eos-url> -`` (stream remote content to stdout)."""
+
+    def test_copy_remote_file_to_stdout(self, proxy_cert, pilot_dir, tmp_path):
+        """Download from EOS to stdout using '-' as destination."""
+        content = b"streamed to stdout from eospilot\n"
+        src = tmp_path / "stdout_src.bin"
+        src.write_bytes(content)
+
+        dst = f"{pilot_dir}/stdout_src.bin"
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        rc, out, err = _run("cp", proxy_cert, dst, "-")
+        assert rc == 0, err
+        assert content.decode() in out
+
+    def test_copy_remote_text_file_to_stdout(self, proxy_cert, pilot_dir, tmp_path):
+        """Text file downloaded to stdout via '-' should match the original."""
+        text = "line one\nline two\nline three\n"
+        src = tmp_path / "stdout_text.txt"
+        src.write_text(text)
+
+        dst = f"{pilot_dir}/stdout_text.txt"
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        rc, out, err = _run("cp", proxy_cert, dst, "-")
+        assert rc == 0, err
+        assert out == text
+
+    def test_copy_public_file_to_stdout(self, proxy_cert):
+        """The well-known public file can be streamed to stdout."""
+        rc, out, err = _run("cp", proxy_cert, _PUBSRC, "-")
+        assert rc == 0, err
+        # The public file is the ROOT C macro; just check it has content
+        assert len(out) == _PUBSRC_SIZE
+
+
+# ---------------------------------------------------------------------------
+# TestEosPilotXrootdRecursiveCopy
+# ---------------------------------------------------------------------------
+
+
+@requires_eospilot
+@requires_proxy
+@requires_xrootd_env
+class TestEosPilotXrootdRecursiveCopy:
+    """Recursive copy (-r) tests over root:// to/from eospilot."""
+
+    _XROOTD_BASE = "root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
+
+    def _run(self, cmd, proxy_cert, *args, **kwargs):
+        if _xrootd_gsi_native():
+            return run_gfal(cmd, *args, **kwargs)
+        return run_gfal_docker(cmd, *args, proxy_cert=proxy_cert)
+
+    @pytest.fixture
+    def xrootd_pilot_dir(self, proxy_cert):
+        """Create and clean up a scratch dir accessible as root://."""
+        name = f"pytest-xrd-rec-{uuid.uuid4().hex[:8]}"
+        https_url = f"{_PILOT_BASE}/{name}"
+        xrd_url = f"{self._XROOTD_BASE}/{name}"
+        rc, out, err = run_gfal("mkdir", "-E", proxy_cert, "--no-verify", https_url)
+        require_test_prereq(
+            rc == 0, f"Could not create xrootd_pilot_dir: {err.strip()}"
+        )
+        yield xrd_url
+        run_gfal("rm", "-r", "-E", proxy_cert, "--no-verify", https_url)
+
+    def test_upload_directory_to_xrootd(self, proxy_cert, xrootd_pilot_dir, tmp_path):
+        """cp -r local_dir root://... should upload all files."""
+        srcdir = tmp_path / "xrd_rec_src"
+        srcdir.mkdir()
+        (srcdir / "xrd_f1.bin").write_bytes(b"xrd file one")
+        (srcdir / "xrd_f2.bin").write_bytes(b"xrd file two")
+
+        dst = f"{xrootd_pilot_dir}/xrd_rec_dst"
+        rc, out, err = self._run(
+            "cp", proxy_cert, "-r", srcdir.as_uri(), dst, timeout=90
+        )
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, f"{dst}/xrd_f1.bin")
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, f"{dst}/xrd_f2.bin")
+        assert rc == 0, err
+
+    def test_download_directory_from_xrootd(
+        self, proxy_cert, xrootd_pilot_dir, tmp_path
+    ):
+        """cp -r root://... local_dir should recreate all files locally."""
+        srcdir = tmp_path / "xrd_dl_src"
+        srcdir.mkdir()
+        (srcdir / "dl_a.bin").write_bytes(b"download a")
+        (srcdir / "dl_b.bin").write_bytes(b"download b")
+
+        remote = f"{xrootd_pilot_dir}/xrd_dl_tree"
+        rc, out, err = self._run(
+            "cp", proxy_cert, "-r", srcdir.as_uri(), remote, timeout=90
+        )
+        assert rc == 0, err
+
+        dstdir = tmp_path / "xrd_dl_dst"
+        rc, out, err = self._run(
+            "cp", proxy_cert, "-r", remote, dstdir.as_uri(), timeout=90
+        )
+        assert rc == 0, err
+
+        assert (dstdir / "dl_a.bin").read_bytes() == b"download a"
+        assert (dstdir / "dl_b.bin").read_bytes() == b"download b"
+
+    def test_recursive_xrootd_to_xrootd(self, proxy_cert, xrootd_pilot_dir, tmp_path):
+        """cp -r root://...src root://...dst should copy all files server-side."""
+        srcdir = tmp_path / "xrd_ss_src"
+        srcdir.mkdir()
+        (srcdir / "ss_f1.bin").write_bytes(b"server side 1")
+        (srcdir / "ss_f2.bin").write_bytes(b"server side 2")
+
+        src_remote = f"{xrootd_pilot_dir}/xrd_ss_src"
+        dst_remote = f"{xrootd_pilot_dir}/xrd_ss_dst"
+
+        # Upload via local→root
+        rc, out, err = self._run(
+            "cp", proxy_cert, "-r", srcdir.as_uri(), src_remote, timeout=90
+        )
+        assert rc == 0, err
+
+        # Copy root→root
+        rc, out, err = self._run(
+            "cp", proxy_cert, "-r", src_remote, dst_remote, timeout=90
+        )
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, f"{dst_remote}/ss_f1.bin")
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, f"{dst_remote}/ss_f2.bin")
+        assert rc == 0, err
