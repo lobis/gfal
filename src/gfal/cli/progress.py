@@ -144,6 +144,9 @@ class RichProgress:
             return
         self._started_flag = False
         try:
+            task = self.rich_progress.tasks[self.task_id]
+            if success and task.total is not None:
+                self.rich_progress.update(self.task_id, completed=task.total)
             if success:
                 self.rich_progress.update(
                     self.task_id, description=f"{self.label} [green]\\[DONE][/]"

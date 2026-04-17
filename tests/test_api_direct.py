@@ -773,6 +773,151 @@ class TestGfalClientLibraryHelpers:
                 options=CopyOptions(tpc="never"),
             )
 
+    def test_copy_treats_late_remote_disconnect_after_full_write_as_success(self):
+        client = GfalClient()
+
+        class _LateDisconnectWriter(io.BytesIO):
+            def close(self):
+                super().close()
+                raise ConnectionError("Connection lost")
+
+        class _RemoteWriteFs:
+            def __init__(self):
+                self.size = 0
+
+            def info(self, path):
+                if path == "/dst/file.txt" and self.size:
+                    return {
+                        "name": path,
+                        "type": "file",
+                        "size": self.size,
+                        "mode": stat.S_IFREG | 0o644,
+                    }
+                raise FileNotFoundError(path)
+
+            def open(self, path, mode):
+                assert mode == "wb"
+                writer = _LateDisconnectWriter()
+                original_write = writer.write
+
+                def _write(data):
+                    written = original_write(data)
+                    self.size += written
+                    return written
+
+                writer.write = _write
+                return writer
+
+            def rm(self, path, recursive=False):
+                raise AssertionError(
+                    "Late-successful remote writes must not be cleaned up"
+                )
+
+        class _SourceFs:
+            def info(self, path):
+                return {
+                    "name": path,
+                    "type": "file",
+                    "size": 7,
+                    "mode": stat.S_IFREG | 0o644,
+                }
+
+            def open(self, path, mode):
+                assert mode == "rb"
+                return nullcontext(io.BytesIO(b"payload"))
+
+        src_fs = _SourceFs()
+        dst_fs = _RemoteWriteFs()
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect):
+            client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
+
+        assert dst_fs.size == 7
+
+    def test_copy_reports_full_progress_after_successful_tpc(self):
+        client = GfalClient()
+        progress = []
+        started = []
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch(
+                "gfal.core.tpc.do_tpc",
+                side_effect=lambda *args, **kwargs: kwargs["start_callback"](),
+            ),
+        ):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="auto"),
+                progress_callback=progress.append,
+                start_callback=lambda: started.append(True),
+            )
+
+        assert started == [True]
+        assert progress[-1] == 7
+
+    def test_transfer_destination_url_skips_remote_mtime_without_explicit_flag(self):
+        client = GfalClient()
+        src_st = client.stat(Path(__file__).as_uri())
+
+        url = client._async_client._transfer_destination_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            src_st,
+            CopyOptions(preserve_times=True, preserve_times_explicit=False),
+        )
+
+        assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
+    def test_transfer_destination_url_uses_remote_mtime_with_explicit_flag(self):
+        client = GfalClient()
+        src_st = client.stat(Path(__file__).as_uri())
+
+        url = client._async_client._transfer_destination_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            src_st,
+            CopyOptions(preserve_times=True, preserve_times_explicit=True),
+        )
+
+        assert "eos.mtime=" in url
+
+    def test_copy_url_skips_eos_app_annotation_for_https(self):
+        client = GfalClient(app="python3-gfal-cli")
+
+        url = client._async_client._copy_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
 
 class TestAsyncGfalClient:
     @pytest.mark.asyncio

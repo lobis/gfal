@@ -23,6 +23,7 @@ from gfal.core.webdav import (
     WebDAVFileSystem,
     _http_fs_opts,
     _parse_propfind,
+    _RequestsPutFile,
     _SyncAiohttpSession,
 )
 
@@ -969,3 +970,16 @@ class TestWebDAVChecksum:
 
         with pytest.raises(NotImplementedError):
             fs.checksum("https://server/file", "adler32")
+
+
+class TestRequestsPutFile:
+    def test_close_does_not_retry_put_after_connection_error(self):
+        session = MagicMock()
+        session.put.side_effect = aiohttp.ClientConnectionError("Connection lost")
+        writer = _RequestsPutFile(session, "https://example.org/file")
+        writer.write(b"payload")
+
+        with pytest.raises(aiohttp.ClientConnectionError):
+            writer.close()
+
+        session.put.assert_called_once()

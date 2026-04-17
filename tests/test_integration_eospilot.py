@@ -301,6 +301,15 @@ def _verify_remote_batch(proxy_cert, pilot_dir, records):
 @requires_eospilot
 @requires_proxy
 class TestEosPilotStreamingCopy:
+    def test_http_to_http_copy_from_public_uses_default_gfal2_mode(
+        self, proxy_cert, pilot_dir
+    ):
+        """Default public->pilot HTTPS copy should prefer the gfal2-compatible mode."""
+        dst = f"{pilot_dir}/default_mode_from_public.C"
+        rc, out, err = _run("cp", proxy_cert, _PUBSRC, dst)
+        assert rc == 0, err
+        assert "(TPC pull)" in out or "(streamed)" in out
+
     def test_copy_small_file(self, proxy_cert, pilot_dir, tmp_path):
         """Download from eospublic and re-upload to pilot dir."""
         local = tmp_path / "src.C"

@@ -75,7 +75,7 @@ class CommandCopy(base.CommandBase):
         "--preserve-times",
         action="store_true",
         default=True,
-        help="preserve source access and modification times when supported (default: on)",
+        help="preserve source access and modification times when supported",
     )
     @base.arg(
         "--no-preserve-times",
@@ -132,8 +132,9 @@ class CommandCopy(base.CommandBase):
         choices=["pull", "push", "streamed"],
         default=None,
         help="copy mode (gfal2-util compatible): pull/push = TPC with that direction; "
-        "streamed = force client-side streaming. Overrides --tpc/--tpc-only/--tpc-mode "
-        "when specified.",
+        "streamed = force client-side streaming. By default, HTTP->HTTP and "
+        "root->root copies try pull-mode TPC first with fallback to streaming. "
+        "Overrides --tpc/--tpc-only/--tpc-mode when specified.",
     )
     @base.arg(
         "--just-copy",
@@ -322,11 +323,14 @@ class CommandCopy(base.CommandBase):
                 expected_value=expected,
             )
 
-        tpc = "never"
+        tpc = "auto"
         if getattr(self.params, "tpc_only", False):
             tpc = "only"
         elif getattr(self.params, "tpc", False):
             tpc = "auto"
+
+        argv = self.argv or []
+        preserve_times_explicit = "--preserve-times" in argv
 
         return CopyOptions(
             overwrite=getattr(self.params, "force", False),
@@ -340,6 +344,7 @@ class CommandCopy(base.CommandBase):
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
             preserve_times=getattr(self.params, "preserve_times", True),
+            preserve_times_explicit=preserve_times_explicit,
             compare=getattr(self.params, "compare", None),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),
@@ -392,23 +397,37 @@ class CommandCopy(base.CommandBase):
         show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
         progress_started = [False]
         transfer_start = time.monotonic()
+        transfer_mode = ["streamed"]
 
         try:
             src_size = client.stat(src_url).st_size
         except Exception:
             src_size = None
 
+        def _transfer_label():
+            mode_labels = {
+                "streamed": "streamed",
+                "tpc-pull": "TPC pull",
+                "tpc-push": "TPC push",
+                "tpc-xrootd": "TPC xrootd",
+            }
+            mode = mode_labels.get(transfer_mode[0], transfer_mode[0])
+            return f"Copying {Path(src_url).name} ({mode})"
+
         def _start_progress():
             if progress_started[0]:
                 return
             progress_started[0] = True
             if show_progress:
-                self.progress_bar = Progress(f"Copying {Path(src_url).name}")
+                self.progress_bar = Progress(_transfer_label())
                 self.progress_bar.update(total_size=src_size if src_size else None)
                 self.progress_bar.start()
             else:
                 if not quiet:
-                    print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+                    print(
+                        f"{_transfer_label()} {src_size or 0} bytes  "
+                        f"{src_url}  =>  {dst_url}"
+                    )
 
         def _progress(bytes_transferred):
             _start_progress()
@@ -418,6 +437,9 @@ class CommandCopy(base.CommandBase):
                     total_size=src_size,
                     elapsed=time.monotonic() - transfer_start,
                 )
+
+        def _set_transfer_mode(mode):
+            transfer_mode[0] = mode
 
         def _warn(message):
             if quiet:
@@ -444,10 +466,17 @@ class CommandCopy(base.CommandBase):
                 progress_callback=_progress,
                 start_callback=_start_progress,
                 warn_callback=None if quiet else _warn,
+                transfer_mode_callback=_set_transfer_mode,
             )
             copy_failed = False
         finally:
             if progress_started[0] and show_progress:
+                if not copy_failed and src_size:
+                    self.progress_bar.update(
+                        curr_size=src_size,
+                        total_size=src_size,
+                        elapsed=time.monotonic() - transfer_start,
+                    )
                 self.progress_bar.stop(not copy_failed)
                 print()
 
