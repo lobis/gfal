@@ -12,13 +12,13 @@ matching the convention used by fsspec's HTTPFileSystem.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import io
 import queue
 import re
 import ssl
 import stat as stat_module
-import tempfile
 import threading
 import warnings
 from email.utils import parsedate_to_datetime
@@ -511,6 +511,84 @@ class _SyncAiohttpSession:
     ):
         return self.request("PUT", url, headers=headers, data=data, timeout=timeout)
 
+    async def _request_upload_stream_async(
+        self,
+        method: str,
+        url: str,
+        *,
+        body_queue: queue.Queue[object],
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> _SyncAiohttpResponse:
+        request_headers = dict(self.headers)
+        if headers:
+            request_headers.update(headers)
+
+        client_timeout = (
+            aiohttp.ClientTimeout(total=timeout)
+            if timeout is not None
+            else aiohttp.ClientTimeout(total=self._timeout)
+            if self._timeout is not None
+            else None
+        )
+
+        session = self._make_client_session(timeout=client_timeout)
+        resp = None
+
+        async def _iter_body():
+            while True:
+                item = await asyncio.to_thread(body_queue.get)
+                if item is _STREAM_EOF:
+                    break
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+
+        try:
+            resp = await session.request(
+                method,
+                url,
+                headers=request_headers,
+                data=_iter_body(),
+            )
+            body = await resp.read()
+            return _SyncAiohttpResponse(
+                method=method.upper(),
+                url=str(resp.url),
+                status_code=resp.status,
+                headers=dict(resp.headers),
+                content=body,
+            )
+        except asyncio.TimeoutError as e:
+            raise TimeoutError(url) from e
+        finally:
+            if resp is not None:
+                with contextlib.suppress(Exception):
+                    resp.close()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(session.close(), timeout=1)
+
+    def request_upload_stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        body_queue: queue.Queue[object],
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> concurrent.futures.Future:
+        loop = self._ensure_loop()
+        return asyncio.run_coroutine_threadsafe(
+            self._request_upload_stream_async(
+                method,
+                url,
+                body_queue=body_queue,
+                headers=headers,
+                timeout=timeout,
+            ),
+            loop,
+        )
+
 
 def _make_session(storage_options):
     """Build a synchronous aiohttp-backed session wrapper."""
@@ -664,21 +742,14 @@ def _raise_for_status(resp, url: str) -> None:
 
 
 class _RequestsPutFile(io.RawIOBase):
-    """Write-only file object that buffers data and sends an HTTP PUT on close.
-
-    Up to 64 MiB is kept in memory (via SpooledTemporaryFile); beyond that the
-    data is spilled to a temporary file on disk.  The PUT is issued as a single
-    streaming request when close() is called, so the server never sees a
-    partial upload unless close() raises an exception.
-    """
+    """Write-only file object that streams data to an HTTP PUT request."""
 
     def __init__(self, session, url: str, timeout: float | None = None) -> None:
         self._session = session
         self._url = url
         self._timeout = timeout
-        self._buf: tempfile.SpooledTemporaryFile = tempfile.SpooledTemporaryFile(  # noqa: SIM115
-            max_size=64 * 1024 * 1024
-        )
+        self._body_queue: queue.Queue[object] = queue.Queue(maxsize=4)
+        self._upload_future: concurrent.futures.Future | None = None
 
     # io.RawIOBase interface
     def readable(self) -> bool:
@@ -687,21 +758,46 @@ class _RequestsPutFile(io.RawIOBase):
     def writable(self) -> bool:
         return True
 
+    def _ensure_upload_started(self) -> None:
+        if self._upload_future is not None:
+            return
+        self._upload_future = self._session.request_upload_stream(
+            "PUT",
+            self._url,
+            body_queue=self._body_queue,
+            timeout=self._timeout,
+        )
+
+    def _check_upload_result(self) -> None:
+        if self._upload_future is None or not self._upload_future.done():
+            return
+        self._upload_future.result()
+
     def write(self, b) -> int:  # type: ignore[override]
-        return self._buf.write(b)
+        self._ensure_upload_started()
+        data = bytes(b)
+        while True:
+            self._check_upload_result()
+            try:
+                self._body_queue.put(data, timeout=0.1)
+                return len(data)
+            except queue.Full:
+                continue
 
     def close(self) -> None:
         if not self.closed:
             try:
-                self._buf.seek(0)
-                # Read the entire buffer. Since we use SpooledTemporaryFile with
-                # max_size=64MiB, this is safe for the single-shot PUT we issue
-                # on close().
-                data = self._buf.read()
-                resp = self._session.put(self._url, data=data, timeout=self._timeout)
+                self._ensure_upload_started()
+                while True:
+                    self._check_upload_result()
+                    try:
+                        self._body_queue.put(_STREAM_EOF, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                resp = self._upload_future.result()
                 _raise_for_status(resp, self._url)
             finally:
-                self._buf.close()
                 super().close()
 
 
