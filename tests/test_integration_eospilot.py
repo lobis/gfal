@@ -1562,15 +1562,20 @@ class TestEosPilotXrootd:
         # /etc/hostname contains the container/machine hostname — just non-empty
         assert out.strip()
 
-    def test_sum_adler32_xrootd(self, proxy_cert, xrootd_pilot_dir):
+    def test_sum_adler32_xrootd(self, proxy_cert, xrootd_pilot_dir, tmp_path):
         """ADLER32 checksum via root:// must match a locally computed value."""
         import zlib
 
-        hostname_bytes = Path("/etc/hostname").read_bytes()
-        expected = f"{zlib.adler32(hostname_bytes) & 0xFFFFFFFF:08x}"
+        # Use a temp file with known content instead of /etc/hostname, because
+        # when Docker is used (non-native GSI) the container has a different
+        # /etc/hostname from the host.
+        data = b"adler32 checksum test content for xrootd\n"
+        src = tmp_path / "xrd_sum_src.txt"
+        src.write_bytes(data)
+        expected = f"{zlib.adler32(data) & 0xFFFFFFFF:08x}"
 
         dst = f"{xrootd_pilot_dir}/xrd_sum.txt"
-        rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", dst)
+        rc, out, err = self._run("cp", proxy_cert, str(src), dst)
         assert rc == 0, err
 
         rc, out, err = self._run("sum", proxy_cert, dst, "ADLER32")
@@ -1686,8 +1691,9 @@ class TestEosPilotCompare:
         src.write_bytes(data)
         dst = f"{pilot_dir}/cmp_smtime.bin"
 
-        # Initial upload; --preserve-times (default) copies the mtime to EOS
-        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        # Initial upload; explicit --preserve-times injects eos.mtime into the
+        # URL so the server records the source file's mtime (not the upload time).
+        rc, out, err = _run("cp", proxy_cert, "--preserve-times", src.as_uri(), dst)
         assert rc == 0, err
 
         # Second upload with --compare size_mtime: same local file → skip

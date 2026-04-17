@@ -156,11 +156,24 @@ def _docker_run_command(
 
     proxy = proxy_cert or os.environ.get("X509_USER_PROXY", "")
 
-    volume_args = ["-v", f"{_REPO_ROOT}:/repo:ro"]
+    volume_args = [
+        "-v",
+        f"{_REPO_ROOT}:/repo:ro",
+        # Mount the host /tmp so that tests using local temp files (e.g.
+        # recursive copy with file:// URIs pointing to pytest tmp_path)
+        # can access them inside the container.
+        "-v",
+        "/tmp:/tmp",
+    ]
     env_args = []
 
     if proxy and Path(proxy).is_file():
-        volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
+        # When /tmp is already mounted, the proxy at /tmp/x509proxy is
+        # automatically available.  For proxies outside /tmp, add an
+        # explicit mount.
+        proxy_path = Path(proxy).resolve()
+        if not str(proxy_path).startswith("/tmp/"):
+            volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
         env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
 
     proc = subprocess.run(
@@ -195,11 +208,12 @@ def run_gfal_docker(
     Returns ``(returncode, stdout, stderr)`` as strings.
     """
     # XRootD runtime dependencies are pre-installed in the image from pyproject.toml.
-    # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
-    # but /repo is mounted read-only.
+    # Copy /repo to a writable dir first — hatch-vcs needs to write _version.py,
+    # but /repo is mounted read-only.  Use /var/tmp (not /tmp) because /tmp is
+    # bind-mounted from the host and may be shared with pytest tmp_path dirs.
     script = (
-        "cp -r /repo /tmp/gfal-src && "
-        "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        "cp -r /repo /var/tmp/gfal-src && "
+        "python3 -m pip install -q --no-deps /var/tmp/gfal-src > /dev/null 2>&1 && "
         f"python3 -c \"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:]; "
         'from gfal.cli.shell import main; main()"'
     )
