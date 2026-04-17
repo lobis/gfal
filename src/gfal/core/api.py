@@ -231,6 +231,19 @@ class AsyncGfalClient:
             return url
         return eos_app_url(url, self.app) or url
 
+    @staticmethod
+    def _url_path_join(base: str, name: str) -> str:
+        """Append *name* to the *path* component of *base*, preserving query/fragment.
+
+        Plain string concatenation breaks when *base* already contains a query
+        string (e.g. ``?eos.app=…``): the slash and filename would be appended
+        to the query value instead of the URL path.  This helper uses
+        ``urllib.parse`` to insert *name* into the correct component.
+        """
+        parsed = urlparse(base)
+        new_path = parsed.path.rstrip("/") + "/" + name
+        return urlunparse(parsed._replace(path=new_path))
+
     async def stat(self, url: str) -> StatResult:
         return await asyncio.to_thread(self._stat_sync, url)
 
@@ -556,7 +569,7 @@ class AsyncGfalClient:
             return None
 
         if dst_isdir:
-            dst_url = dst_url.rstrip("/") + "/" + Path(src_path.rstrip("/")).name
+            dst_url = self._url_path_join(dst_url, Path(src_path.rstrip("/")).name)
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
             dst_exists = False
             dst_isdir = False
@@ -656,8 +669,6 @@ class AsyncGfalClient:
         cancel_event: Optional[threading.Event],
     ) -> None:
         entries = src_fs.ls(src_path, detail=False)
-        src_url_base = src_url.rstrip("/") + "/"
-        dst_url_base = dst_url.rstrip("/") + "/"
 
         for entry_path in entries:
             if cancel_event is not None and cancel_event.is_set():
@@ -667,8 +678,8 @@ class AsyncGfalClient:
             if name in (".", ".."):
                 continue
             self._copy_sync(
-                src_url_base + name,
-                dst_url_base + name,
+                self._url_path_join(src_url, name),
+                self._url_path_join(dst_url, name),
                 options,
                 progress_callback,
                 start_callback,
