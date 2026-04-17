@@ -189,6 +189,21 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
 
 These are added automatically by `CommandBase.parse()`. Do not redeclare them in individual commands.
 
+## `GFAL_CLI_GFAL2` environment variable
+
+**This is an output-formatting flag only.** It does **not** delegate to the native
+gfal2 C library and does **not** change which filesystem backend is used. When set
+to `"1"` (the default in the test harness — see `helpers._subprocess_env()`),
+it enables strict gfal2-util compatibility mode:
+
+- Disables Rich markup, colors, and emoji via `get_console()`.
+- Uses plain-text output in `progress.py` (no progress bars / spinners).
+- Selects legacy formatting in `commands.py` for `stat`, `ls`, `sum` output.
+
+All actual I/O still goes through fsspec (local, HTTP/WebDAV, XRootD). The
+variable name is confusing — it means "format output like gfal2-util", **not**
+"use the gfal2 library".
+
 ## After every code change — mandatory checklist
 
 Before considering any task done, **both** of the following must pass:
