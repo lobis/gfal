@@ -206,7 +206,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
             cause = e.__cause__ or e
             raise RuntimeError(
                 f"Cannot load XRootD filesystem: {cause}\n"
-                "Install optional XRootD support with: python3 -m pip install 'gfal[xrootd]'"
+                "Install XRootD bindings in your environment, for example with: conda install -c conda-forge xrootd"
             ) from e
         return fs, path
 

@@ -20,7 +20,7 @@ import stat as stat_module
 import tempfile
 import threading
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
@@ -98,7 +98,7 @@ _RETRY_METHODS = frozenset(
 class HttpStatusError(Exception):
     """Simple HTTP status error carrying the attributes our callers inspect."""
 
-    def __init__(self, status: int, url: str, headers: Optional[dict[str, str]] = None):
+    def __init__(self, status: int, url: str, headers: dict[str, str] | None = None):
         self.status = status
         self.headers = headers or {}
         self.request_info = type(
@@ -147,8 +147,8 @@ class _SyncAiohttpSession:
         self._key = storage_options.get("client_key")
         if self._cert:
             self._ssl_context.load_cert_chain(self._cert, self._key or self._cert)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
 
         self.verify = self._verify
         self.cert = (self._cert, self._key or self._cert) if self._cert else None
@@ -186,9 +186,9 @@ class _SyncAiohttpSession:
         method: str,
         url: str,
         *,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         data: Any = None,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> _SyncAiohttpResponse:
         request_headers = dict(self.headers)
         if headers:
@@ -243,9 +243,9 @@ class _SyncAiohttpSession:
         method: str,
         url: str,
         *,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         data: Any = None,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         stream: bool = False,
     ) -> _SyncAiohttpResponse:
         del stream
@@ -259,15 +259,15 @@ class _SyncAiohttpSession:
             )
         )
 
-    def delete(self, url: str, *, timeout: Optional[float] = None):
+    def delete(self, url: str, *, timeout: float | None = None):
         return self.request("DELETE", url, timeout=timeout)
 
     def head(
         self,
         url: str,
         *,
-        headers: Optional[dict[str, str]] = None,
-        timeout: Optional[float] = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ):
         return self.request("HEAD", url, headers=headers, timeout=timeout)
 
@@ -276,8 +276,8 @@ class _SyncAiohttpSession:
         url: str,
         *,
         data: Any = None,
-        timeout: Optional[float] = None,
-        headers: Optional[dict[str, str]] = None,
+        timeout: float | None = None,
+        headers: dict[str, str] | None = None,
     ):
         return self.request("PUT", url, headers=headers, data=data, timeout=timeout)
 
@@ -442,7 +442,7 @@ class _RequestsPutFile(io.RawIOBase):
     partial upload unless close() raises an exception.
     """
 
-    def __init__(self, session, url: str, timeout: Optional[float] = None) -> None:
+    def __init__(self, session, url: str, timeout: float | None = None) -> None:
         self._session = session
         self._url = url
         self._timeout = timeout
@@ -515,7 +515,7 @@ class WebDAVFileSystem(AbstractFileSystem):
     - ``chmod``            \u2014 no-op (HTTP has no permission model)
     """
 
-    def __init__(self, storage_options: Optional[dict] = None) -> None:
+    def __init__(self, storage_options: dict | None = None) -> None:
         self._opts = dict(storage_options or {})
         self._verify = self._opts.get("ssl_verify", True)
         self._timeout = self._opts.get("timeout")

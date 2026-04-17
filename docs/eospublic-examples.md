@@ -35,7 +35,8 @@ DIR_ROOT="root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-p
 ```
 
 If you installed only `pip install gfal`, use the `https://` examples first.
-`root://` requires `pip install 'gfal[xrootd]'`.
+`root://` requires XRootD bindings in the environment, for example via
+`conda install -c conda-forge xrootd`.
 
 ## Quick Smoke Tests
 

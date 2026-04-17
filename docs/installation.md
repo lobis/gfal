@@ -15,10 +15,16 @@ This installs the base package with local-file and HTTP/HTTPS support.
 For XRootD support, install the optional extra:
 
 ```bash
-pip install 'gfal[xrootd]'
+pip install gfal
 ```
 
-This pulls in both `xrootd` and `fsspec-xrootd`.
+This installs the Python dependencies, including `fsspec-xrootd`. For `root://`
+support you also need XRootD bindings available in the environment. In conda
+environments, install them from conda-forge:
+
+```bash
+conda install -c conda-forge xrootd
+```
 
 ### Conda with XRootD support
 
