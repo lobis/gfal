@@ -142,6 +142,43 @@ class _SyncAiohttpResponse:
 _STREAM_EOF = object()
 
 
+def _should_suppress_loop_exception(context: dict[str, Any]) -> bool:
+    """Return True for benign aiohttp connection-lost future warnings.
+
+    aiohttp may leave behind a finished future with a connection-level
+    exception after a request has already effectively completed.  For large
+    streamed PUT uploads against EOS this shows up as:
+
+    ``Future exception was never retrieved`` / ``Connection lost``
+
+    on the private background loop used by the synchronous WebDAV adapter.
+    The copy layer already inspects the write result and destination size to
+    decide whether that late disconnect is a real error, so emitting the loop
+    warning only adds noise and can make the CLI feel hung.
+    """
+
+    if context.get("message") != "Future exception was never retrieved":
+        return False
+
+    exc = context.get("exception")
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(
+            exc,
+            (
+                ConnectionError,
+                BrokenPipeError,
+                ConnectionResetError,
+                aiohttp.ClientConnectionError,
+            ),
+        ):
+            return True
+        exc = exc.__cause__ or exc.__context__
+
+    return False
+
+
 class _StreamingAiohttpResponse:
     """Requests-like response wrapper backed by a streaming aiohttp body."""
 
@@ -224,6 +261,13 @@ class _SyncAiohttpSession:
         def _runner() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            loop.set_exception_handler(
+                lambda current_loop, context: (
+                    None
+                    if _should_suppress_loop_exception(context)
+                    else current_loop.default_exception_handler(context)
+                )
+            )
             self._loop = loop
             ready.set()
             loop.run_forever()

@@ -24,6 +24,7 @@ from gfal.core.webdav import (
     _http_fs_opts,
     _parse_propfind,
     _RequestsPutFile,
+    _should_suppress_loop_exception,
     _SyncAiohttpSession,
 )
 
@@ -352,6 +353,32 @@ class TestSyncAiohttpSession:
             "/tmp/usercert.pem", "/tmp/userkey.pem"
         )
         assert session.cert == ("/tmp/usercert.pem", "/tmp/userkey.pem")
+
+    def test_suppresses_connection_lost_future_warning(self):
+        err = ConnectionError("Connection lost")
+
+        assert _should_suppress_loop_exception(
+            {
+                "message": "Future exception was never retrieved",
+                "exception": err,
+            }
+        )
+
+    def test_does_not_suppress_other_future_warnings(self):
+        assert not _should_suppress_loop_exception(
+            {
+                "message": "Future exception was never retrieved",
+                "exception": RuntimeError("boom"),
+            }
+        )
+
+    def test_does_not_suppress_other_loop_messages(self):
+        assert not _should_suppress_loop_exception(
+            {
+                "message": "Unhandled exception in event loop",
+                "exception": ConnectionError("Connection lost"),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
