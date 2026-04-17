@@ -613,11 +613,7 @@ class TestTpcStartCallback:
         assert kwargs.get("start_callback") is cb
 
     def test_start_callback_forwarded_to_http_tpc(self):
-        """do_tpc does not crash when start_callback is passed for HTTP->HTTP.
-
-        _http_tpc does not accept start_callback; do_tpc simply does not
-        forward it.  Verify that _http_tpc is called and no exception is raised.
-        """
+        """do_tpc forwards start_callback to HTTP TPC too."""
         cb = MagicMock()
         with patch.object(tpc_mod, "_http_tpc", return_value=True) as mock_http:
             tpc_mod.do_tpc(
@@ -626,7 +622,8 @@ class TestTpcStartCallback:
                 {},
                 start_callback=cb,
             )
-        mock_http.assert_called_once()
+        _, kwargs = mock_http.call_args
+        assert kwargs.get("start_callback") is cb
 
     def test_xrootd_tpc_invokes_start_callback(self):
         """_xrootd_tpc calls start_callback() before the blocking CopyProcess."""
@@ -656,6 +653,28 @@ class TestTpcStartCallback:
                 "root://b.example.com//file",
                 timeout=None,
                 verbose=False,
+                start_callback=cb,
+            )
+
+        cb.assert_called_once()
+
+    def test_http_tpc_invokes_start_callback(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 201
+        resp.iter_lines.return_value = iter([])
+        session.request.return_value = resp
+        cb = MagicMock()
+
+        with patch.object(tpc_mod, "_build_session", return_value=session):
+            tpc_mod._http_tpc(
+                "https://src.example.com/file",
+                "https://dst.example.com/file",
+                {},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
                 start_callback=cb,
             )
 

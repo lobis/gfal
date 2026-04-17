@@ -651,6 +651,8 @@ class AsyncGfalClient:
                     progress_callback=progress_callback,
                     start_callback=start_callback,
                 )
+                if progress_callback is not None and src_st.st_size > 0:
+                    progress_callback(src_st.st_size)
                 return None
             except ImportError as e:
                 if options.tpc == "only":

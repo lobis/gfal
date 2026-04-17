@@ -839,6 +839,52 @@ class TestGfalClientLibraryHelpers:
 
         assert dst_fs.size == 7
 
+    def test_copy_reports_full_progress_after_successful_tpc(self):
+        client = GfalClient()
+        progress = []
+        started = []
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch(
+                "gfal.core.tpc.do_tpc",
+                side_effect=lambda *args, **kwargs: kwargs["start_callback"](),
+            ),
+        ):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="auto"),
+                progress_callback=progress.append,
+                start_callback=lambda: started.append(True),
+            )
+
+        assert started == [True]
+        assert progress[-1] == 7
+
     def test_transfer_destination_url_skips_remote_mtime_without_explicit_flag(self):
         client = GfalClient()
         src_st = client.stat(Path(__file__).as_uri())

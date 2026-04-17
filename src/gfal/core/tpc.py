@@ -95,6 +95,7 @@ def do_tpc(
             scitag=scitag,
             no_delegation=no_delegation,
             progress_callback=progress_callback,
+            start_callback=start_callback,
         )
 
     raise NotImplementedError(
@@ -193,6 +194,7 @@ def _http_tpc(
     scitag,
     no_delegation=False,
     progress_callback=None,
+    start_callback=None,
 ):
     """Send a WebDAV COPY request to initiate an HTTP TPC transfer."""
     headers = {
@@ -228,6 +230,8 @@ def _http_tpc(
 
     request_timeout = timeout if timeout else None
     session = _build_session(opts)
+    if start_callback is not None:
+        start_callback()
     resp = session.request(
         "COPY",
         url,

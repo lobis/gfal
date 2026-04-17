@@ -471,6 +471,12 @@ class CommandCopy(base.CommandBase):
             copy_failed = False
         finally:
             if progress_started[0] and show_progress:
+                if not copy_failed and src_size:
+                    self.progress_bar.update(
+                        curr_size=src_size,
+                        total_size=src_size,
+                        elapsed=time.monotonic() - transfer_start,
+                    )
                 self.progress_bar.stop(not copy_failed)
                 print()
 
