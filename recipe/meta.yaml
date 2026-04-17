@@ -31,7 +31,7 @@ requirements:
     - rich-click >=1.7.0
     - truststore  # [py>=310]
     - urllib3 >=2.0.0
-    - xrootd >=5.9.2
+    - xrootd >=5.8.4
 
 test:
   imports:
