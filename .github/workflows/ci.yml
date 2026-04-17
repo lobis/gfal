@@ -94,7 +94,6 @@ jobs:
         miniforge-variant: Miniforge3
         python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
-        use-only-tar-bz2: true
     - name: Install XRootD runtime via conda
       shell: bash -el {0}
       run: conda install -y xrootd
@@ -129,7 +128,6 @@ jobs:
         miniforge-variant: Miniforge3
         python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
-        use-only-tar-bz2: true
     - name: Install dependencies
       shell: bash -el {0}
       run: |
@@ -860,7 +858,6 @@ jobs:
         miniforge-variant: Miniforge3
         python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
-        use-only-tar-bz2: true
     - name: Install conda build dependencies
       shell: bash -el {0}
       run: conda install -y conda-build anaconda-client hatchling hatch-vcs
@@ -947,7 +944,6 @@ jobs:
         miniforge-variant: Miniforge3
         python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
-        use-only-tar-bz2: true
     - name: Index local conda channel
       shell: bash -el {0}
       run: |
@@ -1087,7 +1083,6 @@ jobs:
         miniforge-variant: Miniforge3
         python-version: "3.12"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
-        use-only-tar-bz2: true
     - name: Install upload client
       if: env.ANACONDA_API_TOKEN != ''
       shell: bash -el {0}
