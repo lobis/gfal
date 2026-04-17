@@ -1247,6 +1247,21 @@ class TestEosPilotSum:
         # MD5 of empty string
         assert hashlib.md5(b"").hexdigest() in out
 
+    def test_sum_sha256(self, proxy_cert, pilot_dir, tmp_path):
+        """SHA256 checksum should match the locally computed value."""
+        data = b"sha256 verification data for eospilot"
+        src = tmp_path / "sum_sha256.bin"
+        src.write_bytes(data)
+        expected_sha256 = hashlib.sha256(data).hexdigest()
+        dst = f"{pilot_dir}/sum_sha256.bin"
+
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        rc, out, err = _run("sum", proxy_cert, dst, "SHA256")
+        assert rc == 0, err
+        assert expected_sha256 in out
+
 
 # ---------------------------------------------------------------------------
 # TestEosPilotSave
@@ -1283,6 +1298,42 @@ class TestEosPilotSave:
         rc, out, err = _run("cat", proxy_cert, dst)
         assert rc == 0, err
         assert out == data
+
+    def test_save_binary_data(self, proxy_cert, pilot_dir):
+        """save with binary stdin should round-trip byte-for-byte via cat."""
+        from helpers import run_gfal_binary
+
+        data = bytes(range(256))
+        dst = f"{pilot_dir}/saved_binary.bin"
+
+        rc, _out, err = run_gfal_binary(
+            "save", "-E", proxy_cert, "--no-verify", dst, input_bytes=data
+        )
+        assert rc == 0, (
+            err.decode("utf-8", errors="replace") if isinstance(err, bytes) else err
+        )
+
+        rc, out_bytes, _ = run_gfal_binary("cat", "-E", proxy_cert, "--no-verify", dst)
+        assert rc == 0
+        assert out_bytes == data
+
+    def test_save_overwrites_existing_file(self, proxy_cert, pilot_dir):
+        """A second save to the same path should replace the first content."""
+        dst = f"{pilot_dir}/save_overwrite.txt"
+
+        rc, out, err = run_gfal(
+            "save", "-E", proxy_cert, "--no-verify", dst, input="first version\n"
+        )
+        assert rc == 0, err
+
+        rc, out, err = run_gfal(
+            "save", "-E", proxy_cert, "--no-verify", dst, input="second version\n"
+        )
+        assert rc == 0, err
+
+        rc, out, err = _run("cat", proxy_cert, dst)
+        assert rc == 0, err
+        assert out == "second version\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1498,4 +1549,212 @@ class TestEosPilotXrootd:
 
         xrd_src = f"{xrootd_pilot_dir}/cross.bin"
         rc, out, err = self._run("stat", proxy_cert, xrd_src)
+        assert rc == 0, err
+
+    def test_cat_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """cat a file over root:// should return the correct content."""
+        dst = f"{xrootd_pilot_dir}/xrd_cat.txt"
+        rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", dst)
+        assert rc == 0, err
+
+        rc, out, err = self._run("cat", proxy_cert, dst)
+        assert rc == 0, err
+        # /etc/hostname contains the container/machine hostname — just non-empty
+        assert out.strip()
+
+    def test_sum_adler32_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """ADLER32 checksum via root:// must match a locally computed value."""
+        import zlib
+
+        hostname_bytes = Path("/etc/hostname").read_bytes()
+        expected = f"{zlib.adler32(hostname_bytes) & 0xFFFFFFFF:08x}"
+
+        dst = f"{xrootd_pilot_dir}/xrd_sum.txt"
+        rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", dst)
+        assert rc == 0, err
+
+        rc, out, err = self._run("sum", proxy_cert, dst, "ADLER32")
+        assert rc == 0, err
+        assert expected in out.lower()
+
+    def test_ls_long_format_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """ls -l over root:// should list uploaded files with their sizes."""
+        dst = f"{xrootd_pilot_dir}/xrd_lslong.bin"
+        rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", dst)
+        assert rc == 0, err
+
+        rc, out, err = self._run("ls", proxy_cert, "-l", xrootd_pilot_dir)
+        assert rc == 0, err
+        assert "xrd_lslong.bin" in out
+
+    def test_rename_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """rename over root:// should move the file atomically."""
+        src = f"{xrootd_pilot_dir}/xrd_ren_src.bin"
+        dst = f"{xrootd_pilot_dir}/xrd_ren_dst.bin"
+
+        rc, out, err = self._run("cp", proxy_cert, "/etc/hostname", src)
+        assert rc == 0, err
+
+        rc, out, err = self._run("rename", proxy_cert, src, dst)
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, src)
+        assert rc != 0  # source gone
+
+        rc, out, err = self._run("stat", proxy_cert, dst)
+        assert rc == 0, err  # destination present
+
+    def test_rm_recursive_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """rm -r over root:// should delete a directory and all its contents."""
+        subdir = f"{xrootd_pilot_dir}/xrd_rmr_sub"
+        rc, out, err = self._run("mkdir", proxy_cert, subdir)
+        assert rc == 0, err
+
+        rc, out, err = self._run(
+            "cp", proxy_cert, "/etc/hostname", f"{subdir}/xrd_f1.bin"
+        )
+        assert rc == 0, err
+
+        rc, out, err = self._run("rm", proxy_cert, "-r", subdir)
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, subdir)
+        assert rc != 0
+
+    def test_mkdir_parents_xrootd(self, proxy_cert, xrootd_pilot_dir):
+        """mkdir -p over root:// should create nested directories in one call."""
+        deep = f"{xrootd_pilot_dir}/xrd_deep/nested"
+        rc, out, err = self._run("mkdir", proxy_cert, "-p", deep)
+        assert rc == 0, err
+
+        rc, out, err = self._run("stat", proxy_cert, deep)
+        assert rc == 0, err
+        assert "directory" in out
+
+
+# ---------------------------------------------------------------------------
+# TestEosPilotCompare
+# ---------------------------------------------------------------------------
+
+
+@requires_eospilot
+@requires_proxy
+class TestEosPilotCompare:
+    """Tests for --compare size and --compare size_mtime skip logic."""
+
+    def test_compare_size_skips_same_size(self, proxy_cert, pilot_dir, tmp_path):
+        """--compare size should skip when the destination has the same size."""
+        data = b"content for size comparison test"
+        src = tmp_path / "cmp_size.bin"
+        src.write_bytes(data)
+        dst = f"{pilot_dir}/cmp_size.bin"
+
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        rc, out, err = _run("cp", proxy_cert, "--compare", "size", src.as_uri(), dst)
+        assert rc == 0, err
+        assert "Skipping existing file" in out
+        assert "matching size" in out
+
+    def test_compare_size_overwrites_on_size_mismatch(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """--compare size should overwrite when the destination size differs."""
+        small = tmp_path / "small.bin"
+        small.write_bytes(b"small")
+        dst = f"{pilot_dir}/cmp_size_diff.bin"
+
+        rc, out, err = _run("cp", proxy_cert, small.as_uri(), dst)
+        assert rc == 0, err
+
+        large = tmp_path / "large.bin"
+        large.write_bytes(b"much larger content to force size mismatch")
+
+        rc, out, err = _run("cp", proxy_cert, "--compare", "size", large.as_uri(), dst)
+        assert rc == 0, err
+        # Verify destination was overwritten with the larger content
+        dl = tmp_path / "downloaded.bin"
+        rc, out, err = _run("cp", proxy_cert, dst, dl.as_uri())
+        assert rc == 0, err
+        assert dl.read_bytes() == large.read_bytes()
+
+    def test_compare_size_mtime_skips_matching(self, proxy_cert, pilot_dir, tmp_path):
+        """--compare size_mtime should skip when both size and mtime match."""
+        data = b"size_mtime comparison data"
+        src = tmp_path / "cmp_smtime.bin"
+        src.write_bytes(data)
+        dst = f"{pilot_dir}/cmp_smtime.bin"
+
+        # Initial upload; --preserve-times (default) copies the mtime to EOS
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        # Second upload with --compare size_mtime: same local file → skip
+        rc, out, err = _run(
+            "cp", proxy_cert, "--compare", "size_mtime", src.as_uri(), dst
+        )
+        assert rc == 0, err
+        assert "Skipping existing file" in out
+
+    def test_compare_size_mtime_copies_on_mtime_change(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """--compare size_mtime should copy when mtime differs even with same size."""
+        import time
+
+        data = b"same-size-but-mtime-changes"
+        src = tmp_path / "cmp_smtime2.bin"
+        src.write_bytes(data)
+        dst = f"{pilot_dir}/cmp_smtime2.bin"
+
+        rc, out, err = _run("cp", proxy_cert, src.as_uri(), dst)
+        assert rc == 0, err
+
+        # Touch the source to bump its mtime (sleep 1 s to ensure ≥1 s difference)
+        time.sleep(1)
+        src.write_bytes(data)  # same content, new mtime
+
+        rc, out, err = _run(
+            "cp", proxy_cert, "--compare", "size_mtime", src.as_uri(), dst
+        )
+        assert rc == 0, err
+        # Should have copied (overwritten), not skipped
+        assert "Skipping existing file" not in out
+
+
+# ---------------------------------------------------------------------------
+# TestEosPilotCopyMode
+# ---------------------------------------------------------------------------
+
+
+@requires_eospilot
+@requires_proxy
+class TestEosPilotCopyMode:
+    """Tests for the --copy-mode flag."""
+
+    def test_copy_mode_streamed_forces_client_side_copy(self, proxy_cert, pilot_dir):
+        """--copy-mode streamed must always use client-side streaming."""
+        dst = f"{pilot_dir}/copy_mode_streamed.C"
+        rc, out, err = _run("cp", proxy_cert, "--copy-mode", "streamed", _PUBSRC, dst)
+
+        assert rc == 0, err
+        assert "(streamed)" in out
+
+    def test_copy_mode_pull_from_public(self, proxy_cert, pilot_dir):
+        """--copy-mode pull attempts TPC pull; streaming fallback is acceptable."""
+        dst = f"{pilot_dir}/copy_mode_pull.C"
+        rc, out, err = _run("cp", proxy_cert, "--copy-mode", "pull", _PUBSRC, dst)
+
+        assert rc == 0, err
+        # Server may not support TPC; both outcomes are valid
+        assert "(TPC pull)" in out or "(streamed)" in out
+
+    def test_copy_mode_streamed_checksum(self, proxy_cert, pilot_dir):
+        """--copy-mode streamed combined with -K ADLER32 should verify the copy."""
+        dst = f"{pilot_dir}/copy_mode_streamed_ck.C"
+        rc, out, err = _run(
+            "cp", proxy_cert, "--copy-mode", "streamed", "-K", "ADLER32", _PUBSRC, dst
+        )
+
         assert rc == 0, err
