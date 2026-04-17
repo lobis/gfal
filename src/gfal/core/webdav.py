@@ -344,7 +344,11 @@ def _parse_propfind(xml_bytes: bytes, base_url: str) -> list[dict]:
         href_el = resp_el.find(f"{_DAV}href")
         if href_el is None or not href_el.text:
             continue
-        href = href_el.text.strip()
+        # WebDAV hrefs are percent-encoded; decode before rebuilding the URL
+        # so that _norm_url() comparisons against the caller-supplied URL
+        # (which uses literal characters) match for paths containing spaces
+        # or other reserved characters.
+        href = unquote(href_el.text.strip())
 
         # Find the propstat with HTTP 200 status
         prop = None
@@ -634,23 +638,26 @@ class WebDAVFileSystem(AbstractFileSystem):
         parsed = urlparse(path)
         # Split path into components, rebuild from the root down
         parts = [p for p in parsed.path.rstrip("/").split("/") if p]
-        for i in range(1, len(parts) + 1):
+        total = len(parts)
+        for i in range(1, total + 1):
             partial_path = "/" + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
             resp = self._session.request("MKCOL", partial_url, timeout=self._timeout)
             sc = resp.status_code
+            is_final = i == total
             if sc == 201:
                 continue  # created
             if sc in (301, 405):
-                continue  # already exists \u2014 fine
-            if sc == 409:
-                # Conflict: intermediate missing \u2192 shouldn't happen top-down but skip
+                # Already exists. On the final component this is an error
+                # unless the caller explicitly allowed it.
+                if is_final and not exist_ok:
+                    raise FileExistsError(f"[Errno 17] File exists: {partial_url!r}")
                 continue
-            if sc == 403:
-                # Might not have permission to create ancestors; try to continue
-                continue
-            if sc >= 400:
-                resp.raise_for_status()
+            # For any other 4xx/5xx: errors on ancestors are ignored (they may
+            # already exist on servers that don't support MKCOL on existing
+            # collections), but the final component must succeed or raise.
+            if is_final:
+                _raise_for_status(resp, partial_url)
 
     # ------------------------------------------------------------------
     # rm / rmdir
@@ -679,7 +686,7 @@ class WebDAVFileSystem(AbstractFileSystem):
             headers={"Destination": path2, "Overwrite": "T"},
             timeout=self._timeout,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, path1)
 
     # ------------------------------------------------------------------
     # permissions

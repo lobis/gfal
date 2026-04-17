@@ -280,8 +280,10 @@ class TestDoRmErrors:
         assert "FAILED" in out
         assert cmd.return_code != 0
 
-    def test_do_rmdir_listing_exception_continues(self, tmp_path, capsys):
-        """If listing fails during rmdir, it should continue and try to remove the dir."""
+    def test_do_rmdir_listing_exception_propagates(self, tmp_path, capsys):
+        """If listing fails during rmdir (for any reason other than ENOENT),
+        the error is reported and the directory is NOT removed. Silently
+        rmdir-ing on a listing failure would hide real permission errors."""
         from unittest.mock import patch
 
         d = tmp_path / "dir"
@@ -293,8 +295,10 @@ class TestDoRmErrors:
         cmd = _make_cmd()
         cmd.params = _default_params(recursive=True, dry_run=False)
 
-        # Mock ls to raise, but rmdir should still be called
         with patch.object(client, "ls", side_effect=Exception("ls failed")):
             cmd._do_rmdir(d.as_uri(), client)
-        # The directory itself should be removed (since ls failed, entries=[], then rmdir)
-        assert not d.exists()
+        # Directory must be preserved and an error reported.
+        assert d.exists()
+        assert cmd.return_code != 0
+        captured = capsys.readouterr()
+        assert "ls failed" in captured.err

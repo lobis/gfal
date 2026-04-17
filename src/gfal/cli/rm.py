@@ -101,12 +101,19 @@ class CommandRm(base.CommandBase):
         if not self.params.recursive:
             raise IsADirectoryError(f"Cannot remove '{url}': is a directory")
 
-        # Remove contents first
+        # Remove contents first. Only swallow "directory does not exist" —
+        # other errors (e.g. permission denied) must surface so the user
+        # doesn't see a misleading RMDIR success on a directory that was
+        # never actually listed.
         try:
             with self.spinner(f"Listing directory {url}..."):
                 entries = client.ls(url, detail=True)
-        except Exception:
+        except GfalFileNotFoundError:
             entries = []
+        except Exception as e:
+            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
+            self._set_error(exception_exit_code(e))
+            return
 
         base_url = url.rstrip("/") + "/"
         for entry_st in entries:
