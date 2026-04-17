@@ -9,11 +9,11 @@ import stat
 import threading
 import time
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from gfal.core import fs
@@ -36,8 +36,8 @@ StartCallback = Optional[Callable[[], None]]
 
 @dataclass(frozen=True)
 class ClientConfig:
-    cert: Optional[str] = None
-    key: Optional[str] = None
+    cert: str | None = None
+    key: str | None = None
     timeout: int = 1800
     ssl_verify: bool = True
     ipv4_only: bool = False
@@ -49,31 +49,31 @@ class ClientConfig:
 class ChecksumPolicy:
     algorithm: str
     mode: str = "both"
-    expected_value: Optional[str] = None
+    expected_value: str | None = None
 
 
 @dataclass(frozen=True)
 class CopyOptions:
     overwrite: bool = False
     create_parents: bool = False
-    timeout: Optional[int] = None
-    checksum: Optional[ChecksumPolicy] = None
-    source_space_token: Optional[str] = None
-    destination_space_token: Optional[str] = None
+    timeout: int | None = None
+    checksum: ChecksumPolicy | None = None
+    source_space_token: str | None = None
+    destination_space_token: str | None = None
     strict: bool = False
-    streams: Optional[int] = None
+    streams: int | None = None
     tpc: str = "never"
     tpc_direction: str = "pull"
     recursive: bool = False
     preserve_times: bool = False
     preserve_times_explicit: bool = False  # True only when user passed --preserve-times
-    compare: Optional[str] = None  # None | "size" | "size_mtime" | "checksum" | "none"
+    compare: str | None = None  # None | "size" | "size_mtime" | "checksum" | "none"
     dry_run: bool = False
     just_copy: bool = False
     disable_cleanup: bool = False
     no_delegation: bool = False
     evict: bool = False
-    scitag: Optional[int] = None
+    scitag: int | None = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ class TransferHandle:
     def done(self) -> bool:
         return not self._thread.is_alive()
 
-    def wait(self, timeout: Optional[float] = None) -> Any:
+    def wait(self, timeout: float | None = None) -> Any:
         self._thread.join(timeout)
         if self._thread.is_alive():
             raise GfalTimeoutError("Transfer handle wait timed out")
@@ -171,7 +171,7 @@ class TransferHandle:
             raise self._exc_holder["error"]
         return self._result_holder.get("value")
 
-    async def wait_async(self, timeout: Optional[float] = None) -> Any:
+    async def wait_async(self, timeout: float | None = None) -> Any:
         return await asyncio.to_thread(self.wait, timeout)
 
 
@@ -180,13 +180,13 @@ class AsyncGfalClient:
 
     def __init__(
         self,
-        cert: Optional[str] = None,
-        key: Optional[str] = None,
+        cert: str | None = None,
+        key: str | None = None,
         timeout: int = 1800,
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
-        config: Optional[ClientConfig] = None,
+        config: ClientConfig | None = None,
         app: str = "python3-gfal-async",
     ):
         if config is None:
@@ -298,12 +298,12 @@ class AsyncGfalClient:
         self,
         src_url: str,
         dst_url: str,
-        options: Optional[CopyOptions] = None,
+        options: CopyOptions | None = None,
         *,
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None = None,
     ) -> Any:
         def _runner() -> Any:
             try:
@@ -325,7 +325,7 @@ class AsyncGfalClient:
         self,
         src_url: str,
         dst_url: str,
-        options: Optional[CopyOptions] = None,
+        options: CopyOptions | None = None,
         *,
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
@@ -504,7 +504,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
         warn_callback: WarnCallback,
-        cancel_event: Optional[threading.Event],
+        cancel_event: threading.Event | None,
     ) -> Any:
         src_url = self._url(src_url)
         dst_url = self._url(dst_url)
@@ -666,7 +666,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
         warn_callback: WarnCallback,
-        cancel_event: Optional[threading.Event],
+        cancel_event: threading.Event | None,
     ) -> None:
         entries = src_fs.ls(src_path, detail=False)
 
@@ -700,7 +700,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
         warn_callback: WarnCallback,
-        cancel_event: Optional[threading.Event],
+        cancel_event: threading.Event | None,
     ) -> None:
         write_dst_url = self._transfer_destination_url(dst_url, src_st, options)
         write_remote_times = write_dst_url != dst_url
@@ -802,7 +802,7 @@ class AsyncGfalClient:
         dst_url: str,
         options: CopyOptions,
         warn_callback: WarnCallback = None,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None = None,
     ) -> bool:
         compare = options.compare
         if compare is None:
@@ -930,7 +930,7 @@ class AsyncGfalClient:
         with contextlib.suppress(ImportError):
             import aiohttp as _aiohttp
 
-            cause: Optional[BaseException] = e.__cause__ or e.__context__
+            cause: BaseException | None = e.__cause__ or e.__context__
             _seen: set[int] = set()
             while cause is not None and id(cause) not in _seen:
                 _seen.add(id(cause))
@@ -990,13 +990,13 @@ class GfalClient:
 
     def __init__(
         self,
-        cert: Optional[str] = None,
-        key: Optional[str] = None,
+        cert: str | None = None,
+        key: str | None = None,
         timeout: int = 1800,
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
-        config: Optional[ClientConfig] = None,
+        config: ClientConfig | None = None,
         app: str = "python3-gfal-sync",
     ):
         self._async_client = AsyncGfalClient(
@@ -1071,12 +1071,12 @@ class GfalClient:
         self,
         src_url: str,
         dst_url: str,
-        options: Optional[CopyOptions] = None,
+        options: CopyOptions | None = None,
         *,
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None = None,
     ) -> Any:
         return run_sync(
             self._async_client.copy,
@@ -1093,7 +1093,7 @@ class GfalClient:
         self,
         src_url: str,
         dst_url: str,
-        options: Optional[CopyOptions] = None,
+        options: CopyOptions | None = None,
         *,
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
@@ -1136,7 +1136,7 @@ def run_sync(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return result_holder.get("value")
 
 
-def parse_checksum_arg(arg: str) -> tuple[str, Optional[str]]:
+def parse_checksum_arg(arg: str) -> tuple[str, str | None]:
     parts = arg.split(":", 1)
     algorithm = parts[0].upper()
     expected = parts[1].lower() if len(parts) > 1 else None
@@ -1179,7 +1179,7 @@ def checksum_fs(
     fso: Any,
     path: str,
     algorithm: str,
-    cancel_event: Optional[threading.Event] = None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     hasher = make_hasher(algorithm)
     with fso.open(path, "rb") as handle:
@@ -1216,7 +1216,7 @@ def split_timestamp_ns(timestamp: float) -> tuple[int, int]:
     return seconds, nanoseconds
 
 
-def _is_eos_host(hostname: Optional[str]) -> bool:
+def _is_eos_host(hostname: str | None) -> bool:
     """Return True if *hostname* matches an EOS endpoint (``eos*.cern.ch``).
 
     The glob pattern ``eos*.cern.ch`` is matched literally: the hostname must
@@ -1230,7 +1230,7 @@ def _is_eos_host(hostname: Optional[str]) -> bool:
     return h.startswith("eos") and h.endswith(".cern.ch")
 
 
-def eos_app_url(url: str, app: str) -> Optional[str]:
+def eos_app_url(url: str, app: str) -> str | None:
     """Return *url* with ``eos.app=<app>`` added to the query string.
 
     :param url: The URL to annotate.  Must use one of the ``http``, ``https``,
@@ -1253,7 +1253,7 @@ def eos_app_url(url: str, app: str) -> Optional[str]:
     return urlunparse(parsed._replace(query=urlencode(params)))
 
 
-def eos_mtime_url(url: str, timestamp: float) -> Optional[str]:
+def eos_mtime_url(url: str, timestamp: float) -> str | None:
     normalized = fs.normalize_url(url)
     parsed = urlparse(normalized)
     if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
@@ -1269,7 +1269,7 @@ def eos_mtime_url(url: str, timestamp: float) -> Optional[str]:
     return urlunparse(parsed._replace(query=urlencode(params)))
 
 
-def local_destination_path(dst_url: str, dst_path: str) -> Optional[Path]:
+def local_destination_path(dst_url: str, dst_path: str) -> Path | None:
     normalized = fs.normalize_url(dst_url)
     if urlparse(normalized).scheme.lower() != "file":
         return None
