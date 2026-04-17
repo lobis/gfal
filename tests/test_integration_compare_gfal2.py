@@ -67,7 +67,7 @@ def _unique_pilot_path(stem: str) -> str:
 def _copy_preserves_mtime_in_docker(command: str) -> tuple[int, bool, str]:
     script = f"""
 set -e
-rm -rf /tmp/gfal-src
+rm -rf /var/tmp/gfal-src
 rm -f /tmp/gfal-copy-src /tmp/gfal-copy-dst
 printf 'mtime test\\n' >/tmp/gfal-copy-src
 touch -t 200001010000 /tmp/gfal-copy-src
@@ -129,8 +129,8 @@ class TestLegacyGfal2Runtime:
     def test_copy_preserves_mtime_by_default(self):
         """New gfal cp preserves mtime by default (--preserve-times defaults on)."""
         new_cmd = (
-            "cp -r /repo /tmp/gfal-src && "
-            "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "cp -r /repo /var/tmp/gfal-src && "
+            "python3 -m pip install -q --no-deps /var/tmp/gfal-src > /dev/null 2>&1 && "
             "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         rc_new, new_preserved, err_new = _copy_preserves_mtime_in_docker(new_cmd)
@@ -156,8 +156,8 @@ class TestLegacyGfal2Runtime:
         the destination already exists — same behaviour as legacy gfal2-utils.
         """
         rc_new, err_new = _copy_existing_dst_error_in_docker(
-            "cp -r /repo /tmp/gfal-src && "
-            "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "cp -r /repo /var/tmp/gfal-src && "
+            "python3 -m pip install -q --no-deps /var/tmp/gfal-src > /dev/null 2>&1 && "
             "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         # New CLI: default compare=None → EEXIST (17)

@@ -156,12 +156,27 @@ def _docker_run_command(
 
     proxy = proxy_cert or os.environ.get("X509_USER_PROXY", "")
 
-    volume_args = ["-v", f"{_REPO_ROOT}:/repo:ro"]
+    volume_args = [
+        "-v",
+        f"{_REPO_ROOT}:/repo:ro",
+        # Mount the host /tmp so that tests using local temp files (e.g.
+        # recursive copy with file:// URIs pointing to pytest tmp_path)
+        # can access them inside the container.
+        "-v",
+        "/tmp:/tmp",
+    ]
     env_args = []
 
     if proxy and Path(proxy).is_file():
-        volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
-        env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
+        proxy_path = Path(proxy).resolve()
+        if proxy_path.is_relative_to("/tmp"):
+            # /tmp is already bind-mounted — the proxy is visible at its
+            # original host path inside the container.
+            env_args += ["-e", f"X509_USER_PROXY={proxy_path}"]
+        else:
+            # Proxy lives outside /tmp: add an explicit bind mount.
+            volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
+            env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
 
     proc = subprocess.run(
         [
@@ -185,7 +200,11 @@ def _docker_run_command(
 
 
 def run_gfal_docker(
-    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+    cmd,
+    *args,
+    proxy_cert: Optional[str] = None,
+    input: Optional[str] = None,
+    timeout: int = 120,
 ):
     """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
 
@@ -195,11 +214,12 @@ def run_gfal_docker(
     Returns ``(returncode, stdout, stderr)`` as strings.
     """
     # XRootD runtime dependencies are pre-installed in the image from pyproject.toml.
-    # Copy /repo to a writable tmp dir first — hatch-vcs needs to write _version.py,
-    # but /repo is mounted read-only.
+    # Copy /repo to a writable dir first — hatch-vcs needs to write _version.py,
+    # but /repo is mounted read-only.  Use /var/tmp (not /tmp) because /tmp is
+    # bind-mounted from the host and may be shared with pytest tmp_path dirs.
     script = (
-        "cp -r /repo /tmp/gfal-src && "
-        "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        "cp -r /repo /var/tmp/gfal-src && "
+        "python3 -m pip install -q --no-deps /var/tmp/gfal-src > /dev/null 2>&1 && "
         f"python3 -c \"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:]; "
         'from gfal.cli.shell import main; main()"'
     )
@@ -207,7 +227,7 @@ def run_gfal_docker(
     cmd_args = [str(a) for a in args]
     escaped = " ".join(f"'{a}'" for a in cmd_args)
     return _docker_run_command(
-        f"{script} {escaped}", proxy_cert=proxy_cert, input=input
+        f"{script} {escaped}", proxy_cert=proxy_cert, input=input, timeout=timeout
     )
 
 

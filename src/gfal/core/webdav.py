@@ -808,9 +808,12 @@ class WebDAVFileSystem(AbstractFileSystem):
         url = path.rstrip("/") + "/"
         try:
             entries = self._propfind(url, depth=1)
-        except NotImplementedError:
-            # Non-WebDAV server: fall back to returning the single resource
-            # info so that ``gfal-ls <file-url>`` still works on plain HTTP.
+        except (NotImplementedError, FileNotFoundError):
+            # NotImplementedError (405): non-WebDAV server.
+            # FileNotFoundError (404): path is a file, not a collection — the
+            # server rejects the trailing-slash URL.  In both cases fall back
+            # to returning the single resource info so that
+            # ``gfal-ls <file-url>`` still works.
             info = self.info(path)
             return [info] if detail else [info["name"]]
 
