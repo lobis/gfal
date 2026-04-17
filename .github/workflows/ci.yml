@@ -114,13 +114,25 @@ jobs:
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
     - uses: actions/checkout@v6
-    - uses: actions/setup-python@v6
+    - uses: actions/cache@v4
       with:
-        python-version: "3.12"
-        cache: 'pip'
-        cache-dependency-path: pyproject.toml
+        path: ${{ runner.temp }}/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-eos-${{ hashFiles('pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-conda-eos-
+    - uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-activate-base: true
+        channels: conda-forge
+        channel-priority: strict
+        miniforge-variant: Miniforge3
+        python-version: "3.11"
+        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        use-only-tar-bz2: true
     - name: Install dependencies
+      shell: bash -el {0}
       run: |
+        conda install -y -n base -c conda-forge xrootd
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
         sudo apt-get update
@@ -153,6 +165,7 @@ jobs:
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
     - name: Run integration tests
+      shell: bash -el {0}
       run: |
         timeout 30m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
