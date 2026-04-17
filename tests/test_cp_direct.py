@@ -1009,8 +1009,8 @@ class TestCliUsesLibraryCopy:
             def update(self, **kwargs):
                 self.calls.append(("update", kwargs))
 
-            def stop(self, success):
-                self.calls.append(("stop", success))
+            def stop(self, success, status=None):
+                self.calls.append(("stop", success, status))
 
         fake_instances = []
 
@@ -1060,7 +1060,7 @@ class TestCliUsesLibraryCopy:
                 "elapsed": progress.calls[3][1]["elapsed"],
             },
         )
-        assert progress.calls[4] == ("stop", True)
+        assert progress.calls[4] == ("stop", True, None)
 
     def test_recursive_top_level_children_get_individual_progress(self, tmp_path):
         src = tmp_path / "srcdir"
@@ -1086,8 +1086,8 @@ class TestCliUsesLibraryCopy:
             def update(self, **kwargs):
                 self.calls.append(("update", kwargs))
 
-            def stop(self, success):
-                self.calls.append(("stop", success))
+            def stop(self, success, status=None):
+                self.calls.append(("stop", success, status))
 
         class _DoneHandle:
             def done(self):
@@ -1130,6 +1130,68 @@ class TestCliUsesLibraryCopy:
             "Copying one.txt (TPC pull)",
             "Copying two.txt (TPC pull)",
         ]
+
+    def test_do_copy_tty_compare_skip_marks_progress_as_skipped(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            compare="size",
+        )
+
+        class _FakeProgress:
+            def __init__(self, label):
+                self.label = label
+                self.calls = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def update(self, **kwargs):
+                self.calls.append(("update", kwargs))
+
+            def set_description(self, label):
+                self.calls.append(("set_description", label))
+                self.label = label
+
+            def stop(self, success, status=None):
+                self.calls.append(("stop", success, status))
+
+        fake_instances = []
+
+        def _make_progress(label):
+            progress = _FakeProgress(label)
+            fake_instances.append(progress)
+            return progress
+
+        with (
+            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
+            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                SimpleNamespace(st_size=5),
+            ]
+
+            def _copy_side_effect(*args, **kwargs):
+                kwargs["warn_callback"](
+                    f"Skipping existing file {dst.as_uri()} (matching size)"
+                )
+
+            mock_client.copy.side_effect = _copy_side_effect
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        progress = fake_instances[0]
+        assert ("stop", True, "skipped") in progress.calls
+        mock_live_message.assert_not_called()
 
     def test_recursive_top_level_children_use_start_copy_not_copy(self, tmp_path):
         src = tmp_path / "srcdir"

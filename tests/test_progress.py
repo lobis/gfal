@@ -168,6 +168,13 @@ class TestProgressLifecycle:
         captured = capsys.readouterr()
         assert "[FAILED]" in captured.out
 
+    def test_stop_writes_skipped(self, capsys):
+        p = Progress("Copying myfile.txt")
+        p.start()
+        p.stop(True, status="skipped")
+        captured = capsys.readouterr()
+        assert "[SKIPPED]" in captured.out
+
     def test_stop_shows_elapsed(self, capsys):
         p = Progress("X")
         p.start()
@@ -261,6 +268,54 @@ class TestRichProgress:
         assert ("refresh",) in backend.calls
         assert ("stop_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
+
+    def test_rich_progress_stop_marks_skipped(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = [SimpleNamespace(total=10)]
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                self.calls.append(("add_task", description, total))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                self.calls.append(("stop_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt")
+        progress.start()
+        progress.stop(True, status="skipped")
+
+        assert (
+            "update",
+            0,
+            {"description": "Copying example.txt [yellow]\\[SKIPPED][/]"},
+        ) in backend.calls
 
 
 class TestRichSpinner:

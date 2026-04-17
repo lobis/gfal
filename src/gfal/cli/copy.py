@@ -65,6 +65,7 @@ class _TransferDisplay:
         self.progress_started = False
         self.transfer_start = time.monotonic()
         self.transfer_mode = transfer_mode
+        self.final_status = None
         self._lock = threading.Lock()
 
     def _transfer_label(self):
@@ -122,6 +123,17 @@ class _TransferDisplay:
             if self.show_progress and self.progress_bar is not None and total_size:
                 self.progress_bar.update(total_size=total_size)
 
+    def mark_skipped(self):
+        with self._lock:
+            self.final_status = "skipped"
+            self.transfer_mode = None
+            if self.show_progress and self.progress_bar is not None:
+                label = self._transfer_label()
+                if hasattr(self.progress_bar, "label"):
+                    self.progress_bar.label = label
+                if hasattr(self.progress_bar, "set_description"):
+                    self.progress_bar.set_description(label)
+
     def finish(self, success):
         with self._lock:
             if (
@@ -130,13 +142,13 @@ class _TransferDisplay:
                 or self.progress_bar is None
             ):
                 return
-            if success and self.src_size:
+            if success and self.src_size and self.final_status != "skipped":
                 self.progress_bar.update(
                     curr_size=self.src_size,
                     total_size=self.src_size,
                     elapsed=time.monotonic() - self.transfer_start,
                 )
-            self.progress_bar.stop(success)
+            self.progress_bar.stop(success, status=self.final_status)
 
 
 class CommandCopy(base.CommandBase):
@@ -499,6 +511,12 @@ class CommandCopy(base.CommandBase):
             return
         print_live_message(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
 
+    @staticmethod
+    def _is_skip_message(message):
+        return message.startswith("Skipping existing file ") or message.startswith(
+            "Skipping directory "
+        )
+
     def _predicted_transfer_mode(self, src_url, dst_url):
         copy_options = self._build_copy_options()
         if copy_options.tpc == "never":
@@ -573,15 +591,21 @@ class CommandCopy(base.CommandBase):
                 display.start()
             with contextlib.suppress(Exception):
                 display.set_total_size(client.stat(child_src_url).st_size)
+
+            def _handle_warn(msg, dst=child_dst_url, child_display=display):
+                if self._is_skip_message(msg):
+                    child_display.mark_skipped()
+                    if child_display.show_progress:
+                        return
+                self._warn_copy_message(msg, dst)
+
             handle = client.start_copy(
                 child_src_url,
                 child_dst_url,
                 options=copy_options,
                 progress_callback=display.update,
                 start_callback=display.start,
-                warn_callback=lambda msg, dst=child_dst_url: self._warn_copy_message(
-                    msg, dst
-                ),
+                warn_callback=_handle_warn,
                 transfer_mode_callback=display.set_mode,
                 error_callback=self._child_error_callback,
                 traverse_callback=self._traverse_callback,
@@ -693,6 +717,13 @@ class CommandCopy(base.CommandBase):
         with contextlib.suppress(Exception):
             display.set_total_size(client.stat(src_url).st_size)
 
+        def _handle_warn(message):
+            if self._is_skip_message(message):
+                display.mark_skipped()
+                if display.show_progress:
+                    return
+            self._warn_copy_message(message, dst_url)
+
         copy_failed = True
         try:
             client.copy(
@@ -701,7 +732,7 @@ class CommandCopy(base.CommandBase):
                 options=self._build_copy_options(),
                 progress_callback=display.update,
                 start_callback=display.start,
-                warn_callback=lambda message: self._warn_copy_message(message, dst_url),
+                warn_callback=_handle_warn,
                 transfer_mode_callback=display.set_mode,
                 error_callback=None if quiet else self._child_error_callback,
                 traverse_callback=None if quiet else self._traverse_callback,

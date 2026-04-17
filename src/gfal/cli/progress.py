@@ -105,7 +105,8 @@ class TuiProgress(Callback):
     def branch_coro(self, coro):
         return coro
 
-    def stop(self, success=True):
+    def stop(self, success=True, status=None):
+        del status
         if self.callback:
             self.callback(self.value, self.size, finished=True, success=success)
 
@@ -132,7 +133,7 @@ class RichProgress:
                 DownloadColumn,
                 SpinnerColumn,
                 TextColumn,
-                TimeRemainingColumn,
+                TimeElapsedColumn,
                 TransferSpeedColumn,
             )
             from rich.progress import (
@@ -147,7 +148,7 @@ class RichProgress:
                     BarColumn(),
                     DownloadColumn(),
                     TransferSpeedColumn(),
-                    TimeRemainingColumn(),
+                    TimeElapsedColumn(),
                     console=get_console(stderr=False),
                     expand=True,
                     transient=False,
@@ -193,7 +194,7 @@ class RichProgress:
             manager.progress.update(self.task_id, description=label)
             manager.progress.refresh()
 
-    def stop(self, success):
+    def stop(self, success, status=None):
         manager = self._manager()
         with manager.lock:
             if not self._started_flag:
@@ -205,7 +206,12 @@ class RichProgress:
                     manager.progress.update(self.task_id, completed=task.total)
                 with contextlib.suppress(Exception):
                     manager.progress.stop_task(self.task_id)
-                if success:
+                if status == "skipped":
+                    manager.progress.update(
+                        self.task_id,
+                        description=f"{self.label} [yellow]\\[SKIPPED][/]",
+                    )
+                elif success:
                     manager.progress.update(
                         self.task_id, description=f"{self.label} [green]\\[DONE][/]"
                     )
@@ -236,8 +242,8 @@ class RichSpinner:
         self._status.start()
         self._started_flag = True
 
-    def stop(self, success=True):
-        del success
+    def stop(self, success=True, status=None):
+        del success, status
         if not self._started_flag:
             return
         self._started_flag = False
@@ -321,7 +327,7 @@ class LegacyProgress:
             elif rate is not None:
                 self.status["rate"] = rate
 
-    def stop(self, success):
+    def stop(self, success, status=None):
         if not self.started:
             return
         with self.lock:
@@ -329,7 +335,7 @@ class LegacyProgress:
         if hasattr(self, "_thread"):
             self._thread.join(timeout=2)
         elapsed = (datetime.datetime.now() - self.start_time).total_seconds()
-        outcome = "DONE" if success else "FAILED"
+        outcome = "SKIPPED" if status == "skipped" else "DONE" if success else "FAILED"
         msg = f"{self.label}   [{outcome}]  after {elapsed:.0f}s"
         sys.stdout.write("\r" + msg + " " * max(0, self._terminal_width() - len(msg)))
         sys.stdout.flush()
@@ -377,5 +383,5 @@ class LegacySpinner:
     def start(self):
         self._progress.start()
 
-    def stop(self, success=True):
-        self._progress.stop(success)
+    def stop(self, success=True, status=None):
+        self._progress.stop(success, status=status)
