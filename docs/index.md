@@ -127,6 +127,9 @@ For a larger set of verified examples, see [EOS Public Examples](eospublic-examp
 For deployment-backed storage testing across EOS and dCache-style endpoints, see
 [Storage Deployment Integration](storage-deployment-integration.md).
 
+For benchmark results and EOS protocol investigation notes comparing `gfal2`
+and `gfal`, see [Performance Investigation Findings](performance-investigation-findings.md).
+
 ## Command reference
 
 ### `gfal ls`

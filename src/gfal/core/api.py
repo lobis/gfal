@@ -11,6 +11,7 @@ import threading
 import time
 import zlib
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -859,10 +860,28 @@ class AsyncGfalClient:
             dst_checksum_hasher = make_hasher(checksum_algorithm)
 
         try:
-            with (
-                src_fs.open(src_path, "rb") as src_f,
-                write_dst_fs.open(write_dst_path, "wb") as dst_f,
-            ):
+            with ExitStack() as stack:
+                if hasattr(src_fs, "open_stream_read"):
+                    try:
+                        src_f = stack.enter_context(src_fs.open_stream_read(src_path))
+                    except TypeError:
+                        src_f = stack.enter_context(src_fs.open(src_path, "rb"))
+                else:
+                    src_f = stack.enter_context(src_fs.open(src_path, "rb"))
+                if hasattr(write_dst_fs, "open_stream_write"):
+                    try:
+                        dst_f = stack.enter_context(
+                            write_dst_fs.open_stream_write(
+                                write_dst_path,
+                                content_length=src_st.st_size,
+                            )
+                        )
+                    except TypeError:
+                        dst_f = stack.enter_context(
+                            write_dst_fs.open_stream_write(write_dst_path)
+                        )
+                else:
+                    dst_f = stack.enter_context(write_dst_fs.open(write_dst_path, "wb"))
                 while True:
                     if cancel_event is not None and cancel_event.is_set():
                         raise GfalError("Transfer cancelled", errno.ECANCELED)
