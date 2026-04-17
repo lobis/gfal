@@ -253,6 +253,7 @@ def build_client_kwargs(params):
         "ssl_verify": getattr(params, "ssl_verify", True),
         "ipv4_only": getattr(params, "ipv4_only", False),
         "ipv6_only": getattr(params, "ipv6_only", False),
+        "app": "python3-gfal-cli",
     }
 
 

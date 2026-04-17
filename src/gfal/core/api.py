@@ -42,6 +42,7 @@ class ClientConfig:
     ssl_verify: bool = True
     ipv4_only: bool = False
     ipv6_only: bool = False
+    app: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,7 @@ class AsyncGfalClient:
         ipv4_only: bool = False,
         ipv6_only: bool = False,
         config: ClientConfig | None = None,
+        app: str = "python3-gfal-async",
     ):
         if config is None:
             config = ClientConfig(
@@ -195,6 +197,7 @@ class AsyncGfalClient:
                 ssl_verify=ssl_verify,
                 ipv4_only=ipv4_only,
                 ipv6_only=ipv6_only,
+                app=app,
             )
         self.config = config
 
@@ -206,6 +209,7 @@ class AsyncGfalClient:
         self.ssl_verify = config.ssl_verify
         self.ipv4_only = config.ipv4_only
         self.ipv6_only = config.ipv6_only
+        self.app = config.app
 
     @property
     def storage_options(self) -> dict[str, Any]:
@@ -220,6 +224,25 @@ class AsyncGfalClient:
                 ipv6_only=self.ipv6_only,
             )
         )
+
+    def _url(self, url: str) -> str:
+        """Return *url* with ``eos.app`` injected when it targets an EOS endpoint."""
+        if not self.app or url == "-":
+            return url
+        return eos_app_url(url, self.app) or url
+
+    @staticmethod
+    def _url_path_join(base: str, name: str) -> str:
+        """Append *name* to the *path* component of *base*, preserving query/fragment.
+
+        Plain string concatenation breaks when *base* already contains a query
+        string (e.g. ``?eos.app=…``): the slash and filename would be appended
+        to the query value instead of the URL path.  This helper uses
+        ``urllib.parse`` to insert *name* into the correct component.
+        """
+        parsed = urlparse(base)
+        new_path = parsed.path.rstrip("/") + "/" + name
+        return urlunparse(parsed._replace(path=new_path))
 
     async def stat(self, url: str) -> StatResult:
         return await asyncio.to_thread(self._stat_sync, url)
@@ -483,6 +506,8 @@ class AsyncGfalClient:
         warn_callback: WarnCallback,
         cancel_event: threading.Event | None,
     ) -> Any:
+        src_url = self._url(src_url)
+        dst_url = self._url(dst_url)
         opts = self.storage_options
 
         src_fs, src_path = fs.url_to_fs(src_url, opts)
@@ -544,7 +569,7 @@ class AsyncGfalClient:
             return None
 
         if dst_isdir:
-            dst_url = dst_url.rstrip("/") + "/" + Path(src_path.rstrip("/")).name
+            dst_url = self._url_path_join(dst_url, Path(src_path.rstrip("/")).name)
             dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
             dst_exists = False
             dst_isdir = False
@@ -644,8 +669,6 @@ class AsyncGfalClient:
         cancel_event: threading.Event | None,
     ) -> None:
         entries = src_fs.ls(src_path, detail=False)
-        src_url_base = src_url.rstrip("/") + "/"
-        dst_url_base = dst_url.rstrip("/") + "/"
 
         for entry_path in entries:
             if cancel_event is not None and cancel_event.is_set():
@@ -655,8 +678,8 @@ class AsyncGfalClient:
             if name in (".", ".."):
                 continue
             self._copy_sync(
-                src_url_base + name,
-                dst_url_base + name,
+                self._url_path_join(src_url, name),
+                self._url_path_join(dst_url, name),
                 options,
                 progress_callback,
                 start_callback,
@@ -974,6 +997,7 @@ class GfalClient:
         ipv4_only: bool = False,
         ipv6_only: bool = False,
         config: ClientConfig | None = None,
+        app: str = "python3-gfal-sync",
     ):
         self._async_client = AsyncGfalClient(
             cert=cert,
@@ -983,6 +1007,7 @@ class GfalClient:
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
             config=config,
+            app=app,
         )
         self.config = self._async_client.config
         self.cert = self._async_client.cert
@@ -991,6 +1016,7 @@ class GfalClient:
         self.ssl_verify = self._async_client.ssl_verify
         self.ipv4_only = self._async_client.ipv4_only
         self.ipv6_only = self._async_client.ipv6_only
+        self.app = self._async_client.app
 
     @property
     def storage_options(self) -> dict[str, Any]:
@@ -1188,6 +1214,43 @@ def split_timestamp_ns(timestamp: float) -> tuple[int, int]:
         seconds += 1
         nanoseconds -= 1_000_000_000
     return seconds, nanoseconds
+
+
+def _is_eos_host(hostname: str | None) -> bool:
+    """Return True if *hostname* matches an EOS endpoint (``eos*.cern.ch``).
+
+    The glob pattern ``eos*.cern.ch`` is matched literally: the hostname must
+    start with ``eos`` and end with ``.cern.ch``.  Both ``eos.cern.ch`` and
+    ``eospilot.cern.ch`` are valid EOS hostnames.  Hostnames that merely contain
+    "eos" (e.g. ``myeos.example.org``) are intentionally excluded.
+    """
+    if not hostname:
+        return False
+    h = hostname.lower()
+    return h.startswith("eos") and h.endswith(".cern.ch")
+
+
+def eos_app_url(url: str, app: str) -> str | None:
+    """Return *url* with ``eos.app=<app>`` added to the query string.
+
+    :param url: The URL to annotate.  Must use one of the ``http``, ``https``,
+        ``root``, or ``xroot`` schemes and target an EOS endpoint
+        (hostname matching ``eos*.cern.ch``).
+    :param app: The application name to set, e.g. ``python3-gfal-cli``.
+
+    Returns ``None`` when the URL does not point to an EOS endpoint.
+    An existing ``eos.app`` value is never overwritten.
+    """
+    normalized = fs.normalize_url(url)
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
+        return None
+    if not _is_eos_host(parsed.hostname):
+        return None
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "eos.app" not in params:
+        params["eos.app"] = app
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 def eos_mtime_url(url: str, timestamp: float) -> str | None:

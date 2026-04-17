@@ -25,7 +25,9 @@ from gfal.cli.copy import (
     _update_hasher,
 )
 from gfal.core import fs
+from gfal.core.api import AsyncGfalClient as _AsyncGfalClient
 from gfal.core.api import checksum_fs as _checksum_fs
+from gfal.core.api import eos_app_url as _eos_app_url
 
 
 def _make_cmd():
@@ -525,6 +527,59 @@ class TestPreserveTimesHelpers:
             is None
         )
 
+
+class TestEosAppUrl:
+    def test_eos_app_url_for_https_eos(self):
+        url = _eos_app_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt", "python3-gfal-cli"
+        )
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=python3-gfal-cli"
+        )
+
+    def test_eos_app_url_for_xrootd_eos(self):
+        url = _eos_app_url(
+            "root://eoshome.cern.ch//eos/home/user/file.txt", "python3-gfal-sync"
+        )
+        assert "eos.app=python3-gfal-sync" in url
+
+    def test_eos_app_url_preserves_existing_query(self):
+        url = _eos_app_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?authz=abc",
+            "python3-gfal-async",
+        )
+        assert "authz=abc" in url
+        assert "eos.app=python3-gfal-async" in url
+
+    def test_eos_app_url_does_not_override_existing_app(self):
+        url = _eos_app_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=custom-app",
+            "python3-gfal-cli",
+        )
+        assert "eos.app=custom-app" in url
+        assert "python3-gfal-cli" not in url
+
+    def test_eos_app_url_ignores_non_eos_cern_hosts(self):
+        # Non-EOS host at cern.ch
+        assert (
+            _eos_app_url("https://lxplus.cern.ch/some/path", "python3-gfal-cli") is None
+        )
+
+    def test_eos_app_url_ignores_non_cern_hosts(self):
+        # EOS-like hostname but not cern.ch
+        assert (
+            _eos_app_url("root://eos.example.org//store/file.root", "python3-gfal-cli")
+            is None
+        )
+
+    def test_eos_app_url_ignores_local_files(self):
+        assert _eos_app_url("/tmp/local/file.txt", "python3-gfal-cli") is None
+
+    def test_eos_app_url_ignores_stdin_sentinel(self):
+        # The '-' sentinel should pass through unchanged via _url()
+        # (eos_app_url itself returns None for non-EOS URLs)
+        assert _eos_app_url("-", "python3-gfal-cli") is None
+
     def test_make_hasher_adler32(self):
         h = _make_hasher("ADLER32")
         assert h[0] == "ADLER32"
@@ -586,6 +641,43 @@ class TestPreserveTimesHelpers:
         result = _checksum_fs(fso, str(f), "ADLER32")
         expected = f"{zlib.adler32(data) & 0xFFFFFFFF:08x}"
         assert result == expected
+
+
+class TestUrlPathJoin:
+    """_url_path_join must insert the filename into the URL path, not the query string."""
+
+    def test_plain_url_join(self):
+        result = _AsyncGfalClient._url_path_join(
+            "https://eospilot.cern.ch//eos/pilot/dir", "file.txt"
+        )
+        assert result == "https://eospilot.cern.ch//eos/pilot/dir/file.txt"
+
+    def test_join_with_query_string(self):
+        # When eos.app has already been injected into the directory URL the
+        # filename must appear in the path, not appended after '?eos.app=…'.
+        base = "https://eospilot.cern.ch//eos/pilot/dir?eos.app=python3-gfal-cli"
+        result = _AsyncGfalClient._url_path_join(base, "file.txt")
+        assert result == (
+            "https://eospilot.cern.ch//eos/pilot/dir/file.txt?eos.app=python3-gfal-cli"
+        )
+
+    def test_join_strips_trailing_slash_before_appending(self):
+        base = "https://eospilot.cern.ch//eos/pilot/dir/?eos.app=python3-gfal-cli"
+        result = _AsyncGfalClient._url_path_join(base, "file.txt")
+        assert "/dir/file.txt" in result
+        assert "?eos.app=python3-gfal-cli" in result
+        assert "/dir//file.txt" not in result
+
+    def test_join_xrootd_url(self):
+        base = "root://eospilot.cern.ch//eos/pilot/dir?eos.app=python3-gfal-sync"
+        result = _AsyncGfalClient._url_path_join(base, "data.root")
+        assert result == (
+            "root://eospilot.cern.ch//eos/pilot/dir/data.root?eos.app=python3-gfal-sync"
+        )
+
+    def test_join_local_path(self):
+        result = _AsyncGfalClient._url_path_join("file:///tmp/dir", "out.txt")
+        assert result == "file:///tmp/dir/out.txt"
 
 
 # ---------------------------------------------------------------------------

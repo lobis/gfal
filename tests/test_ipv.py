@@ -96,6 +96,21 @@ def test_build_client_kwargs_ipv():
     assert kwargs["ipv6_only"] is False
 
 
+def test_build_client_kwargs_sets_cli_app():
+    """Verify that build_client_kwargs always sets app='python3-gfal-cli'."""
+    params = MagicMock()
+    params.cert = None
+    params.key = None
+    params.timeout = 1800
+    params.ssl_verify = True
+    params.ipv4_only = False
+    params.ipv6_only = False
+
+    kwargs = build_client_kwargs(params)
+
+    assert kwargs["app"] == "python3-gfal-cli"
+
+
 @pytest.mark.asyncio
 async def test_aiohttp_connector_family():
     """Verify that _verify_get_client passes the correct family to TCPConnector."""
