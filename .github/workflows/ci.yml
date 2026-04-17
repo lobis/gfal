@@ -92,7 +92,7 @@ jobs:
         channels: conda-forge
         channel-priority: strict
         miniforge-variant: Miniforge3
-        python-version: "3.12"
+        python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
         use-only-tar-bz2: true
     - name: Install XRootD runtime via conda
@@ -320,7 +320,7 @@ jobs:
                 args:
                 - |
                   set -euo pipefail
-                  conda install -y -n base -c conda-forge python=3.12 xrootd
+                  conda install -y -n base -c conda-forge python=3.11 xrootd
                   cp -a /src/. /app
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev]'
@@ -509,7 +509,7 @@ jobs:
                 args:
                 - |
                   set -euo pipefail
-                  conda install -y -n base -c conda-forge python=3.12 xrootd
+                  conda install -y -n base -c conda-forge python=3.11 xrootd
                   cp -a /src/. /app
                   python -m pip install --upgrade pip
                   pip install --no-cache-dir '/app[dev]'
@@ -931,7 +931,7 @@ jobs:
         channels: conda-forge
         channel-priority: strict
         miniforge-variant: Miniforge3
-        python-version: "3.12"
+        python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
         use-only-tar-bz2: true
     - name: Index local conda channel
@@ -946,9 +946,9 @@ jobs:
       shell: bash -el {0}
       run: |
         command -v gfal
-        python -c "import aiohttp, click, fsspec, rich, urllib3; print(fsspec.__version__)"
+        python -c "import aiohttp, click, fsspec, rich, rich_click, urllib3; print(fsspec.__version__)"
         gfal --help
-        python -c "from XRootD import client; import fsspec_xrootd; import gfal"
+        python -c "from XRootD import client; import gfal; import rich_click"
 
   update-repo:
     name: Update YUM Repository 🌐

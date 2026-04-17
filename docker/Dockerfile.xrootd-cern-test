@@ -17,7 +17,8 @@ FROM almalinux:9
 
 # Install system dependencies.
 # python3.9 is kept for legacy gfal2-utils; the new gfal CLI runs on a Miniforge
-# Python 3.12 environment installed below.
+# Python 3.11 environment installed below because conda-forge's xrootd builds
+# do not yet support Python 3.12+.
 RUN set -euxo pipefail \
     && for attempt in 1 2 3; do \
         if dnf install -y \
@@ -78,7 +79,7 @@ RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Mi
     && bash /tmp/miniforge.sh -b -p /opt/conda \
     && rm -f /tmp/miniforge.sh \
     && /opt/conda/bin/conda install -y -n base -c conda-forge \
-         "python=3.12" \
+         "python=3.11" \
          "aiohttp>=3.8.0" \
          "click>=8.0.0" \
          "fsspec>=2023.1.0" \
@@ -91,15 +92,21 @@ RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Mi
     && /opt/conda/bin/python -m pip install --no-cache-dir "fsspec-xrootd>=0.5.2" \
     && /opt/conda/bin/conda clean -afy
 
-# Make the Miniforge Python 3.12 runtime the default for the new gfal CLI.
+# Make the Miniforge Python runtime the default for the new gfal CLI.
 RUN ln -sf /opt/conda/bin/python /usr/local/bin/python \
     && ln -sf /opt/conda/bin/python /usr/local/bin/python3 \
-    && ln -sf /opt/conda/bin/python /usr/local/bin/python3.12 \
+    && ln -sf /opt/conda/bin/python /usr/local/bin/python3.11 \
     && ln -sf /opt/conda/bin/pip /usr/local/bin/pip \
     && ln -sf /opt/conda/bin/pip /usr/local/bin/pip3
 
-# Environment: tell XRootD where to find CA certificates for GSI auth.
-ENV XRD_CADIR=/etc/grid-security/certificates
+# Environment: make the conda-installed console scripts visible, point Python SSL
+# at the system trust store (with the injected CERN CAs), and tell XRootD where
+# to find CA certificates for GSI auth.
+ENV PATH=/opt/conda/bin:$PATH \
+    SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt \
+    REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt \
+    CURL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt \
+    XRD_CADIR=/etc/grid-security/certificates
 
 # The gfal repo is mounted at /repo at runtime; gfal itself is installed
 # per-run by run_gfal_docker() so code changes don't require an image rebuild.

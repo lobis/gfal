@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1
 
-RUN conda install -y -n base -c conda-forge python=3.12 xrootd && \
+RUN conda install -y -n base -c conda-forge python=3.11 xrootd && \
     conda clean -afy
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 testrunner
