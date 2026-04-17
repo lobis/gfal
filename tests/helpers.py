@@ -169,7 +169,7 @@ def _docker_run_command(
 
     if proxy and Path(proxy).is_file():
         proxy_path = Path(proxy).resolve()
-        if str(proxy_path).startswith("/tmp/"):
+        if proxy_path.is_relative_to("/tmp"):
             # /tmp is already bind-mounted — the proxy is visible at its
             # original host path inside the container.
             env_args += ["-e", f"X509_USER_PROXY={proxy_path}"]

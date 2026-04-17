@@ -999,7 +999,7 @@ class CommandBase:
         # "url: No such file or directory" instead of a bare URL.
         err_code = getattr(e, "errno", None)
         if isinstance(err_code, int) and isinstance(e, OSError):
-            desc = _ERRNO_DESCRIPTIONS.get(err_code)
+            desc = _ERRNO_DESCRIPTIONS.get(err_code) or os.strerror(err_code)
             if desc and desc not in msg:
                 return f"{path}: {desc}" if path else f"{msg}: {desc}"
         # SSL / connection errors from aiohttp (used by fsspec)
