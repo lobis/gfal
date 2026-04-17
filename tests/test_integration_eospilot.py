@@ -249,9 +249,11 @@ def _extract_progress_elapsed_seconds(output, *, mode):
 
 def _run_repo_gfal_docker_script(shell_script, proxy_cert):
     """Run a shell script in the Docker image after installing the current repo copy."""
+    # Use /var/tmp (not /tmp) because /tmp is bind-mounted from the host and
+    # may be shared with pytest tmp_path dirs or parallel Docker runs.
     setup = (
-        "cp -r /repo /tmp/gfal-src && "
-        "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        "cp -r /repo /var/tmp/gfal-src && "
+        "python3 -m pip install -q --no-deps /var/tmp/gfal-src > /dev/null 2>&1 && "
     )
     return _docker_run_command(f"{setup}{shell_script}", proxy_cert=proxy_cert)
 
@@ -266,7 +268,7 @@ def _preserve_times_url(kind, name):
     raise ValueError(f"Unknown preserve-times endpoint kind: {kind}")
 
 
-def _preserve_times_setup(kind, url):
+def _preserve_times_setup(kind, url, *, local_src="/tmp/src.txt"):
     if kind == "local":
         return ""
     if kind == "https":
@@ -301,7 +303,7 @@ def _preserve_times_setup(kind, url):
             """
         )
     if kind == "root":
-        return f"xrdcp -f /tmp/src.txt '{url}?eos.mtime=946684800'\n"
+        return f"xrdcp -f {local_src} '{url}?eos.mtime=946684800'\n"
     raise ValueError(f"Unknown preserve-times endpoint kind: {kind}")
 
 
@@ -330,7 +332,11 @@ def _preserve_times_verify(kind, url):
 
 def _preserve_times_cleanup(kind, url):
     if kind == "local":
-        return ""
+        # Clean up local files on the host's /tmp (bind-mounted into Docker).
+        from urllib.parse import urlparse  # noqa: PLC0415
+
+        path = urlparse(url).path
+        return f"rm -f '{path}'\n"
     return f"gfal rm -t 20 --no-verify '{url}' >/dev/null 2>/dev/null || true\n"
 
 
@@ -764,13 +770,13 @@ class TestEosPilotStreamingCopyDocker:
     ):
         src_name = f"pytest-preserve-src-{uuid.uuid4().hex[:8]}.txt"
         dst_name = f"pytest-preserve-dst-{uuid.uuid4().hex[:8]}.txt"
-        src_url = _preserve_times_url(
-            src_kind, "src.txt" if src_kind == "local" else src_name
-        )
-        dst_url = _preserve_times_url(
-            dst_kind, "dst.txt" if dst_kind == "local" else dst_name
-        )
-        setup_src = _preserve_times_setup(src_kind, src_url)
+        # Use unique names for local files too — /tmp is bind-mounted from the
+        # host, so hardcoded names collide across parallel/sequential Docker runs.
+        src_url = _preserve_times_url(src_kind, src_name)
+        dst_url = _preserve_times_url(dst_kind, dst_name)
+        # The local source content is always written to the local src path.
+        local_src = f"/tmp/{src_name}"
+        setup_src = _preserve_times_setup(src_kind, src_url, local_src=local_src)
         verify_dst = _preserve_times_verify(dst_kind, dst_url)
         cleanup_src = _preserve_times_cleanup(src_kind, src_url)
         cleanup_dst = _preserve_times_cleanup(dst_kind, dst_url)
@@ -778,8 +784,8 @@ class TestEosPilotStreamingCopyDocker:
         script = textwrap.dedent(
             f"""
             set -e
-            printf 'preserve times\\n' >/tmp/src.txt
-            touch -t 200001010101 /tmp/src.txt
+            printf 'preserve times\\n' >{local_src}
+            touch -t 200001010101 {local_src}
             {setup_src}gfal cp -t 20 --no-verify --preserve-times '{src_url}' '{dst_url}' >/tmp/cp.out 2>/tmp/cp.err
             {verify_dst}{cleanup_src}{cleanup_dst}cat /tmp/cp.out
             cat /tmp/cp.err >&2
