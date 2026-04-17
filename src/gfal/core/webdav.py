@@ -20,6 +20,7 @@ import queue
 import re
 import ssl
 import stat as stat_module
+import tempfile
 import threading
 import warnings
 from email.utils import parsedate_to_datetime
@@ -761,6 +762,38 @@ def _raise_for_status(resp, url: str) -> None:
 
 
 class _RequestsPutFile(io.RawIOBase):
+    """Write-only file object that buffers data and sends a PUT on close."""
+
+    def __init__(self, session, url: str, timeout: float | None = None) -> None:
+        self._session = session
+        self._url = url
+        self._timeout = timeout
+        self._buf: tempfile.SpooledTemporaryFile = tempfile.SpooledTemporaryFile(  # noqa: SIM115
+            max_size=64 * 1024 * 1024
+        )
+
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b) -> int:  # type: ignore[override]
+        return self._buf.write(b)
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._buf.seek(0)
+                data = self._buf.read()
+                resp = self._session.put(self._url, data=data, timeout=self._timeout)
+                _raise_for_status(resp, self._url)
+            finally:
+                self._buf.close()
+                super().close()
+
+
+class _StreamingRequestsPutFile(io.RawIOBase):
     """Write-only file object that streams data to an HTTP PUT request."""
 
     def __init__(self, session, url: str, timeout: float | None = None) -> None:
@@ -1023,6 +1056,9 @@ class WebDAVFileSystem(AbstractFileSystem):
         if "w" in mode:
             return _RequestsPutFile(self._session, path, self._timeout)
         return self._http_fs.open(path, mode, **kwargs)
+
+    def open_stream_write(self, path: str):
+        return _StreamingRequestsPutFile(self._session, path, self._timeout)
 
     def checksum(self, path: str, algorithm: str) -> str:
         """Fetch server-side checksum via HTTP HEAD and the Digest header."""

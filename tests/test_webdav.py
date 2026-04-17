@@ -26,8 +26,8 @@ from gfal.core.webdav import (
     WebDAVFileSystem,
     _http_fs_opts,
     _parse_propfind,
-    _RequestsPutFile,
     _should_suppress_loop_exception,
+    _StreamingRequestsPutFile,
     _SyncAiohttpSession,
 )
 
@@ -978,17 +978,6 @@ class TestWebDAVChmod:
 
 
 class TestWebDAVOpenWrite:
-    @staticmethod
-    def _upload_future(result=None, *, exc=None):
-        import concurrent.futures
-
-        future: concurrent.futures.Future = concurrent.futures.Future()
-        if exc is not None:
-            future.set_exception(exc)
-        else:
-            future.set_result(result)
-        return future
-
     def test_open_write_creates_entry(self, dav_server):
         """open(url, 'wb') followed by write+close should PUT the file."""
         fs = WebDAVFileSystem()
@@ -1003,15 +992,13 @@ class TestWebDAVOpenWrite:
         fs = WebDAVFileSystem({"timeout": 12})
         mock_resp = MagicMock()
         mock_resp.status_code = 201
-        fs._session.request_upload_stream = MagicMock(
-            return_value=self._upload_future(mock_resp)
-        )
+        fs._session.put = MagicMock(return_value=mock_resp)
 
         with fs.open("https://server/upload.bin", "wb") as f:
             f.write(b"payload")
 
-        fs._session.request_upload_stream.assert_called_once()
-        assert fs._session.request_upload_stream.call_args.kwargs["timeout"] == 12
+        fs._session.put.assert_called_once()
+        assert fs._session.put.call_args.kwargs["timeout"] == 12
 
     def test_open_write_403_maps_to_permission_error(self):
         from unittest.mock import MagicMock
@@ -1019,9 +1006,7 @@ class TestWebDAVOpenWrite:
         fs = WebDAVFileSystem()
         mock_resp = MagicMock()
         mock_resp.status_code = 403
-        fs._session.request_upload_stream = MagicMock(
-            return_value=self._upload_future(mock_resp)
-        )
+        fs._session.put = MagicMock(return_value=mock_resp)
 
         with (
             pytest.raises(PermissionError),
@@ -1031,9 +1016,7 @@ class TestWebDAVOpenWrite:
 
     def test_open_write_timeout_maps_to_timeout_error(self):
         fs = WebDAVFileSystem({"timeout": 3})
-        fs._session.request_upload_stream = MagicMock(
-            return_value=self._upload_future(exc=TimeoutError("slow"))
-        )
+        fs._session.put = MagicMock(side_effect=TimeoutError("slow"))
 
         with pytest.raises(TimeoutError), fs.open("https://server/slow.bin", "wb") as f:
             f.write(b"payload")
@@ -1237,7 +1220,7 @@ class TestWebDAVChecksum:
             fs.checksum("https://server/file", "adler32")
 
 
-class TestRequestsPutFile:
+class TestStreamingRequestsPutFile:
     def test_write_starts_upload_before_close(self):
         first_chunk = threading.Event()
         upload_finished: concurrent.futures.Future = concurrent.futures.Future()
@@ -1262,7 +1245,7 @@ class TestRequestsPutFile:
                 threading.Thread(target=_consume, daemon=True).start()
                 return upload_finished
 
-        writer = _RequestsPutFile(_Session(), "https://example.org/file")
+        writer = _StreamingRequestsPutFile(_Session(), "https://example.org/file")
         assert writer.write(b"payload") == len(b"payload")
 
         assert first_chunk.wait(1), "upload did not start before close()"
@@ -1272,7 +1255,7 @@ class TestRequestsPutFile:
         session = MagicMock()
         upload_future: concurrent.futures.Future = concurrent.futures.Future()
         session.request_upload_stream.return_value = upload_future
-        writer = _RequestsPutFile(session, "https://example.org/file")
+        writer = _StreamingRequestsPutFile(session, "https://example.org/file")
         writer.write(b"payload")
         upload_future.set_exception(aiohttp.ClientConnectionError("Connection lost"))
 

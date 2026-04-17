@@ -16,7 +16,7 @@ from typing import Optional
 import pytest
 
 from gfal.core.api import AsyncGfalClient, CopyOptions, StatResult
-from gfal.core.webdav import _STREAM_EOF, _RequestsPutFile
+from gfal.core.webdav import _STREAM_EOF, _StreamingRequestsPutFile
 from helpers import run_gfal
 
 _PILOT_BASE = "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
@@ -201,7 +201,7 @@ class _FakeDestinationFs:
         self._session = _FakeUploadSession(state)
 
     def open(self, path: str, mode: str):
-        return _RequestsPutFile(self._session, path)
+        return _StreamingRequestsPutFile(self._session, path)
 
 
 class TestStreamingCopyRegression:
