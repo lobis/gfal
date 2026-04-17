@@ -75,7 +75,7 @@ class CommandCopy(base.CommandBase):
         "--preserve-times",
         action="store_true",
         default=True,
-        help="preserve source access and modification times when supported (default: on)",
+        help="preserve source access and modification times when supported",
     )
     @base.arg(
         "--no-preserve-times",
@@ -132,8 +132,9 @@ class CommandCopy(base.CommandBase):
         choices=["pull", "push", "streamed"],
         default=None,
         help="copy mode (gfal2-util compatible): pull/push = TPC with that direction; "
-        "streamed = force client-side streaming. Overrides --tpc/--tpc-only/--tpc-mode "
-        "when specified.",
+        "streamed = force client-side streaming. By default, HTTP->HTTP and "
+        "root->root copies try pull-mode TPC first with fallback to streaming. "
+        "Overrides --tpc/--tpc-only/--tpc-mode when specified.",
     )
     @base.arg(
         "--just-copy",
@@ -322,11 +323,14 @@ class CommandCopy(base.CommandBase):
                 expected_value=expected,
             )
 
-        tpc = "never"
+        tpc = "auto"
         if getattr(self.params, "tpc_only", False):
             tpc = "only"
         elif getattr(self.params, "tpc", False):
             tpc = "auto"
+
+        argv = self.argv or []
+        preserve_times_explicit = "--preserve-times" in argv
 
         return CopyOptions(
             overwrite=getattr(self.params, "force", False),
@@ -340,6 +344,7 @@ class CommandCopy(base.CommandBase):
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
             preserve_times=getattr(self.params, "preserve_times", True),
+            preserve_times_explicit=preserve_times_explicit,
             compare=getattr(self.params, "compare", None),
             just_copy=getattr(self.params, "just_copy", False),
             disable_cleanup=getattr(self.params, "disable_cleanup", False),

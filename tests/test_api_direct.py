@@ -839,6 +839,30 @@ class TestGfalClientLibraryHelpers:
 
         assert dst_fs.size == 7
 
+    def test_transfer_destination_url_skips_remote_mtime_without_explicit_flag(self):
+        client = GfalClient()
+        src_st = client.stat(Path(__file__).as_uri())
+
+        url = client._async_client._transfer_destination_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            src_st,
+            CopyOptions(preserve_times=True, preserve_times_explicit=False),
+        )
+
+        assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
+    def test_transfer_destination_url_uses_remote_mtime_with_explicit_flag(self):
+        client = GfalClient()
+        src_st = client.stat(Path(__file__).as_uri())
+
+        url = client._async_client._transfer_destination_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            src_st,
+            CopyOptions(preserve_times=True, preserve_times_explicit=True),
+        )
+
+        assert "eos.mtime=" in url
+
 
 class TestAsyncGfalClient:
     @pytest.mark.asyncio

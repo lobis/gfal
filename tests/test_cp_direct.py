@@ -838,7 +838,11 @@ class TestCliUsesLibraryCopy:
 
         mock_client.copy.assert_called_once()
         _, kwargs = mock_client.copy.call_args
-        assert kwargs["options"] == CopyOptions(compare="size", preserve_times=True)
+        assert kwargs["options"] == CopyOptions(
+            compare="size",
+            preserve_times=True,
+            tpc="auto",
+        )
         assert callable(kwargs["progress_callback"])
         assert callable(kwargs["start_callback"])
 
@@ -860,6 +864,17 @@ class TestCliUsesLibraryCopy:
 
         _, kwargs = mock_client.copy.call_args
         assert kwargs["options"].compare == "none"
+
+    def test_build_copy_options_marks_preserve_times_explicit(self):
+        cmd = _make_cmd()
+        cmd.argv = ["gfal-cp", "--preserve-times", "src", "dst"]
+        cmd.params = _default_params(src="src", dst=["dst"], preserve_times=True)
+
+        opts = cmd._build_copy_options()
+
+        assert opts.preserve_times is True
+        assert opts.preserve_times_explicit is True
+        assert opts.tpc == "auto"
 
     def test_do_copy_non_tty_reports_tpc_mode(self, tmp_path, capsys):
         src = tmp_path / "src.txt"

@@ -782,6 +782,7 @@ class CommandBase:
         self.err_console = get_console(stderr=True)
         self.params = None
         self.prog = None
+        self.argv = None
         self._cancel_event = Event()
 
     @contextlib.contextmanager
@@ -835,6 +836,7 @@ class CommandBase:
         """Parse argv using Click, populating self.params as a SimpleNamespace."""
         prog = Path(argv[0]).name
         self.prog = prog
+        self.argv = list(argv)
 
         doc = (func.__doc__ or "").strip().split("\n")[0]
         help_text = f"{doc}"

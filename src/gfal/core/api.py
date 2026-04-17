@@ -937,7 +937,7 @@ class AsyncGfalClient:
         src_st: StatResult,
         options: CopyOptions,
     ) -> str:
-        if not options.preserve_times:
+        if not options.preserve_times or not options.preserve_times_explicit:
             return dst_url
         return eos_mtime_url(dst_url, src_st.st_mtime) or dst_url
 
