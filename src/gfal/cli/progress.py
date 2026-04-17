@@ -5,6 +5,7 @@ import struct
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 try:
     import fcntl
@@ -99,65 +100,87 @@ class RichProgress:
     def __init__(self, label):
         self.label = label
         self._started_flag = False
-        from rich.progress import (
-            BarColumn,
-            DownloadColumn,
-            SpinnerColumn,
-            TextColumn,
-            TimeRemainingColumn,
-            TransferSpeedColumn,
-        )
-        from rich.progress import (
-            Progress as _RichProgress,
-        )
-
-        self.rich_progress = _RichProgress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=get_console(stderr=False),
-        )
         self.task_id = None
 
+    @classmethod
+    def _manager(cls):
+        if not hasattr(cls, "_shared"):
+            from rich.progress import (
+                BarColumn,
+                DownloadColumn,
+                SpinnerColumn,
+                TextColumn,
+                TimeRemainingColumn,
+                TransferSpeedColumn,
+            )
+            from rich.progress import (
+                Progress as _RichProgress,
+            )
+
+            cls._shared = SimpleNamespace(
+                lock=threading.Lock(),
+                progress=_RichProgress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    DownloadColumn(),
+                    TransferSpeedColumn(),
+                    TimeRemainingColumn(),
+                    console=get_console(stderr=False),
+                ),
+                started=False,
+                active=0,
+            )
+        return cls._shared
+
     def start(self):
-        if self._started_flag:
-            return
-        self._started_flag = True
-        self.rich_progress.start()
-        self.task_id = self.rich_progress.add_task(self.label, total=None)
+        manager = self._manager()
+        with manager.lock:
+            if self._started_flag:
+                return
+            if not manager.started:
+                manager.progress.start()
+                manager.started = True
+            self.task_id = manager.progress.add_task(self.label, total=None)
+            manager.active += 1
+            self._started_flag = True
 
     def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
-        if not self._started_flag:
-            return
-        kwargs = {}
-        if curr_size is not None:
-            kwargs["completed"] = curr_size
-        if total_size is not None:
-            kwargs["total"] = total_size
-        self.rich_progress.update(self.task_id, **kwargs)
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            kwargs = {}
+            if curr_size is not None:
+                kwargs["completed"] = curr_size
+            if total_size is not None:
+                kwargs["total"] = total_size
+            manager.progress.update(self.task_id, **kwargs)
 
     def stop(self, success):
-        if not self._started_flag:
-            return
-        self._started_flag = False
-        try:
-            task = self.rich_progress.tasks[self.task_id]
-            if success and task.total is not None:
-                self.rich_progress.update(self.task_id, completed=task.total)
-            if success:
-                self.rich_progress.update(
-                    self.task_id, description=f"{self.label} [green]\\[DONE][/]"
-                )
-            else:
-                self.rich_progress.update(
-                    self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
-                )
-        except Exception:
-            pass
-        self.rich_progress.stop()
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            self._started_flag = False
+            try:
+                task = manager.progress.tasks[self.task_id]
+                if success and task.total is not None:
+                    manager.progress.update(self.task_id, completed=task.total)
+                if success:
+                    manager.progress.update(
+                        self.task_id, description=f"{self.label} [green]\\[DONE][/]"
+                    )
+                else:
+                    manager.progress.update(
+                        self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
+                    )
+            except Exception:
+                pass
+            manager.active = max(0, manager.active - 1)
+            if manager.started and manager.active == 0:
+                manager.progress.stop()
+                manager.started = False
 
 
 class LegacyProgress:

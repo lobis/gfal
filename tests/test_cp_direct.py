@@ -325,6 +325,29 @@ class TestExecuteCp:
         assert (dst / "f1.txt").read_bytes() == b"a"
         assert (dst / "f2.txt").read_bytes() == b"b"
 
+    def test_copy_recursive_continues_after_existing_file_error(self, tmp_path, capsys):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "exists.txt").write_bytes(b"src")
+        (src / "new.txt").write_bytes(b"new")
+        (dst / "exists.txt").write_bytes(b"dst")
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+        )
+
+        rc = cmd.execute_cp()
+
+        assert rc == errno.EEXIST
+        assert (dst / "exists.txt").read_bytes() == b"dst"
+        assert (dst / "new.txt").read_bytes() == b"new"
+        captured = capsys.readouterr()
+        assert "overwrite is not set" in captured.err
+
     def test_copy_directory_without_recursive_skips(self, tmp_path, capsys):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
@@ -973,6 +996,110 @@ class TestCliUsesLibraryCopy:
             },
         )
         assert progress.calls[4] == ("stop", True)
+
+    def test_recursive_top_level_children_get_individual_progress(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _FakeProgress:
+            def __init__(self, label):
+                self.label = label
+                self.calls = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def update(self, **kwargs):
+                self.calls.append(("update", kwargs))
+
+            def stop(self, success):
+                self.calls.append(("stop", success))
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_instances = []
+        started = []
+
+        def _make_progress(label):
+            progress = _FakeProgress(label)
+            fake_instances.append(progress)
+            return progress
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            started.append((src_url, dst_url))
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            kwargs["progress_callback"](3)
+            return _DoneHandle()
+
+        with (
+            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert sorted(started) == [
+            ((src / "one.txt").as_uri(), (dst / "one.txt").as_uri()),
+            ((src / "two.txt").as_uri(), (dst / "two.txt").as_uri()),
+        ]
+        assert sorted(progress.label for progress in fake_instances) == [
+            "Copying one.txt (TPC pull)",
+            "Copying two.txt (TPC pull)",
+        ]
+
+    def test_recursive_top_level_children_use_start_copy_not_copy(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                return None
+
+            def cancel(self):
+                return None
+
+        with (
+            patch("gfal.core.api.GfalClient.copy") as mock_copy,
+            patch(
+                "gfal.core.api.GfalClient.start_copy",
+                return_value=_DoneHandle(),
+            ) as mock_start_copy,
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        mock_copy.assert_not_called()
+        mock_start_copy.assert_called_once()
 
 
 class TestTpcOnlyPreflight:

@@ -627,6 +627,23 @@ class TestCopyRecursive:
         assert (dstdir / "same.txt").read_bytes() == b"same"
         assert (dstdir / "new.txt").read_bytes() == b"new"
 
+    def test_recursive_continues_after_existing_destination_error(self, tmp_path):
+        srcdir = tmp_path / "srcdir"
+        srcdir.mkdir()
+        (srcdir / "exists.txt").write_bytes(b"src")
+        (srcdir / "new.txt").write_bytes(b"new")
+
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+        (dstdir / "exists.txt").write_bytes(b"dst")
+
+        rc, out, err = run_gfal("cp", "-r", srcdir.as_uri(), dstdir.as_uri())
+
+        assert rc == errno.EEXIST
+        assert "exists and overwrite is not set" in err
+        assert (dstdir / "exists.txt").read_bytes() == b"dst"
+        assert (dstdir / "new.txt").read_bytes() == b"new"
+
 
 # ---------------------------------------------------------------------------
 # Parent directory creation (-p)

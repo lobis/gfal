@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import errno
 import hashlib
+import inspect
 import os
 import stat
 import threading
@@ -23,6 +24,7 @@ from gfal.core.errors import (
     GfalFileNotFoundError,
     GfalIsADirectoryError,
     GfalNotADirectoryError,
+    GfalPartialFailureError,
     GfalPermissionError,
     GfalTimeoutError,
     is_xrootd_not_found_message,
@@ -33,6 +35,8 @@ WarnCallback = Optional[Callable[[str], None]]
 ProgressCallback = Optional[Callable[[int], None]]
 StartCallback = Optional[Callable[[], None]]
 TransferModeCallback = Optional[Callable[[str], None]]
+ErrorCallback = Optional[Callable[[str, str, Exception], None]]
+TraverseCallback = Optional[Callable[[str, str], None]]
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ class CopyOptions:
     tpc: str = "never"
     tpc_direction: str = "pull"
     recursive: bool = False
+    abort_on_failure: bool = False
     preserve_times: bool = False
     preserve_times_explicit: bool = False  # True only when user passed --preserve-times
     compare: str | None = None  # None | "size" | "size_mtime" | "checksum" | "none"
@@ -319,11 +324,13 @@ class AsyncGfalClient:
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
         transfer_mode_callback: TransferModeCallback = None,
+        error_callback: ErrorCallback = None,
+        traverse_callback: TraverseCallback = None,
         cancel_event: threading.Event | None = None,
     ) -> Any:
         def _runner() -> Any:
             try:
-                return self._copy_sync(
+                return self._invoke_copy_sync(
                     src_url,
                     dst_url,
                     options or CopyOptions(),
@@ -331,6 +338,8 @@ class AsyncGfalClient:
                     start_callback,
                     warn_callback,
                     transfer_mode_callback,
+                    error_callback,
+                    traverse_callback,
                     cancel_event,
                 )
             except Exception as e:
@@ -348,6 +357,8 @@ class AsyncGfalClient:
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
         transfer_mode_callback: TransferModeCallback = None,
+        error_callback: ErrorCallback = None,
+        traverse_callback: TraverseCallback = None,
     ) -> TransferHandle:
         cancel_event = threading.Event()
         result_holder: dict[str, Any] = {}
@@ -355,7 +366,7 @@ class AsyncGfalClient:
 
         def _runner() -> None:
             try:
-                result_holder["value"] = self._copy_sync(
+                result_holder["value"] = self._invoke_copy_sync(
                     src_url,
                     dst_url,
                     options or CopyOptions(),
@@ -363,6 +374,8 @@ class AsyncGfalClient:
                     start_callback,
                     warn_callback,
                     transfer_mode_callback,
+                    error_callback,
+                    traverse_callback,
                     cancel_event,
                 )
             except Exception as exc:  # pragma: no cover - exercised via handle.wait
@@ -373,6 +386,44 @@ class AsyncGfalClient:
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
+
+    def _invoke_copy_sync(
+        self,
+        src_url: str,
+        dst_url: str,
+        options: CopyOptions,
+        progress_callback: ProgressCallback,
+        start_callback: StartCallback,
+        warn_callback: WarnCallback,
+        transfer_mode_callback: TransferModeCallback,
+        error_callback: ErrorCallback,
+        traverse_callback: TraverseCallback,
+        cancel_event: threading.Event | None,
+    ) -> Any:
+        parameters = inspect.signature(self._copy_sync).parameters
+        if len(parameters) <= 8:
+            return self._copy_sync(
+                src_url,
+                dst_url,
+                options,
+                progress_callback,
+                start_callback,
+                warn_callback,
+                transfer_mode_callback,
+                cancel_event,
+            )
+        return self._copy_sync(
+            src_url,
+            dst_url,
+            options,
+            progress_callback,
+            start_callback,
+            warn_callback,
+            transfer_mode_callback,
+            error_callback,
+            traverse_callback,
+            cancel_event,
+        )
 
     def _stat_sync(self, url: str) -> StatResult:
         try:
@@ -524,6 +575,8 @@ class AsyncGfalClient:
         start_callback: StartCallback,
         warn_callback: WarnCallback,
         transfer_mode_callback: TransferModeCallback,
+        error_callback: ErrorCallback,
+        traverse_callback: TraverseCallback,
         cancel_event: threading.Event | None,
     ) -> Any:
         src_url = self._copy_url(src_url)
@@ -578,6 +631,8 @@ class AsyncGfalClient:
                 start_callback,
                 transfer_mode_callback,
                 warn_callback,
+                error_callback,
+                traverse_callback,
                 cancel_event,
             )
             self._preserve_times(
@@ -698,9 +753,15 @@ class AsyncGfalClient:
         start_callback: StartCallback,
         transfer_mode_callback: TransferModeCallback,
         warn_callback: WarnCallback,
+        error_callback: ErrorCallback,
+        traverse_callback: TraverseCallback,
         cancel_event: threading.Event | None,
     ) -> None:
+        if traverse_callback is not None:
+            traverse_callback(src_url, dst_url)
+
         entries = src_fs.ls(src_path, detail=False)
+        failures: list[Exception] = []
 
         for entry_path in entries:
             if cancel_event is not None and cancel_event.is_set():
@@ -709,15 +770,32 @@ class AsyncGfalClient:
             name = Path(entry_path.rstrip("/")).name
             if name in (".", ".."):
                 continue
-            self._copy_sync(
-                self._url_path_join(src_url, name),
-                self._url_path_join(dst_url, name),
-                options,
-                progress_callback,
-                start_callback,
-                transfer_mode_callback,
-                warn_callback,
-                cancel_event,
+            child_src_url = self._url_path_join(src_url, name)
+            child_dst_url = self._url_path_join(dst_url, name)
+            try:
+                self._invoke_copy_sync(
+                    child_src_url,
+                    child_dst_url,
+                    options,
+                    progress_callback,
+                    start_callback,
+                    warn_callback,
+                    transfer_mode_callback,
+                    error_callback,
+                    traverse_callback,
+                    cancel_event,
+                )
+            except Exception as exc:
+                mapped = self._map_error(exc, child_src_url)
+                failures.append(mapped)
+                if error_callback is not None:
+                    error_callback(child_src_url, child_dst_url, mapped)
+                if options.abort_on_failure:
+                    raise mapped from exc
+
+        if failures:
+            raise GfalPartialFailureError(
+                f"{len(failures)} recursive transfer(s) failed", failures
             )
 
     def _copy_file(
@@ -750,6 +828,9 @@ class AsyncGfalClient:
                     dst_fs.mkdir(parent, create_parents=True)
 
         src_checksum = None
+        if start_callback is not None:
+            start_callback()
+
         if (
             options.checksum
             and not options.just_copy
@@ -763,9 +844,6 @@ class AsyncGfalClient:
                 raise OSError(
                     f"Source checksum mismatch: expected {expected}, got {src_checksum}"
                 )
-
-        if start_callback is not None:
-            start_callback()
 
         start = time.monotonic()
         transferred = 0
@@ -1153,6 +1231,8 @@ class GfalClient:
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
         transfer_mode_callback: TransferModeCallback = None,
+        error_callback: ErrorCallback = None,
+        traverse_callback: TraverseCallback = None,
         cancel_event: threading.Event | None = None,
     ) -> Any:
         return run_sync(
@@ -1164,6 +1244,8 @@ class GfalClient:
             start_callback=start_callback,
             warn_callback=warn_callback,
             transfer_mode_callback=transfer_mode_callback,
+            error_callback=error_callback,
+            traverse_callback=traverse_callback,
             cancel_event=cancel_event,
         )
 
@@ -1177,6 +1259,8 @@ class GfalClient:
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
         transfer_mode_callback: TransferModeCallback = None,
+        error_callback: ErrorCallback = None,
+        traverse_callback: TraverseCallback = None,
     ) -> TransferHandle:
         return self._async_client.start_copy(
             src_url,
@@ -1186,6 +1270,8 @@ class GfalClient:
             start_callback=start_callback,
             warn_callback=warn_callback,
             transfer_mode_callback=transfer_mode_callback,
+            error_callback=error_callback,
+            traverse_callback=traverse_callback,
         )
 
     def _map_error(self, e: Exception, url: str) -> GfalError:
