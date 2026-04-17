@@ -863,6 +863,15 @@ class TestGfalClientLibraryHelpers:
 
         assert "eos.mtime=" in url
 
+    def test_copy_url_skips_eos_app_annotation_for_https(self):
+        client = GfalClient(app="python3-gfal-cli")
+
+        url = client._async_client._copy_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
 
 class TestAsyncGfalClient:
     @pytest.mark.asyncio

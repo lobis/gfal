@@ -232,6 +232,20 @@ class AsyncGfalClient:
             return url
         return eos_app_url(url, self.app) or url
 
+    def _copy_url(self, url: str) -> str:
+        """Return the transfer URL used by copy operations.
+
+        EOS HTTPS endpoints reject write-side query decoration such as
+        ``?eos.app=...`` for both streamed PUT and HTTP-TPC COPY requests.
+        Keep plain HTTP(S) URLs untouched during copy operations while
+        retaining the existing EOS app annotation behaviour for non-HTTP
+        schemes such as XRootD.
+        """
+        normalized = fs.normalize_url(url)
+        if urlparse(normalized).scheme.lower() in {"http", "https"}:
+            return normalized
+        return self._url(url)
+
     @staticmethod
     def _url_path_join(base: str, name: str) -> str:
         """Append *name* to the *path* component of *base*, preserving query/fragment.
@@ -512,8 +526,8 @@ class AsyncGfalClient:
         transfer_mode_callback: TransferModeCallback,
         cancel_event: threading.Event | None,
     ) -> Any:
-        src_url = self._url(src_url)
-        dst_url = self._url(dst_url)
+        src_url = self._copy_url(src_url)
+        dst_url = self._copy_url(dst_url)
         opts = self.storage_options
 
         src_fs, src_path = fs.url_to_fs(src_url, opts)
@@ -633,6 +647,7 @@ class AsyncGfalClient:
                     timeout=options.timeout,
                     verbose=False,
                     scitag=options.scitag,
+                    no_delegation=options.no_delegation,
                     progress_callback=progress_callback,
                     start_callback=start_callback,
                 )

@@ -41,6 +41,7 @@ def do_tpc(
     timeout=None,
     verbose=False,
     scitag=None,
+    no_delegation=False,
     progress_callback=None,
     start_callback=None,
 ):
@@ -92,6 +93,7 @@ def do_tpc(
             timeout=timeout,
             verbose=verbose,
             scitag=scitag,
+            no_delegation=no_delegation,
             progress_callback=progress_callback,
         )
 
@@ -181,7 +183,16 @@ def _parse_tpc_body(resp, progress_callback=None):
 
 
 def _http_tpc(
-    src_url, dst_url, opts, *, mode, timeout, verbose, scitag, progress_callback=None
+    src_url,
+    dst_url,
+    opts,
+    *,
+    mode,
+    timeout,
+    verbose,
+    scitag,
+    no_delegation=False,
+    progress_callback=None,
 ):
     """Send a WebDAV COPY request to initiate an HTTP TPC transfer."""
     headers = {
@@ -201,6 +212,17 @@ def _http_tpc(
         # Destination server pulls from source (default / "pull")
         url = dst_url
         headers["Source"] = src_url
+        # We do not implement GridSite delegation today. For pull-mode TPC
+        # from public HTTP/WebDAV sources, explicitly opting out of delegation
+        # avoids a 403 on EOS/dCache and matches the successful curl pattern
+        # documented by dCache/WLCG. This is harmless when the source is public
+        # and does not worsen the current behaviour for delegated cases that we
+        # do not support yet.
+        headers["Credential"] = "none"
+        if no_delegation:
+            headers["RequireChecksumVerification"] = "false"
+        else:
+            headers["RequireChecksumVerification"] = "false"
         if verbose:
             sys.stderr.write(f"[TPC pull] {dst_url} <- {src_url}\n")
 

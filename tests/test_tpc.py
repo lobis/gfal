@@ -224,6 +224,8 @@ class TestHttpTpc:
         assert args[1] == "https://dst.example.com/file"
         assert "Source" in kwargs["headers"]
         assert kwargs["headers"]["Source"] == "https://src.example.com/file"
+        assert kwargs["headers"]["Credential"] == "none"
+        assert kwargs["headers"]["RequireChecksumVerification"] == "false"
 
     def test_push_uses_copy_on_src(self):
         session, _ = self._make_session(201)
@@ -240,6 +242,7 @@ class TestHttpTpc:
         args, kwargs = session.request.call_args
         assert args[1] == "https://src.example.com/file"
         assert "Destination" in kwargs["headers"]
+        assert "Credential" not in kwargs["headers"]
 
     def test_scitag_header_set(self):
         session, _ = self._make_session(201)
@@ -719,8 +722,9 @@ class TestCredentialDelegation:
         """Raw PEM must NOT appear as a Credential header — HTTP forbids newlines.
 
         The X.509 proxy is delegated via the TLS session (session.cert), not
-        via an HTTP header.  Verify that no Credential header is set regardless
-        of whether client_cert is present.
+        by copying the PEM payload into HTTP headers. For pull-mode TPC we do
+        send ``Credential: none`` explicitly to avoid delegation on public
+        sources; verify the raw proxy contents never appear there.
         """
         proxy = tmp_path / "proxy.pem"
         proxy.write_text(
@@ -740,11 +744,10 @@ class TestCredentialDelegation:
                 scitag=None,
             )
         _, kwargs = session.request.call_args
-        # No raw-PEM Credential header — would be rejected by any HTTP server
-        assert "Credential" not in kwargs["headers"]
+        assert kwargs["headers"]["Credential"] == "none"
 
     def test_no_credential_header_without_cert(self):
-        """No Credential header when no cert provided either."""
+        """Pull-mode TPC still uses Credential:none without a cert."""
         session = self._make_session_mock()
         with patch.object(tpc_mod, "_build_session", return_value=session):
             tpc_mod._http_tpc(
@@ -757,7 +760,7 @@ class TestCredentialDelegation:
                 scitag=None,
             )
         _, kwargs = session.request.call_args
-        assert "Credential" not in kwargs["headers"]
+        assert kwargs["headers"]["Credential"] == "none"
 
     def test_cert_still_passed_via_session(self, tmp_path):
         """client_cert is forwarded to _build_session (TLS delegation), not headers."""
