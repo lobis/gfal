@@ -2,13 +2,14 @@
 
 import subprocess
 import sys
+from typing import Optional
 
 from helpers import _subprocess_env
 
 
 def _run_completion(
     argv_suffix: list,
-    env_extra: dict | None = None,
+    env_extra: Optional[dict] = None,
 ):
     """Run ``gfal ...`` in a subprocess and return (returncode, stdout, stderr)."""
     script = (
@@ -32,34 +33,34 @@ class TestCompletionCommand:
     """``gfal completion`` subcommand prints shell-specific setup lines."""
 
     def test_bash(self):
-        rc, out, err = _run_completion(["completion", "bash"])
+        rc, out, _ = _run_completion(["completion", "bash"])
         assert rc == 0
         assert "_GFAL_COMPLETE=bash_source gfal" in out
 
     def test_zsh(self):
-        rc, out, err = _run_completion(["completion", "zsh"])
+        rc, out, _ = _run_completion(["completion", "zsh"])
         assert rc == 0
         assert "_GFAL_COMPLETE=zsh_source gfal" in out
 
     def test_fish(self):
-        rc, out, err = _run_completion(["completion", "fish"])
+        rc, out, _ = _run_completion(["completion", "fish"])
         assert rc == 0
         assert "_GFAL_COMPLETE=fish_source gfal" in out
 
     def test_autodetect_bash(self):
-        rc, out, err = _run_completion(["completion"], env_extra={"SHELL": "/bin/bash"})
+        rc, out, _ = _run_completion(["completion"], env_extra={"SHELL": "/bin/bash"})
         assert rc == 0
         assert "_GFAL_COMPLETE=bash_source gfal" in out
 
     def test_autodetect_zsh(self):
-        rc, out, err = _run_completion(
+        rc, out, _ = _run_completion(
             ["completion"], env_extra={"SHELL": "/usr/bin/zsh"}
         )
         assert rc == 0
         assert "_GFAL_COMPLETE=zsh_source gfal" in out
 
     def test_autodetect_fish(self):
-        rc, out, err = _run_completion(
+        rc, out, _ = _run_completion(
             ["completion"], env_extra={"SHELL": "/usr/bin/fish"}
         )
         assert rc == 0
@@ -71,7 +72,7 @@ class TestCompletionCommand:
         assert "unsupported shell" in err or "unsupported shell" in out
 
     def test_no_shell_no_env_exits_nonzero(self):
-        rc, out, err = _run_completion(["completion"], env_extra={"SHELL": ""})
+        rc, _, _ = _run_completion(["completion"], env_extra={"SHELL": ""})
         assert rc != 0
 
 
@@ -80,20 +81,20 @@ class TestClickShellCompletion:
 
     def test_bash_source_script_is_generated(self):
         """``_GFAL_COMPLETE=bash_source gfal`` emits a bash completion function."""
-        rc, out, err = _run_completion([], env_extra={"_GFAL_COMPLETE": "bash_source"})
+        rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "bash_source"})
         assert rc == 0
         assert "_gfal_completion" in out
         assert "complete" in out
 
     def test_zsh_source_script_is_generated(self):
         """``_GFAL_COMPLETE=zsh_source gfal`` emits a zsh completion function."""
-        rc, out, err = _run_completion([], env_extra={"_GFAL_COMPLETE": "zsh_source"})
+        rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "zsh_source"})
         assert rc == 0
         assert "_gfal_completion" in out
 
     def test_bash_completes_subcommands(self):
         """Typing ``gfal <TAB>`` offers the known subcommands."""
-        rc, out, err = _run_completion(
+        rc, out, _ = _run_completion(
             [""],
             env_extra={
                 "_GFAL_COMPLETE": "bash_complete",
@@ -109,7 +110,7 @@ class TestClickShellCompletion:
 
     def test_bash_completes_partial_subcommand(self):
         """Typing ``gfal l<TAB>`` narrows to commands starting with 'l'."""
-        rc, out, err = _run_completion(
+        rc, out, _ = _run_completion(
             ["l"],
             env_extra={
                 "_GFAL_COMPLETE": "bash_complete",
@@ -122,7 +123,7 @@ class TestClickShellCompletion:
 
     def test_bash_completes_subcommand_options(self):
         """Typing ``gfal ls --<TAB>`` offers ls-specific flags."""
-        rc, out, err = _run_completion(
+        rc, out, _ = _run_completion(
             ["ls", "--"],
             env_extra={
                 "_GFAL_COMPLETE": "bash_complete",
