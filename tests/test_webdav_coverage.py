@@ -24,6 +24,7 @@ from gfal.core.webdav import (
     _StreamingRequestsGetFile,
     _StreamingRequestsPutFile,
     _SyncAiohttpResponse,
+    _SyncAiohttpSession,
 )
 
 # ---------------------------------------------------------------------------
@@ -627,11 +628,14 @@ class TestWebDAVChecksum:
 
 class TestSessionHead:
     def test_head_delegates_to_request(self):
-        fs = WebDAVFileSystem()
+        """head() should delegate to request() with method="HEAD"."""
+        session = _SyncAiohttpSession({})
         resp = MagicMock()
         resp.status_code = 200
-        fs._session.request = MagicMock(return_value=resp)
+        session.request = MagicMock(return_value=resp)
 
-        result = fs._session.head("https://example.org/file")
-        # head calls request("HEAD", ...) - verify session.request is used
-        assert result is not None
+        result = session.head("https://example.org/file")
+        assert result is resp
+        session.request.assert_called_once_with(
+            "HEAD", "https://example.org/file", headers=None, timeout=None
+        )
