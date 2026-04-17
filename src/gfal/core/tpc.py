@@ -158,24 +158,32 @@ def _parse_tpc_body(resp, progress_callback=None):
     last_non_empty = ""
     in_marker = False
     marker_bytes = 0
-    for raw in resp.iter_lines(decode_unicode=True):
-        line = (raw or "").strip()
-        if line == "Perf Marker":
-            in_marker = True
-            marker_bytes = 0
-        elif line == "End" and in_marker:
-            in_marker = False
-            if progress_callback is not None and marker_bytes > 0:
-                progress_callback(marker_bytes)
-        elif in_marker and line.startswith("Stripe Bytes Transferred:"):
-            with contextlib.suppress(ValueError):
-                marker_bytes = int(line.split(":", 1)[1].strip())
-        elif line.startswith("success:"):
+    try:
+        for raw in resp.iter_lines(decode_unicode=True):
+            line = (raw or "").strip()
+            if line == "Perf Marker":
+                in_marker = True
+                marker_bytes = 0
+            elif line == "End" and in_marker:
+                in_marker = False
+                if progress_callback is not None and marker_bytes > 0:
+                    progress_callback(marker_bytes)
+            elif in_marker and line.startswith("Stripe Bytes Transferred:"):
+                with contextlib.suppress(ValueError):
+                    marker_bytes = int(line.split(":", 1)[1].strip())
+            elif line.startswith("success:"):
+                return
+            elif line.startswith("failure:"):
+                raise OSError(f"HTTP TPC server reported failure: {line[8:].strip()}")
+            if line:
+                last_non_empty = line
+    except ConnectionError:
+        if last_non_empty.startswith("success:"):
             return
-        elif line.startswith("failure:"):
-            raise OSError(f"HTTP TPC server reported failure: {line[8:].strip()}")
-        if line:
-            last_non_empty = line
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            resp.close()
 
     # Body ended without an explicit success/failure line
     if last_non_empty.startswith("failure:"):

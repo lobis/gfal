@@ -2,6 +2,7 @@
 gfal cp implementation.
 """
 
+import contextlib
 import errno
 import stat
 import sys
@@ -12,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
-from gfal.cli.progress import Progress
+from gfal.cli.progress import Progress, Spinner
 from gfal.core import api as core_api
 from gfal.core import fs
 from gfal.core.api import (
@@ -55,7 +56,7 @@ class _TransferDisplay:
         self.progress_bar = None
         self.progress_started = False
         self.transfer_start = time.monotonic()
-        self.transfer_mode = "streamed"
+        self.transfer_mode = None
         self._lock = threading.Lock()
 
     def _transfer_label(self):
@@ -65,6 +66,8 @@ class _TransferDisplay:
             "tpc-push": "TPC push",
             "tpc-xrootd": "TPC xrootd",
         }
+        if self.transfer_mode is None:
+            return f"Copying {Path(self.src_url).name}"
         mode = mode_labels.get(self.transfer_mode, self.transfer_mode)
         return f"Copying {Path(self.src_url).name} ({mode})"
 
@@ -75,9 +78,8 @@ class _TransferDisplay:
             self.progress_started = True
             if self.show_progress:
                 self.progress_bar = Progress(self._transfer_label())
-                self.progress_bar.update(
-                    total_size=self.src_size if self.src_size else None
-                )
+                if self.src_size is not None:
+                    self.progress_bar.update(total_size=self.src_size)
                 self.progress_bar.start()
                 return
             if not self.quiet:
@@ -99,6 +101,18 @@ class _TransferDisplay:
     def set_mode(self, mode):
         with self._lock:
             self.transfer_mode = mode
+            if self.show_progress and self.progress_bar is not None:
+                label = self._transfer_label()
+                if hasattr(self.progress_bar, "label"):
+                    self.progress_bar.label = label
+                if hasattr(self.progress_bar, "set_description"):
+                    self.progress_bar.set_description(label)
+
+    def set_total_size(self, total_size):
+        with self._lock:
+            self.src_size = total_size
+            if self.show_progress and self.progress_bar is not None and total_size:
+                self.progress_bar.update(total_size=total_size)
 
     def finish(self, success):
         with self._lock:
@@ -486,9 +500,15 @@ class CommandCopy(base.CommandBase):
                 raise
             client.mkdir(dst_url, parents=copy_options.create_parents)
 
-        self._traverse_callback(src_url, dst_url)
-
-        entries = src_fs.ls(src_path, detail=False)
+        scan_spinner = None
+        if not self._is_quiet():
+            scan_spinner = Spinner(f"Scanning {src_url}  =>  {dst_url}")
+            scan_spinner.start()
+        try:
+            entries = src_fs.ls(src_path, detail=False)
+        finally:
+            if scan_spinner is not None:
+                scan_spinner.stop(True)
         child_jobs = []
         for entry_path in entries:
             name = Path(entry_path.rstrip("/")).name
@@ -509,17 +529,16 @@ class CommandCopy(base.CommandBase):
         pending = list(child_jobs)
 
         def _start_child(child_src_url, child_dst_url):
-            try:
-                child_size = client.stat(child_src_url).st_size
-            except Exception:
-                child_size = None
             display = _TransferDisplay(
                 child_src_url,
                 child_dst_url,
                 quiet=self._is_quiet(),
                 verbose=self.params.verbose,
-                src_size=child_size,
             )
+            if display.show_progress:
+                display.start()
+            with contextlib.suppress(Exception):
+                display.set_total_size(client.stat(child_src_url).st_size)
             handle = client.start_copy(
                 child_src_url,
                 child_dst_url,
@@ -620,54 +639,18 @@ class CommandCopy(base.CommandBase):
             self._copy_directory_parallel(client, src_url, dst_url, opts, src_st)
             return
 
-        src_size = None
         quiet = self._is_quiet()
-        show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
-        progress_started = [False]
-        transfer_start = time.monotonic()
-        transfer_mode = ["streamed"]
-
-        try:
-            src_size = client.stat(src_url).st_size
-        except Exception:
-            src_size = None
-
-        def _transfer_label():
-            mode_labels = {
-                "streamed": "streamed",
-                "tpc-pull": "TPC pull",
-                "tpc-push": "TPC push",
-                "tpc-xrootd": "TPC xrootd",
-            }
-            mode = mode_labels.get(transfer_mode[0], transfer_mode[0])
-            return f"Copying {Path(src_url).name} ({mode})"
-
-        def _start_progress():
-            if progress_started[0]:
-                return
-            progress_started[0] = True
-            if show_progress:
-                self.progress_bar = Progress(_transfer_label())
-                self.progress_bar.update(total_size=src_size if src_size else None)
-                self.progress_bar.start()
-            else:
-                if not quiet:
-                    print(
-                        f"{_transfer_label()} {src_size or 0} bytes  "
-                        f"{src_url}  =>  {dst_url}"
-                    )
-
-        def _progress(bytes_transferred):
-            _start_progress()
-            if show_progress and src_size:
-                self.progress_bar.update(
-                    curr_size=bytes_transferred,
-                    total_size=src_size,
-                    elapsed=time.monotonic() - transfer_start,
-                )
-
-        def _set_transfer_mode(mode):
-            transfer_mode[0] = mode
+        display = _TransferDisplay(
+            src_url,
+            dst_url,
+            quiet=quiet,
+            verbose=self.params.verbose,
+        )
+        if display.show_progress:
+            display.start()
+        self.progress_bar = display.progress_bar
+        with contextlib.suppress(Exception):
+            display.set_total_size(client.stat(src_url).st_size)
 
         copy_failed = True
         try:
@@ -675,23 +658,17 @@ class CommandCopy(base.CommandBase):
                 src_url,
                 dst_url,
                 options=self._build_copy_options(),
-                progress_callback=_progress,
-                start_callback=_start_progress,
+                progress_callback=display.update,
+                start_callback=display.start,
                 warn_callback=lambda message: self._warn_copy_message(message, dst_url),
-                transfer_mode_callback=_set_transfer_mode,
+                transfer_mode_callback=display.set_mode,
                 error_callback=None if quiet else self._child_error_callback,
                 traverse_callback=None if quiet else self._traverse_callback,
             )
             copy_failed = False
         finally:
-            if progress_started[0] and show_progress:
-                if not copy_failed and src_size:
-                    self.progress_bar.update(
-                        curr_size=src_size,
-                        total_size=src_size,
-                        elapsed=time.monotonic() - transfer_start,
-                    )
-                self.progress_bar.stop(not copy_failed)
+            display.finish(not copy_failed)
+            if display.show_progress:
                 print()
 
 

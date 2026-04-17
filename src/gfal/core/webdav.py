@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import queue
 import re
 import ssl
 import stat as stat_module
@@ -134,6 +135,64 @@ class _SyncAiohttpResponse:
         for line in self.content.splitlines():
             yield line.decode("utf-8", "replace") if decode_unicode else line
 
+    def close(self) -> None:
+        return None
+
+
+_STREAM_EOF = object()
+
+
+class _StreamingAiohttpResponse:
+    """Requests-like response wrapper backed by a streaming aiohttp body."""
+
+    def __init__(
+        self,
+        *,
+        method: str,
+        url: str,
+        status_code: int,
+        headers: dict[str, str],
+        body_queue: queue.Queue[object],
+        completion_future,
+    ) -> None:
+        self.method = method
+        self.url = url
+        self.status_code = status_code
+        self.headers = headers
+        self._body_queue = body_queue
+        self._completion_future = completion_future
+        self._closed = False
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise HttpStatusError(self.status_code, self.url, self.headers)
+
+    def iter_lines(self, decode_unicode: bool = False):
+        pending = b""
+        while True:
+            item = self._body_queue.get()
+            if item is _STREAM_EOF:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            pending += item
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                line = line.rstrip(b"\r")
+                yield line.decode("utf-8", "replace") if decode_unicode else line
+
+        if pending:
+            yield pending.decode("utf-8", "replace") if decode_unicode else pending
+
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        with contextlib.suppress(Exception):
+            self._completion_future.result()
+
 
 class _SyncAiohttpSession:
     """Small synchronous wrapper around aiohttp for the sync WebDAV code paths."""
@@ -237,6 +296,78 @@ class _SyncAiohttpSession:
 
         raise RuntimeError("unreachable")
 
+    async def _request_stream_async(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: Any = None,
+        timeout: float | None = None,
+    ) -> _StreamingAiohttpResponse:
+        request_headers = dict(self.headers)
+        if headers:
+            request_headers.update(headers)
+
+        connector = aiohttp.TCPConnector(ssl=self._ssl_context)
+        client_timeout = (
+            aiohttp.ClientTimeout(total=timeout)
+            if timeout is not None
+            else aiohttp.ClientTimeout(total=self._timeout)
+            if self._timeout is not None
+            else None
+        )
+
+        session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=client_timeout,
+        )
+
+        try:
+            resp = await session.request(
+                method,
+                url,
+                headers=request_headers,
+                data=data,
+            )
+        except Exception:
+            await session.close()
+            raise
+
+        body_queue: queue.Queue[object] = queue.Queue()
+
+        async def _pump_response() -> None:
+            try:
+                async for chunk in resp.content.iter_any():
+                    if chunk:
+                        body_queue.put(chunk)
+            except asyncio.TimeoutError as exc:
+                body_queue.put(TimeoutError(url))
+                raise TimeoutError(url) from exc
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientPayloadError,
+                ssl.SSLError,
+            ) as exc:
+                body_queue.put(ConnectionError(str(exc) or "Connection lost"))
+                raise
+            finally:
+                with contextlib.suppress(Exception):
+                    resp.close()
+                with contextlib.suppress(Exception):
+                    await session.close()
+                body_queue.put(_STREAM_EOF)
+
+        completion_future = asyncio.create_task(_pump_response())
+        return _StreamingAiohttpResponse(
+            method=method.upper(),
+            url=str(resp.url),
+            status_code=resp.status,
+            headers=dict(resp.headers),
+            body_queue=body_queue,
+            completion_future=completion_future,
+        )
+
     def request(
         self,
         method: str,
@@ -247,7 +378,16 @@ class _SyncAiohttpSession:
         timeout: float | None = None,
         stream: bool = False,
     ) -> _SyncAiohttpResponse:
-        del stream
+        if stream:
+            return self._run(
+                self._request_stream_async(
+                    method,
+                    url,
+                    headers=headers,
+                    data=data,
+                    timeout=timeout,
+                )
+            )
         return self._run(
             self._request_async(
                 method,

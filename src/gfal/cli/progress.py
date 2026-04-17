@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 import math
 import shutil
@@ -27,6 +28,12 @@ def Progress(label, tui_callback=None):
     if is_gfal2_compat():
         return LegacyProgress(label)
     return RichProgress(label)
+
+
+def Spinner(label):
+    if is_gfal2_compat():
+        return LegacySpinner(label)
+    return RichSpinner(label)
 
 
 class TuiProgress(Callback):
@@ -157,6 +164,14 @@ class RichProgress:
                 kwargs["total"] = total_size
             manager.progress.update(self.task_id, **kwargs)
 
+    def set_description(self, label):
+        self.label = label
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            manager.progress.update(self.task_id, description=label)
+
     def stop(self, success):
         manager = self._manager()
         with manager.lock:
@@ -177,6 +192,39 @@ class RichProgress:
                     )
             except Exception:
                 pass
+            manager.active = max(0, manager.active - 1)
+            if manager.started and manager.active == 0:
+                manager.progress.stop()
+                manager.started = False
+
+
+class RichSpinner:
+    def __init__(self, label):
+        self.label = label
+        self._started_flag = False
+        self.task_id = None
+
+    def start(self):
+        manager = RichProgress._manager()
+        with manager.lock:
+            if self._started_flag:
+                return
+            if not manager.started:
+                manager.progress.start()
+                manager.started = True
+            self.task_id = manager.progress.add_task(self.label, total=None)
+            manager.active += 1
+            self._started_flag = True
+
+    def stop(self, success=True):
+        del success
+        manager = RichProgress._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            self._started_flag = False
+            with contextlib.suppress(Exception):
+                manager.progress.remove_task(self.task_id)
             manager.active = max(0, manager.active - 1)
             if manager.started and manager.active == 0:
                 manager.progress.stop()
@@ -301,8 +349,19 @@ class LegacyProgress:
     @staticmethod
     def _size_str(size):
         s = LegacyProgress._rate_str(size)
-        # strip the "/s" suffix and ensure it ends with B
         s = s[:-2]
         if not s.endswith("B"):
             s += "B"
         return s
+
+
+class LegacySpinner:
+    def __init__(self, label):
+        self.label = label
+        self._progress = LegacyProgress(label)
+
+    def start(self):
+        self._progress.start()
+
+    def stop(self, success=True):
+        self._progress.stop(success)

@@ -977,8 +977,8 @@ class TestCliUsesLibraryCopy:
         assert len(fake_instances) == 1
         progress = fake_instances[0]
         assert progress.label == "Copying src.txt (TPC pull)"
-        assert progress.calls[0] == ("update", {"total_size": 5})
-        assert progress.calls[1] == ("start",)
+        assert progress.calls[0] == ("start",)
+        assert progress.calls[1] == ("update", {"total_size": 5})
         assert progress.calls[2] == (
             "update",
             {
