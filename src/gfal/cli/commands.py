@@ -1,8 +1,9 @@
 """
-Simple commands: mkdir, save, cat, stat, rename, chmod, sum, xattr.
+Simple commands: mkdir, save, cat, stat, rename, chmod, sum, xattr, completion.
 """
 
 import errno
+import os
 import stat
 import sys
 from datetime import datetime
@@ -291,4 +292,45 @@ class GfalCommands(base.CommandBase):
         except Exception as e:
             self._print_error(e)
             return exception_exit_code(e)
+        return 0
+
+    # ------------------------------------------------------------------
+    # completion
+    # ------------------------------------------------------------------
+
+    @base.arg(
+        "shell",
+        nargs="?",
+        default=None,
+        help="Shell type: bash, zsh, or fish. Auto-detected from $SHELL if omitted.",
+    )
+    def execute_completion(self):
+        """Generate a shell completion script for gfal."""
+        shell_name = self.params.shell
+
+        if shell_name is None:
+            # Auto-detect from $SHELL environment variable
+            shell_env = os.environ.get("SHELL", "")
+            shell_name = shell_env.rsplit("/", 1)[-1].lower() if shell_env else ""
+
+        if shell_name not in ("bash", "zsh", "fish"):
+            if shell_name:
+                self.err_console.print(
+                    f"[bold red]gfal completion[/]: unsupported shell '{shell_name}'. "
+                    "Supported: bash, zsh, fish."
+                )
+            else:
+                self.err_console.print(
+                    "[bold red]gfal completion[/]: could not detect shell. "
+                    "Pass the shell name explicitly: gfal completion bash|zsh|fish"
+                )
+            return 1
+
+        if shell_name == "bash":
+            sys.stdout.write('eval "$(_GFAL_COMPLETE=bash_source gfal)"\n')
+        elif shell_name == "zsh":
+            sys.stdout.write('eval "$(_GFAL_COMPLETE=zsh_source gfal)"\n')
+        else:  # fish
+            sys.stdout.write("_GFAL_COMPLETE=fish_source gfal | source\n")
+
         return 0

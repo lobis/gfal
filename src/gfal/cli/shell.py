@@ -65,10 +65,10 @@ def _find_command(cmd):
 
 
 # ---------------------------------------------------------------------------
-# `gfal` top-level help / version
+# `gfal` top-level help / version / completion
 # ---------------------------------------------------------------------------
 
-_BUILTIN_SUBCMDS = {"version", "help"}
+_BUILTIN_SUBCMDS = {"version", "help", "completion"}
 
 
 def _all_commands():
@@ -111,9 +111,57 @@ def _print_gfal_help(to=sys.stdout):
         )
     )
 
+    grp.add_command(
+        CommandClass(
+            name="completion",
+            help="Generate shell completion script.",
+            callback=lambda: None,
+        )
+    )
+
     with contextlib.suppress(SystemExit):
         grp(["--help"], standalone_mode=True, prog_name="gfal")
     to.write("\n")
+
+
+def _build_completion_group():
+    """Build a Click Group with all commands attached for shell completion.
+
+    This is used when Click's ``_GFAL_COMPLETE`` env var is set.  Each
+    subcommand is built with its real Click params so that Click's completion
+    machinery can suggest flags and option values.
+    """
+    try:
+        import rich_click as _click
+
+        GroupClass = _click.RichGroup
+    except ImportError:
+        import click as _click  # type: ignore[no-redef]
+
+        GroupClass = _click.Group
+
+    grp = GroupClass(name="gfal")
+
+    seen: set = set()
+    for cls in base.CommandBase.__subclasses__():
+        for attr_name in dir(cls):
+            if not attr_name.startswith("execute_"):
+                continue
+            cmd_name = attr_name[len("execute_") :]
+            if cmd_name in seen:
+                continue
+            seen.add(cmd_name)
+
+            method = getattr(cls, attr_name)
+            help_text = (method.__doc__ or "").strip().split("\n")[0]
+            prog_name = f"gfal {cmd_name}"
+
+            click_cmd, _, _ = base._build_click_command(method, prog_name, help_text)
+            # Override the name so the Group registers it as e.g. "ls", not "gfal ls"
+            click_cmd.name = cmd_name
+            grp.add_command(click_cmd)
+
+    return grp
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +186,13 @@ def main(argv=None):
     prog_stem = Path(argv[0]).stem
 
     if prog_stem == "gfal":
+        # Shell completion: delegate to Click's built-in completion machinery
+        # when the _GFAL_COMPLETE env var is set by the shell's completion hook.
+        if os.environ.get("_GFAL_COMPLETE"):
+            grp = _build_completion_group()
+            grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
+            return
+
         if len(argv) < 2:
             _print_gfal_help()
             sys.exit(0)
