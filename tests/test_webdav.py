@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import posixpath
 import queue
 import socket
@@ -1341,15 +1342,19 @@ class TestStreamingRequestsPutFile:
                 del method, url, content_length, timeout, headers
 
                 def _consume():
-                    chunk = body_queue.get(timeout=1)
-                    assert chunk == b"payload"
-                    first_chunk.set()
-                    eof = body_queue.get(timeout=1)
-                    assert eof is _STREAM_EOF
-                    response = MagicMock()
-                    response.status_code = 201
-                    response.headers = {}
-                    upload_finished.set_result(response)
+                    try:
+                        chunk = body_queue.get(timeout=1)
+                        assert chunk == b"payload"
+                        first_chunk.set()
+                        eof = body_queue.get(timeout=1)
+                        assert eof is _STREAM_EOF
+                        response = MagicMock()
+                        response.status_code = 201
+                        response.headers = {}
+                        upload_finished.set_result(response)
+                    except Exception as exc:
+                        if not upload_finished.done():
+                            upload_finished.set_exception(exc)
 
                 threading.Thread(target=_consume, daemon=True).start()
                 return upload_finished
@@ -1372,6 +1377,38 @@ class TestStreamingRequestsPutFile:
             writer.close()
 
         session.request_upload_stream.assert_called_once()
+
+    def test_write_fails_fast_on_http_error_response(self):
+        session = MagicMock()
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        response = MagicMock()
+        response.status_code = 403
+        response.headers = {}
+        upload_future.set_result(response)
+        session.request_upload_stream.return_value = upload_future
+        writer = _StreamingRequestsPutFile(session, "https://example.org/file")
+
+        with pytest.raises(PermissionError):
+            writer.write(b"payload")
+        with contextlib.suppress(PermissionError):
+            writer.close()
+
+    def test_write_re_raises_stored_upload_exception(self):
+        session = MagicMock()
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        response = MagicMock()
+        response.status_code = 403
+        response.headers = {}
+        upload_future.set_result(response)
+        session.request_upload_stream.return_value = upload_future
+        writer = _StreamingRequestsPutFile(session, "https://example.org/file")
+
+        with pytest.raises(PermissionError):
+            writer.write(b"payload")
+        with pytest.raises(PermissionError):
+            writer.write(b"payload")
+        with contextlib.suppress(PermissionError):
+            writer.close()
 
 
 class TestWebDAVStreamWriteResolution:

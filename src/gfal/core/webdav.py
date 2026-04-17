@@ -855,6 +855,7 @@ class _StreamingRequestsPutFile(io.RawIOBase):
         self._content_length = content_length
         self._body_queue: queue.Queue[object] = queue.Queue(maxsize=4)
         self._upload_future: concurrent.futures.Future | None = None
+        self._upload_exception: BaseException | None = None
 
     # io.RawIOBase interface
     def readable(self) -> bool:
@@ -875,9 +876,16 @@ class _StreamingRequestsPutFile(io.RawIOBase):
         )
 
     def _check_upload_result(self) -> None:
+        if self._upload_exception is not None:
+            raise self._upload_exception
         if self._upload_future is None or not self._upload_future.done():
             return
-        self._upload_future.result()
+        try:
+            response = self._upload_future.result()
+            _raise_for_status(response, self._url)
+        except BaseException as exc:
+            self._upload_exception = exc
+            raise
 
     def write(self, b) -> int:  # type: ignore[override]
         self._ensure_upload_started()

@@ -57,14 +57,6 @@ requires_benchmark_opt_in = pytest.mark.skipif(
     os.environ.get("GFAL_RUN_BENCHMARKS") != "1",
     reason="set GFAL_RUN_BENCHMARKS=1 to run timing benchmarks",
 )
-requires_eospilot = pytest.mark.skipif(
-    not _eospilot_reachable(),
-    reason="eospilot.cern.ch:443 not reachable",
-)
-requires_proxy = pytest.mark.skipif(
-    _find_proxy() is None,
-    reason="No X.509 proxy found",
-)
 
 
 @dataclass(frozen=True)
@@ -115,6 +107,7 @@ def run_gfal_binary_argv(argv: list[str], *, env: dict[str, str], timeout: int):
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         env=env,
         timeout=timeout,
     )
@@ -189,16 +182,19 @@ class _FakeUploadSession:
         future: concurrent.futures.Future = concurrent.futures.Future()
 
         def _consume() -> None:
-            while True:
-                item = body_queue.get(timeout=1)
-                if item is _STREAM_EOF:
-                    break
-                with self._state.lock:
-                    if self._state.first_put_byte_at is None:
-                        self._state.first_put_byte_at = time.monotonic()
-                    self._state.put_bytes += len(item)
-            response = type("Response", (), {"status_code": 201, "headers": {}})()
-            future.set_result(response)
+            try:
+                while True:
+                    item = body_queue.get(timeout=1)
+                    if item is _STREAM_EOF:
+                        break
+                    with self._state.lock:
+                        if self._state.first_put_byte_at is None:
+                            self._state.first_put_byte_at = time.monotonic()
+                        self._state.put_bytes += len(item)
+                response = type("Response", (), {"status_code": 201, "headers": {}})()
+                future.set_result(response)
+            except Exception as exc:
+                future.set_exception(exc)
 
         threading.Thread(target=_consume, daemon=True).start()
         return future
@@ -259,15 +255,75 @@ class TestStreamingCopyRegression:
         assert fake_src_fs.open_calls == 0
 
 
+def _assert_benchmark_parity(results: list[_BenchmarkResult]) -> None:
+    thresholds = {
+        "local_to_pilot_256m": 1.15,
+        "public_to_pilot_streamed": 1.10,
+        "local_to_root_256m": 1.05,
+        "public_root_to_root": 1.15,
+    }
+    by_scenario_runner = {(r.scenario, r.runner): r for r in results}
+    for scenario, max_ratio in thresholds.items():
+        repo = by_scenario_runner.get((scenario, "repo_gfal"))
+        legacy = by_scenario_runner.get((scenario, "gfal2"))
+        if repo is None or legacy is None:
+            continue
+        if repo.returncode != 0 or legacy.returncode != 0:
+            continue
+        limit = round(legacy.elapsed_s * max_ratio, 3)
+        assert repo.elapsed_s <= limit, (
+            f"{scenario} parity regression: repo_gfal={repo.elapsed_s:.3f}s "
+            f"gfal2={legacy.elapsed_s:.3f}s limit={limit:.3f}s"
+        )
+
+
+class TestBenchmarkParityAssertions:
+    def test_assert_benchmark_parity_accepts_near_equal_results(self):
+        _assert_benchmark_parity(
+            [
+                _BenchmarkResult(
+                    "public_to_pilot_streamed", "repo_gfal", 6.95, 0, "", ""
+                ),
+                _BenchmarkResult("public_to_pilot_streamed", "gfal2", 7.00, 0, "", ""),
+                _BenchmarkResult("local_to_root_256m", "repo_gfal", 1.62, 0, "", ""),
+                _BenchmarkResult("local_to_root_256m", "gfal2", 1.60, 0, "", ""),
+            ]
+        )
+
+    def test_assert_benchmark_parity_rejects_slow_public_https_copy(self):
+        with pytest.raises(AssertionError, match="public_to_pilot_streamed"):
+            _assert_benchmark_parity(
+                [
+                    _BenchmarkResult(
+                        "public_to_pilot_streamed",
+                        "repo_gfal",
+                        8.50,
+                        0,
+                        "",
+                        "",
+                    ),
+                    _BenchmarkResult(
+                        "public_to_pilot_streamed",
+                        "gfal2",
+                        7.00,
+                        0,
+                        "",
+                        "",
+                    ),
+                ]
+            )
+
+
 @requires_benchmark_opt_in
-@requires_eospilot
-@requires_proxy
 @pytest.mark.integration
 @pytest.mark.network
 class TestCopyBenchmarks:
     def test_copy_benchmark_matrix(self, tmp_path):
+        if not _eospilot_reachable():
+            pytest.skip("eospilot.cern.ch:443 not reachable")
         proxy = _find_proxy()
-        assert proxy is not None
+        if proxy is None:
+            pytest.skip("No X.509 proxy found")
 
         local_src = tmp_path / "benchmark-local.bin"
         with local_src.open("wb") as handle:
@@ -346,6 +402,8 @@ class TestCopyBenchmarks:
                         "--key",
                         proxy,
                         "-f",
+                        "--copy-mode",
+                        "streamed",
                         local_src.as_uri(),
                         f"{pilot_root_dir}/local-{{runner}}.bin",
                     ],
@@ -358,6 +416,8 @@ class TestCopyBenchmarks:
                         "--key",
                         proxy,
                         "-f",
+                        "--copy-mode",
+                        "streamed",
                         _PUBSRC_ROOT,
                         f"{pilot_root_dir}/public-{{runner}}.bin",
                     ],
@@ -386,6 +446,7 @@ class TestCopyBenchmarks:
                         f"{label} failed for {runner.name}: {result.stderr_tail}"
                     )
 
+            _assert_benchmark_parity(results)
             print(json.dumps([asdict(result) for result in results], indent=2))
         finally:
             run_gfal(
