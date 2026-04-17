@@ -35,7 +35,11 @@ def _find_proxy() -> Optional[str]:
     proxy = os.environ.get("X509_USER_PROXY", "")
     if proxy and Path(proxy).is_file():
         return proxy
-    default = Path(f"/tmp/x509up_u{os.getuid()}")
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        return None
+    default = Path(f"/tmp/x509up_u{uid}")
     if default.is_file():
         return str(default)
     return None
