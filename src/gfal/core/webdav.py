@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import io
 import queue
 import re
@@ -284,31 +285,49 @@ class _SyncAiohttpSession:
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result()
 
+    @staticmethod
+    def _supports_kwarg(factory: Any, arg_name: str) -> bool:
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return False
+
+        parameters = signature.parameters.values()
+        if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters):
+            return True
+        return arg_name in signature.parameters
+
     def _make_connector(self) -> aiohttp.TCPConnector:
+        connector_kwargs: dict[str, Any] = {
+            "ssl": self._ssl_context,
+            "enable_cleanup_closed": True,
+        }
+        if self._supports_kwarg(aiohttp.TCPConnector, "ssl_shutdown_timeout"):
+            connector_kwargs["ssl_shutdown_timeout"] = 0
+
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
                 message="The ssl_shutdown_timeout parameter is deprecated",
                 category=DeprecationWarning,
             )
-            return aiohttp.TCPConnector(
-                ssl=self._ssl_context,
-                enable_cleanup_closed=True,
-                ssl_shutdown_timeout=0,
-            )
+            return aiohttp.TCPConnector(**connector_kwargs)
 
     def _make_client_session(self, *, timeout):
+        session_kwargs: dict[str, Any] = {
+            "connector": self._make_connector(),
+            "timeout": timeout,
+        }
+        if self._supports_kwarg(aiohttp.ClientSession, "ssl_shutdown_timeout"):
+            session_kwargs["ssl_shutdown_timeout"] = 0
+
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
                 message="The ssl_shutdown_timeout parameter is deprecated",
                 category=DeprecationWarning,
             )
-            return aiohttp.ClientSession(
-                connector=self._make_connector(),
-                timeout=timeout,
-                ssl_shutdown_timeout=0,
-            )
+            return aiohttp.ClientSession(**session_kwargs)
 
     async def _request_async(
         self,

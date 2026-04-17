@@ -473,6 +473,60 @@ class TestSyncAiohttpSession:
             }
         ]
 
+    def test_make_client_session_skips_ssl_shutdown_for_older_aiohttp(
+        self, monkeypatch
+    ):
+        connector_calls = []
+        session_calls = []
+        connector_instance = None
+
+        class _FakeConnector:
+            pass
+
+        class _FakeSession:
+            pass
+
+        def _fake_connector(*, ssl, enable_cleanup_closed):
+            nonlocal connector_instance
+            connector_calls.append(
+                {
+                    "ssl": ssl,
+                    "enable_cleanup_closed": enable_cleanup_closed,
+                }
+            )
+            connector_instance = _FakeConnector()
+            return connector_instance
+
+        def _fake_session(*, connector, timeout):
+            session_calls.append(
+                {
+                    "connector": connector,
+                    "timeout": timeout,
+                }
+            )
+            return _FakeSession()
+
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.ClientSession", _fake_session)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        client_timeout = aiohttp.ClientTimeout(total=3)
+        created = session._make_client_session(timeout=client_timeout)
+
+        assert isinstance(created, _FakeSession)
+        assert connector_calls == [
+            {
+                "ssl": session._ssl_context,
+                "enable_cleanup_closed": True,
+            }
+        ]
+        assert session_calls == [
+            {
+                "connector": connector_instance,
+                "timeout": client_timeout,
+            }
+        ]
+
     def test_request_stream_async_retries_connection_errors(self, monkeypatch):
         class _FakeContent:
             async def iter_any(self):
