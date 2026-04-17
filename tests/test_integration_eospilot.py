@@ -1856,8 +1856,6 @@ class TestEosPilotRecursiveCopy:
         self, proxy_cert, pilot_dir, tmp_path
     ):
         """Without --abort-on-failure, recursive copy continues past EEXIST errors."""
-        import errno as _errno
-
         srcdir = tmp_path / "partial_src"
         srcdir.mkdir()
         (srcdir / "existing.bin").write_bytes(b"original")
@@ -1875,7 +1873,7 @@ class TestEosPilotRecursiveCopy:
         # Recursive copy: existing.bin should fail with EEXIST, new.bin should succeed
         rc, out, err = _run("cp", proxy_cert, "-r", srcdir.as_uri(), dst, timeout=60)
 
-        assert rc == _errno.EEXIST, f"Expected EEXIST (17) but got rc={rc}: {err}"
+        assert rc == errno.EEXIST, f"Expected EEXIST (17) but got rc={rc}: {err}"
 
         # The new file must have been copied despite the partial failure
         rc_new, _, _ = _run("stat", proxy_cert, f"{dst}/new.bin")
@@ -2055,8 +2053,6 @@ class TestEosPilotCopyToStdout:
 class TestEosPilotXrootdRecursiveCopy:
     """Recursive copy (-r) tests over root:// to/from eospilot."""
 
-    _XROOTD_BASE = "root://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp"
-
     def _run(self, cmd, proxy_cert, *args, **kwargs):
         if _xrootd_gsi_native():
             return run_gfal(cmd, *args, **kwargs)
@@ -2067,7 +2063,7 @@ class TestEosPilotXrootdRecursiveCopy:
         """Create and clean up a scratch dir accessible as root://."""
         name = f"pytest-xrd-rec-{uuid.uuid4().hex[:8]}"
         https_url = f"{_PILOT_BASE}/{name}"
-        xrd_url = f"{self._XROOTD_BASE}/{name}"
+        xrd_url = f"{_PILOT_ROOT_BASE}/{name}"
         rc, out, err = run_gfal("mkdir", "-E", proxy_cert, "--no-verify", https_url)
         require_test_prereq(
             rc == 0, f"Could not create xrootd_pilot_dir: {err.strip()}"
