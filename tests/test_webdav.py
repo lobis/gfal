@@ -8,6 +8,7 @@ No external network access is required.
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import socket
 import ssl
@@ -379,6 +380,98 @@ class TestSyncAiohttpSession:
                 "exception": ConnectionError("Connection lost"),
             }
         )
+
+    def test_request_async_times_out_session_close(self, monkeypatch):
+        class _FakeResponse:
+            status = 201
+            headers = {"Content-Length": "0"}
+            url = "https://example.org/file"
+
+            async def read(self):
+                return b""
+
+            def close(self):
+                return None
+
+        class _FakeSession:
+            def __init__(self):
+                self.closed = False
+                self.close_cancelled = False
+
+            async def request(self, method, url, headers=None, data=None):
+                return _FakeResponse()
+
+            async def close(self):
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    self.close_cancelled = True
+                    raise
+                finally:
+                    self.closed = True
+
+        fake_session = _FakeSession()
+        monkeypatch.setattr(
+            _SyncAiohttpSession,
+            "_make_client_session",
+            lambda self, timeout: fake_session,
+        )
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        started = time.monotonic()
+        resp = asyncio.run(
+            session._request_async("PUT", "https://example.org/file", data=b"payload")
+        )
+        elapsed = time.monotonic() - started
+
+        assert resp.status_code == 201
+        assert elapsed < 2.5
+        assert fake_session.closed is True
+        assert fake_session.close_cancelled is True
+
+    def test_make_client_session_uses_fast_ssl_shutdown(self, monkeypatch):
+        connector_calls = []
+        session_calls = []
+        connector_instance = None
+
+        class _FakeConnector:
+            pass
+
+        class _FakeSession:
+            pass
+
+        def _fake_connector(**kwargs):
+            nonlocal connector_instance
+            connector_calls.append(kwargs)
+            connector_instance = _FakeConnector()
+            return connector_instance
+
+        def _fake_session(**kwargs):
+            session_calls.append(kwargs)
+            return _FakeSession()
+
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.ClientSession", _fake_session)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        client_timeout = aiohttp.ClientTimeout(total=3)
+        created = session._make_client_session(timeout=client_timeout)
+
+        assert isinstance(created, _FakeSession)
+        assert connector_calls == [
+            {
+                "ssl": session._ssl_context,
+                "enable_cleanup_closed": True,
+                "ssl_shutdown_timeout": 0,
+            }
+        ]
+        assert session_calls == [
+            {
+                "connector": connector_instance,
+                "timeout": client_timeout,
+                "ssl_shutdown_timeout": 0,
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------

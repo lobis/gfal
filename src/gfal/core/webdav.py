@@ -20,6 +20,7 @@ import ssl
 import stat as stat_module
 import tempfile
 import threading
+import warnings
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse, urlunparse
@@ -283,6 +284,32 @@ class _SyncAiohttpSession:
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result()
 
+    def _make_connector(self) -> aiohttp.TCPConnector:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The ssl_shutdown_timeout parameter is deprecated",
+                category=DeprecationWarning,
+            )
+            return aiohttp.TCPConnector(
+                ssl=self._ssl_context,
+                enable_cleanup_closed=True,
+                ssl_shutdown_timeout=0,
+            )
+
+    def _make_client_session(self, *, timeout):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The ssl_shutdown_timeout parameter is deprecated",
+                category=DeprecationWarning,
+            )
+            return aiohttp.ClientSession(
+                connector=self._make_connector(),
+                timeout=timeout,
+                ssl_shutdown_timeout=0,
+            )
+
     async def _request_async(
         self,
         method: str,
@@ -298,7 +325,6 @@ class _SyncAiohttpSession:
 
         attempts = 5 if method.upper() in _RETRY_METHODS else 1
         for attempt in range(attempts):
-            connector = aiohttp.TCPConnector(ssl=self._ssl_context)
             client_timeout = (
                 aiohttp.ClientTimeout(total=timeout)
                 if timeout is not None
@@ -306,27 +332,23 @@ class _SyncAiohttpSession:
                 if self._timeout is not None
                 else None
             )
+            session = self._make_client_session(timeout=client_timeout)
+            resp = None
             try:
-                async with (
-                    aiohttp.ClientSession(
-                        connector=connector,
-                        timeout=client_timeout,
-                    ) as session,
-                    session.request(
-                        method,
-                        url,
-                        headers=request_headers,
-                        data=data,
-                    ) as resp,
-                ):
-                    body = await resp.read()
-                    return _SyncAiohttpResponse(
-                        method=method.upper(),
-                        url=str(resp.url),
-                        status_code=resp.status,
-                        headers=dict(resp.headers),
-                        content=body,
-                    )
+                resp = await session.request(
+                    method,
+                    url,
+                    headers=request_headers,
+                    data=data,
+                )
+                body = await resp.read()
+                return _SyncAiohttpResponse(
+                    method=method.upper(),
+                    url=str(resp.url),
+                    status_code=resp.status,
+                    headers=dict(resp.headers),
+                    content=body,
+                )
             except asyncio.TimeoutError as e:
                 raise TimeoutError(url) from e
             except (
@@ -337,6 +359,12 @@ class _SyncAiohttpSession:
                 if attempt == attempts - 1:
                     raise
                 await asyncio.sleep((attempt + 1) * 0.5)
+            finally:
+                if resp is not None:
+                    with contextlib.suppress(Exception):
+                        resp.close()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
 
         raise RuntimeError("unreachable")
 
@@ -353,7 +381,6 @@ class _SyncAiohttpSession:
         if headers:
             request_headers.update(headers)
 
-        connector = aiohttp.TCPConnector(ssl=self._ssl_context)
         client_timeout = (
             aiohttp.ClientTimeout(total=timeout)
             if timeout is not None
@@ -362,10 +389,7 @@ class _SyncAiohttpSession:
             else None
         )
 
-        session = aiohttp.ClientSession(
-            connector=connector,
-            timeout=client_timeout,
-        )
+        session = self._make_client_session(timeout=client_timeout)
 
         try:
             resp = await session.request(
