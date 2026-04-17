@@ -40,6 +40,36 @@ class TestGfalClientInit:
         assert client.ipv4_only is False
         assert client.ipv6_only is False
 
+    def test_default_app_sync(self):
+        client = GfalClient()
+        assert client.app == "python3-gfal-sync"
+
+    def test_default_app_async(self):
+        client = AsyncGfalClient()
+        assert client.app == "python3-gfal-async"
+
+    def test_custom_app(self):
+        client = GfalClient(app="python3-gfal-cli")
+        assert client.app == "python3-gfal-cli"
+
+    def test_custom_app_async(self):
+        client = AsyncGfalClient(app="python3-gfal-cli")
+        assert client.app == "python3-gfal-cli"
+
+    def test_url_injects_eos_app_for_eos_host(self):
+        client = AsyncGfalClient(app="python3-gfal-async")
+        result = client._url("https://eospilot.cern.ch//eos/pilot/file.txt")
+        assert "eos.app=python3-gfal-async" in result
+
+    def test_url_leaves_non_eos_url_unchanged(self):
+        client = AsyncGfalClient(app="python3-gfal-async")
+        url = "https://example.org/path/file.txt"
+        assert client._url(url) == url
+
+    def test_url_leaves_stdin_sentinel_unchanged(self):
+        client = AsyncGfalClient(app="python3-gfal-async")
+        assert client._url("-") == "-"
+
     def test_custom_init(self):
         client = GfalClient(
             cert="/tmp/x.pem",

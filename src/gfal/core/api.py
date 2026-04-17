@@ -42,6 +42,7 @@ class ClientConfig:
     ssl_verify: bool = True
     ipv4_only: bool = False
     ipv6_only: bool = False
+    app: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,7 @@ class AsyncGfalClient:
         ipv4_only: bool = False,
         ipv6_only: bool = False,
         config: Optional[ClientConfig] = None,
+        app: str = "python3-gfal-async",
     ):
         if config is None:
             config = ClientConfig(
@@ -195,6 +197,7 @@ class AsyncGfalClient:
                 ssl_verify=ssl_verify,
                 ipv4_only=ipv4_only,
                 ipv6_only=ipv6_only,
+                app=app,
             )
         self.config = config
 
@@ -206,6 +209,7 @@ class AsyncGfalClient:
         self.ssl_verify = config.ssl_verify
         self.ipv4_only = config.ipv4_only
         self.ipv6_only = config.ipv6_only
+        self.app = config.app
 
     @property
     def storage_options(self) -> dict[str, Any]:
@@ -220,6 +224,12 @@ class AsyncGfalClient:
                 ipv6_only=self.ipv6_only,
             )
         )
+
+    def _url(self, url: str) -> str:
+        """Return *url* with ``eos.app`` injected when it targets an EOS endpoint."""
+        if not self.app or url == "-":
+            return url
+        return eos_app_url(url, self.app) or url
 
     async def stat(self, url: str) -> StatResult:
         return await asyncio.to_thread(self._stat_sync, url)
@@ -333,6 +343,7 @@ class AsyncGfalClient:
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
 
     def _stat_sync(self, url: str) -> StatResult:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             info = fso.info(path)
@@ -342,6 +353,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _ls_sync(self, url: str, detail: bool = True) -> list[Any]:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             try:
@@ -366,6 +378,7 @@ class AsyncGfalClient:
         return [StatResult.from_info(entry) for entry in raw_entries]
 
     def _mkdir_sync(self, url: str, mode: int = 0o755, parents: bool = False) -> None:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if parents:
@@ -383,6 +396,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rm_sync(self, url: str, recursive: bool = False) -> None:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.rm(path, recursive=recursive)
@@ -390,6 +404,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rmdir_sync(self, url: str) -> None:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.rmdir(path)
@@ -397,6 +412,8 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rename_sync(self, src_url: str, dst_url: str) -> None:
+        src_url = self._url(src_url)
+        dst_url = self._url(dst_url)
         try:
             src_fs, src_path = fs.url_to_fs(src_url, self.storage_options)
             dst_fs, dst_path = fs.url_to_fs(dst_url, self.storage_options)
@@ -417,6 +434,7 @@ class AsyncGfalClient:
             raise self._map_error(e, src_url) from e
 
     def _chmod_sync(self, url: str, mode: int) -> None:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.chmod(path, mode)
@@ -424,6 +442,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _open_sync(self, url: str, mode: str = "rb") -> Any:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             return fso.open(path, mode)
@@ -431,6 +450,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _getxattr_sync(self, url: str, name: str) -> str:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "getxattr"):
@@ -443,6 +463,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _setxattr_sync(self, url: str, name: str, value: str) -> None:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "setxattr"):
@@ -455,6 +476,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _listxattr_sync(self, url: str) -> list[str]:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "listxattr"):
@@ -467,6 +489,7 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _checksum_sync(self, url: str, algorithm: str) -> str:
+        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             return compute_checksum(fso, path, algorithm.upper())
@@ -483,6 +506,8 @@ class AsyncGfalClient:
         warn_callback: WarnCallback,
         cancel_event: Optional[threading.Event],
     ) -> Any:
+        src_url = self._url(src_url)
+        dst_url = self._url(dst_url)
         opts = self.storage_options
 
         src_fs, src_path = fs.url_to_fs(src_url, opts)
@@ -974,6 +999,7 @@ class GfalClient:
         ipv4_only: bool = False,
         ipv6_only: bool = False,
         config: Optional[ClientConfig] = None,
+        app: str = "python3-gfal-sync",
     ):
         self._async_client = AsyncGfalClient(
             cert=cert,
@@ -983,6 +1009,7 @@ class GfalClient:
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
             config=config,
+            app=app,
         )
         self.config = self._async_client.config
         self.cert = self._async_client.cert
@@ -991,6 +1018,7 @@ class GfalClient:
         self.ssl_verify = self._async_client.ssl_verify
         self.ipv4_only = self._async_client.ipv4_only
         self.ipv6_only = self._async_client.ipv6_only
+        self.app = self._async_client.app
 
     @property
     def storage_options(self) -> dict[str, Any]:
@@ -1188,6 +1216,32 @@ def split_timestamp_ns(timestamp: float) -> tuple[int, int]:
         seconds += 1
         nanoseconds -= 1_000_000_000
     return seconds, nanoseconds
+
+
+def _is_eos_host(hostname: Optional[str]) -> bool:
+    """Return True if *hostname* looks like an EOS endpoint (``eos*.cern.ch``)."""
+    if not hostname:
+        return False
+    h = hostname.lower()
+    return h.startswith("eos") and h.endswith(".cern.ch")
+
+
+def eos_app_url(url: str, app: str) -> Optional[str]:
+    """Return *url* with ``eos.app=<app>`` added to the query string.
+
+    Returns ``None`` when the URL does not point to an EOS endpoint.
+    An existing ``eos.app`` value is never overwritten.
+    """
+    normalized = fs.normalize_url(url)
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
+        return None
+    if not _is_eos_host(parsed.hostname):
+        return None
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "eos.app" not in params:
+        params["eos.app"] = app
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 def eos_mtime_url(url: str, timestamp: float) -> Optional[str]:

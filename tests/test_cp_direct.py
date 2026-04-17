@@ -26,6 +26,7 @@ from gfal.cli.copy import (
 )
 from gfal.core import fs
 from gfal.core.api import checksum_fs as _checksum_fs
+from gfal.core.api import eos_app_url as _eos_app_url
 
 
 def _make_cmd():
@@ -524,6 +525,59 @@ class TestPreserveTimesHelpers:
             _eos_mtime_url("root://redirector.example.org//store/file.root", 1.0)
             is None
         )
+
+
+class TestEosAppUrl:
+    def test_eos_app_url_for_https_eos(self):
+        url = _eos_app_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt", "python3-gfal-cli"
+        )
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=python3-gfal-cli"
+        )
+
+    def test_eos_app_url_for_xrootd_eos(self):
+        url = _eos_app_url(
+            "root://eoshome.cern.ch//eos/home/user/file.txt", "python3-gfal-sync"
+        )
+        assert "eos.app=python3-gfal-sync" in url
+
+    def test_eos_app_url_preserves_existing_query(self):
+        url = _eos_app_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?authz=abc",
+            "python3-gfal-async",
+        )
+        assert "authz=abc" in url
+        assert "eos.app=python3-gfal-async" in url
+
+    def test_eos_app_url_does_not_override_existing_app(self):
+        url = _eos_app_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=custom-app",
+            "python3-gfal-cli",
+        )
+        assert "eos.app=custom-app" in url
+        assert "python3-gfal-cli" not in url
+
+    def test_eos_app_url_ignores_non_eos_cern_hosts(self):
+        # Non-EOS host at cern.ch
+        assert (
+            _eos_app_url("https://lxplus.cern.ch/some/path", "python3-gfal-cli") is None
+        )
+
+    def test_eos_app_url_ignores_non_cern_hosts(self):
+        # EOS-like hostname but not cern.ch
+        assert (
+            _eos_app_url("root://eos.example.org//store/file.root", "python3-gfal-cli")
+            is None
+        )
+
+    def test_eos_app_url_ignores_local_files(self):
+        assert _eos_app_url("/tmp/local/file.txt", "python3-gfal-cli") is None
+
+    def test_eos_app_url_ignores_stdin_sentinel(self):
+        # The '-' sentinel should pass through unchanged via _url()
+        # (eos_app_url itself returns None for non-EOS URLs)
+        assert _eos_app_url("-", "python3-gfal-cli") is None
 
     def test_make_hasher_adler32(self):
         h = _make_hasher("ADLER32")
