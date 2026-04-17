@@ -1219,7 +1219,13 @@ def split_timestamp_ns(timestamp: float) -> tuple[int, int]:
 
 
 def _is_eos_host(hostname: Optional[str]) -> bool:
-    """Return True if *hostname* looks like an EOS endpoint (``eos*.cern.ch``)."""
+    """Return True if *hostname* matches an EOS endpoint (``eos*.cern.ch``).
+
+    The glob pattern ``eos*.cern.ch`` is matched literally: the hostname must
+    start with ``eos`` and end with ``.cern.ch``.  Both ``eos.cern.ch`` and
+    ``eospilot.cern.ch`` are valid EOS hostnames.  Hostnames that merely contain
+    "eos" (e.g. ``myeos.example.org``) are intentionally excluded.
+    """
     if not hostname:
         return False
     h = hostname.lower()
@@ -1228,6 +1234,11 @@ def _is_eos_host(hostname: Optional[str]) -> bool:
 
 def eos_app_url(url: str, app: str) -> Optional[str]:
     """Return *url* with ``eos.app=<app>`` added to the query string.
+
+    :param url: The URL to annotate.  Must use one of the ``http``, ``https``,
+        ``root``, or ``xroot`` schemes and target an EOS endpoint
+        (hostname matching ``eos*.cern.ch``).
+    :param app: The application name to set, e.g. ``python3-gfal-cli``.
 
     Returns ``None`` when the URL does not point to an EOS endpoint.
     An existing ``eos.app`` value is never overwritten.
