@@ -522,8 +522,10 @@ class TestSyncAiohttpSession:
         monkeypatch.setattr("gfal.core.webdav.asyncio.sleep", _fake_sleep)
 
         session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
-        response = asyncio.run(
-            session._request_stream_async("COPY", "https://example.org/file")
+        response = session.request(
+            "COPY",
+            "https://example.org/file",
+            stream=True,
         )
 
         assert list(response.iter_lines()) == []
