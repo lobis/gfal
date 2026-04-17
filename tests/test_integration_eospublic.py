@@ -17,11 +17,11 @@ Known stable test file
 
 Note on gfal-ls
 ---------------
-The EOS HTTP endpoint does not serve HTML directory listings (GET returns
-403 "Browsing is disabled").  Listing requires WebDAV PROPFIND, which is
-not yet implemented in fsspec's HTTPFileSystem.  ls tests are therefore
-limited to single-file stat calls; directory ls is covered by the XRootD
-tests that use the ``root://`` scheme.
+Directory listing over HTTP uses WebDAV PROPFIND (implemented in
+``webdav.py``).  EOS supports PROPFIND on publicly readable directories, so
+``TestHttpLs`` exercises this code path against the real endpoint.  Plain
+GET for directory browsing returns 403 ("Browsing is disabled") — that is a
+different request from PROPFIND and is expected.
 """
 
 import hashlib
@@ -310,3 +310,131 @@ class TestXrootdCat:
         assert rc == 0
         assert len(stdout) == _SMALL_FILE_SIZE
         assert hashlib.md5(stdout).hexdigest() == _SMALL_FILE_MD5
+
+
+# ---------------------------------------------------------------------------
+# HTTP WebDAV ls tests
+# ---------------------------------------------------------------------------
+
+
+@requires_http
+class TestHttpLs:
+    """Directory listing via WebDAV PROPFIND over HTTPS."""
+
+    def test_ls_directory(self):
+        """PROPFIND ls should enumerate files inside the phenix directory."""
+        rc, out, err = run_gfal("ls", _DIR_HTTP)
+
+        assert rc == 0
+        assert "single_cluster_r5.C" in out
+
+    def test_ls_long_format(self):
+        """ls -l should include the filename and the known file size."""
+        rc, out, err = run_gfal("ls", "-l", _DIR_HTTP)
+
+        assert rc == 0
+        assert "single_cluster_r5.C" in out
+        assert str(_SMALL_FILE_SIZE) in out
+
+    def test_ls_directory_flag(self):
+        """ls -d on a directory URL should list the directory itself (one line)."""
+        rc, out, err = run_gfal("ls", "-d", _DIR_HTTP)
+
+        assert rc == 0
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        assert len(lines) == 1
+
+    def test_ls_single_file(self):
+        """ls on a single file URL should succeed and name the file."""
+        rc, out, err = run_gfal("ls", _SMALL_FILE_HTTP)
+
+        assert rc == 0
+        assert "single_cluster_r5.C" in out
+
+
+# ---------------------------------------------------------------------------
+# HTTP error-handling tests
+# ---------------------------------------------------------------------------
+
+_MISSING_HTTP = f"{_BASE_HTTP}/this_does_not_exist_gfal_integration_test.bin"
+
+
+@requires_http
+class TestHttpErrors:
+    """Error handling for non-existent HTTP resources."""
+
+    def test_stat_nonexistent_fails(self):
+        """stat on a missing HTTP path should exit non-zero."""
+        rc, out, err = run_gfal("stat", _MISSING_HTTP)
+
+        assert rc != 0
+
+    def test_stat_nonexistent_shows_error_message(self):
+        """The error output should mention the missing resource."""
+        rc, out, err = run_gfal("stat", _MISSING_HTTP)
+
+        assert rc != 0
+        combined = (out + err).lower()
+        assert (
+            "no such file" in combined or "404" in combined or "not found" in combined
+        )
+
+    def test_cat_nonexistent_fails(self):
+        """cat on a missing HTTP path should exit non-zero."""
+        rc, out, err = run_gfal("cat", _MISSING_HTTP)
+
+        assert rc != 0
+
+    def test_copy_nonexistent_source_fails(self, tmp_path):
+        """Copying from a non-existent HTTP source should fail."""
+        dst = tmp_path / "should_not_exist.bin"
+
+        rc, out, err = run_gfal("cp", _MISSING_HTTP, dst.as_uri())
+
+        assert rc != 0
+        assert not dst.exists()
+
+    def test_sum_nonexistent_fails(self):
+        """sum on a missing HTTP path should exit non-zero."""
+        rc, out, err = run_gfal("sum", _MISSING_HTTP, "MD5")
+
+        assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# XRootD error-handling tests
+# ---------------------------------------------------------------------------
+
+_MISSING_ROOT = f"{_BASE_ROOT}/this_does_not_exist_gfal_integration_test.bin"
+
+
+@requires_xrootd
+class TestXrootdErrors:
+    """Error handling for non-existent XRootD resources."""
+
+    def test_stat_nonexistent_fails(self):
+        """stat on a missing XRootD path should exit non-zero."""
+        rc, out, err = run_gfal("stat", _MISSING_ROOT)
+
+        assert rc != 0
+
+    def test_cat_nonexistent_fails(self):
+        """cat on a missing XRootD path should exit non-zero."""
+        rc, out, err = run_gfal("cat", _MISSING_ROOT)
+
+        assert rc != 0
+
+    def test_copy_nonexistent_source_fails(self, tmp_path):
+        """Copying from a non-existent XRootD source should fail."""
+        dst = tmp_path / "should_not_exist.bin"
+
+        rc, out, err = run_gfal("cp", _MISSING_ROOT, dst.as_uri())
+
+        assert rc != 0
+        assert not dst.exists()
+
+    def test_sum_nonexistent_fails(self):
+        """sum on a missing XRootD path should exit non-zero."""
+        rc, out, err = run_gfal("sum", _MISSING_ROOT, "ADLER32")
+
+        assert rc != 0
