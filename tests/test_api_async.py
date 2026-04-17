@@ -191,6 +191,7 @@ async def test_async_copy_maps_backend_exceptions(monkeypatch):
         progress_callback,
         start_callback,
         warn_callback,
+        transfer_mode_callback,
         cancel_event,
     ):
         raise FileExistsError("already exists")
@@ -212,6 +213,7 @@ async def test_async_start_copy_maps_background_exception(monkeypatch):
         progress_callback,
         start_callback,
         warn_callback,
+        transfer_mode_callback,
         cancel_event,
     ):
         raise FileNotFoundError("missing")
@@ -234,6 +236,7 @@ async def test_async_start_copy_wait_timeout(monkeypatch):
         progress_callback,
         start_callback,
         warn_callback,
+        transfer_mode_callback,
         cancel_event,
     ):
         time.sleep(0.2)
@@ -258,6 +261,7 @@ async def test_async_start_copy_cancel_propagates_cancelled_error(monkeypatch):
         progress_callback,
         start_callback,
         warn_callback,
+        transfer_mode_callback,
         cancel_event,
     ):
         for _ in range(50):
@@ -285,6 +289,7 @@ async def test_async_start_copy_propagates_background_exception(monkeypatch):
         progress_callback,
         start_callback,
         warn_callback,
+        transfer_mode_callback,
         cancel_event,
     ):
         raise GfalFileExistsError("already exists")

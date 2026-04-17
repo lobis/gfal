@@ -773,6 +773,72 @@ class TestGfalClientLibraryHelpers:
                 options=CopyOptions(tpc="never"),
             )
 
+    def test_copy_treats_late_remote_disconnect_after_full_write_as_success(self):
+        client = GfalClient()
+
+        class _LateDisconnectWriter(io.BytesIO):
+            def close(self):
+                super().close()
+                raise ConnectionError("Connection lost")
+
+        class _RemoteWriteFs:
+            def __init__(self):
+                self.size = 0
+
+            def info(self, path):
+                if path == "/dst/file.txt" and self.size:
+                    return {
+                        "name": path,
+                        "type": "file",
+                        "size": self.size,
+                        "mode": stat.S_IFREG | 0o644,
+                    }
+                raise FileNotFoundError(path)
+
+            def open(self, path, mode):
+                assert mode == "wb"
+                writer = _LateDisconnectWriter()
+                original_write = writer.write
+
+                def _write(data):
+                    written = original_write(data)
+                    self.size += written
+                    return written
+
+                writer.write = _write
+                return writer
+
+            def rm(self, path, recursive=False):
+                raise AssertionError(
+                    "Late-successful remote writes must not be cleaned up"
+                )
+
+        class _SourceFs:
+            def info(self, path):
+                return {
+                    "name": path,
+                    "type": "file",
+                    "size": 7,
+                    "mode": stat.S_IFREG | 0o644,
+                }
+
+            def open(self, path, mode):
+                assert mode == "rb"
+                return nullcontext(io.BytesIO(b"payload"))
+
+        src_fs = _SourceFs()
+        dst_fs = _RemoteWriteFs()
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect):
+            client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
+
+        assert dst_fs.size == 7
+
 
 class TestAsyncGfalClient:
     @pytest.mark.asyncio

@@ -32,6 +32,7 @@ from gfal.core.errors import (
 WarnCallback = Optional[Callable[[str], None]]
 ProgressCallback = Optional[Callable[[int], None]]
 StartCallback = Optional[Callable[[], None]]
+TransferModeCallback = Optional[Callable[[str], None]]
 
 
 @dataclass(frozen=True)
@@ -303,6 +304,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        transfer_mode_callback: TransferModeCallback = None,
         cancel_event: threading.Event | None = None,
     ) -> Any:
         def _runner() -> Any:
@@ -314,6 +316,7 @@ class AsyncGfalClient:
                     progress_callback,
                     start_callback,
                     warn_callback,
+                    transfer_mode_callback,
                     cancel_event,
                 )
             except Exception as e:
@@ -330,6 +333,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        transfer_mode_callback: TransferModeCallback = None,
     ) -> TransferHandle:
         cancel_event = threading.Event()
         result_holder: dict[str, Any] = {}
@@ -344,6 +348,7 @@ class AsyncGfalClient:
                     progress_callback,
                     start_callback,
                     warn_callback,
+                    transfer_mode_callback,
                     cancel_event,
                 )
             except Exception as exc:  # pragma: no cover - exercised via handle.wait
@@ -504,6 +509,7 @@ class AsyncGfalClient:
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
         warn_callback: WarnCallback,
+        transfer_mode_callback: TransferModeCallback,
         cancel_event: threading.Event | None,
     ) -> Any:
         src_url = self._url(src_url)
@@ -556,6 +562,7 @@ class AsyncGfalClient:
                 options,
                 progress_callback,
                 start_callback,
+                transfer_mode_callback,
                 warn_callback,
                 cancel_event,
             )
@@ -612,6 +619,12 @@ class AsyncGfalClient:
             try:
                 from gfal.core import tpc as tpc_module  # noqa: PLC0415
 
+                if transfer_mode_callback is not None:
+                    src_scheme = urlparse(src_url).scheme.lower()
+                    if src_scheme in {"http", "https"}:
+                        transfer_mode_callback(f"tpc-{options.tpc_direction}")
+                    else:
+                        transfer_mode_callback("tpc-xrootd")
                 tpc_module.do_tpc(
                     src_url,
                     tpc_dst_url,
@@ -649,6 +662,7 @@ class AsyncGfalClient:
             options,
             progress_callback,
             start_callback,
+            transfer_mode_callback,
             warn_callback,
             cancel_event,
         )
@@ -665,6 +679,7 @@ class AsyncGfalClient:
         options: CopyOptions,
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
+        transfer_mode_callback: TransferModeCallback,
         warn_callback: WarnCallback,
         cancel_event: threading.Event | None,
     ) -> None:
@@ -683,6 +698,7 @@ class AsyncGfalClient:
                 options,
                 progress_callback,
                 start_callback,
+                transfer_mode_callback,
                 warn_callback,
                 cancel_event,
             )
@@ -699,9 +715,13 @@ class AsyncGfalClient:
         options: CopyOptions,
         progress_callback: ProgressCallback,
         start_callback: StartCallback,
+        transfer_mode_callback: TransferModeCallback,
         warn_callback: WarnCallback,
         cancel_event: threading.Event | None,
     ) -> None:
+        if transfer_mode_callback is not None:
+            transfer_mode_callback("streamed")
+
         write_dst_url = self._transfer_destination_url(dst_url, src_st, options)
         write_remote_times = write_dst_url != dst_url
         write_dst_fs, write_dst_path = fs.url_to_fs(write_dst_url, self.storage_options)
@@ -769,11 +789,18 @@ class AsyncGfalClient:
                         update_hasher(dst_checksum_hasher, checksum_algorithm, chunk)
                     if progress_callback is not None:
                         progress_callback(transferred)
-        except Exception:
-            if not options.disable_cleanup:
-                with contextlib.suppress(Exception):
-                    dst_fs.rm(dst_path, recursive=False)
-            raise
+        except Exception as exc:
+            if not self._late_remote_write_succeeded(
+                exc,
+                dst_fs,
+                dst_path,
+                src_st,
+                transferred,
+            ):
+                if not options.disable_cleanup:
+                    with contextlib.suppress(Exception):
+                        dst_fs.rm(dst_path, recursive=False)
+                raise
 
         if dst_checksum_hasher is not None and checksum_algorithm is not None:
             dst_checksum = finalise_hasher(dst_checksum_hasher, checksum_algorithm)
@@ -791,6 +818,38 @@ class AsyncGfalClient:
             warn_callback,
             remote_already_preserved=write_remote_times,
         )
+
+    def _late_remote_write_succeeded(
+        self,
+        exc: Exception,
+        dst_fs: Any,
+        dst_path: str,
+        src_st: StatResult,
+        transferred: int,
+    ) -> bool:
+        if transferred != src_st.st_size:
+            return False
+
+        message = " ".join(
+            str(current).lower()
+            for current in fs._iter_exception_chain(exc)
+            if str(current)
+        )
+        late_disconnect_markers = (
+            "connection lost",
+            "connection reset by peer",
+            "server disconnected",
+            "broken pipe",
+        )
+        if not any(marker in message for marker in late_disconnect_markers):
+            return False
+
+        with contextlib.suppress(Exception):
+            dst_info = dst_fs.info(dst_path)
+            dst_st = StatResult.from_info(dst_info)
+            return dst_st.st_size == src_st.st_size
+
+        return False
 
     def _existing_file_matches_source(
         self,
@@ -1076,6 +1135,7 @@ class GfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        transfer_mode_callback: TransferModeCallback = None,
         cancel_event: threading.Event | None = None,
     ) -> Any:
         return run_sync(
@@ -1086,6 +1146,7 @@ class GfalClient:
             progress_callback=progress_callback,
             start_callback=start_callback,
             warn_callback=warn_callback,
+            transfer_mode_callback=transfer_mode_callback,
             cancel_event=cancel_event,
         )
 
@@ -1098,6 +1159,7 @@ class GfalClient:
         progress_callback: ProgressCallback = None,
         start_callback: StartCallback = None,
         warn_callback: WarnCallback = None,
+        transfer_mode_callback: TransferModeCallback = None,
     ) -> TransferHandle:
         return self._async_client.start_copy(
             src_url,
@@ -1106,6 +1168,7 @@ class GfalClient:
             progress_callback=progress_callback,
             start_callback=start_callback,
             warn_callback=warn_callback,
+            transfer_mode_callback=transfer_mode_callback,
         )
 
     def _map_error(self, e: Exception, url: str) -> GfalError:

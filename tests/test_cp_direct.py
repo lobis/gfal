@@ -861,6 +861,32 @@ class TestCliUsesLibraryCopy:
         _, kwargs = mock_client.copy.call_args
         assert kwargs["options"].compare == "none"
 
+    def test_do_copy_non_tty_reports_tpc_mode(self, tmp_path, capsys):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+
+        with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                FileNotFoundError(),
+                SimpleNamespace(st_size=5),
+            ]
+
+            def _copy_side_effect(*args, **kwargs):
+                kwargs["transfer_mode_callback"]("tpc-pull")
+                kwargs["start_callback"]()
+
+            mock_client.copy.side_effect = _copy_side_effect
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        out = capsys.readouterr().out
+        assert "TPC pull" in out
+
 
 class TestTpcOnlyPreflight:
     def test_tpc_only_unsupported_pair_skips_destination_probe(self, tmp_path):

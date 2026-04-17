@@ -392,23 +392,37 @@ class CommandCopy(base.CommandBase):
         show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
         progress_started = [False]
         transfer_start = time.monotonic()
+        transfer_mode = ["streamed"]
 
         try:
             src_size = client.stat(src_url).st_size
         except Exception:
             src_size = None
 
+        def _transfer_label():
+            mode_labels = {
+                "streamed": "streamed",
+                "tpc-pull": "TPC pull",
+                "tpc-push": "TPC push",
+                "tpc-xrootd": "TPC xrootd",
+            }
+            mode = mode_labels.get(transfer_mode[0], transfer_mode[0])
+            return f"Copying {Path(src_url).name} ({mode})"
+
         def _start_progress():
             if progress_started[0]:
                 return
             progress_started[0] = True
             if show_progress:
-                self.progress_bar = Progress(f"Copying {Path(src_url).name}")
+                self.progress_bar = Progress(_transfer_label())
                 self.progress_bar.update(total_size=src_size if src_size else None)
                 self.progress_bar.start()
             else:
                 if not quiet:
-                    print(f"Copying {src_size or 0} bytes  {src_url}  =>  {dst_url}")
+                    print(
+                        f"{_transfer_label()} {src_size or 0} bytes  "
+                        f"{src_url}  =>  {dst_url}"
+                    )
 
         def _progress(bytes_transferred):
             _start_progress()
@@ -418,6 +432,9 @@ class CommandCopy(base.CommandBase):
                     total_size=src_size,
                     elapsed=time.monotonic() - transfer_start,
                 )
+
+        def _set_transfer_mode(mode):
+            transfer_mode[0] = mode
 
         def _warn(message):
             if quiet:
@@ -444,6 +461,7 @@ class CommandCopy(base.CommandBase):
                 progress_callback=_progress,
                 start_callback=_start_progress,
                 warn_callback=None if quiet else _warn,
+                transfer_mode_callback=_set_transfer_mode,
             )
             copy_failed = False
         finally:

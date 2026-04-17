@@ -85,7 +85,6 @@ _RETRY_METHODS = frozenset(
         "GET",
         "HEAD",
         "OPTIONS",
-        "PUT",
         "TRACE",
         "PROPFIND",
         "MKCOL",
@@ -465,32 +464,11 @@ class _RequestsPutFile(io.RawIOBase):
             try:
                 self._buf.seek(0)
                 # Read the entire buffer. Since we use SpooledTemporaryFile with
-                # max_size=64MiB, this is safe and lets us retry the upload with
-                # a fresh aiohttp request if the connection drops mid-transfer.
+                # max_size=64MiB, this is safe for the single-shot PUT we issue
+                # on close().
                 data = self._buf.read()
-                # Manual retry for SSL/connection errors (e.g. some SSLEOFError
-                # cases) where reopening the request is the safest recovery.
-                import random
-                import time
-
-                for attempt in range(5):
-                    try:
-                        resp = self._session.put(
-                            self._url, data=data, timeout=self._timeout
-                        )
-                        _raise_for_status(resp, self._url)
-                        break
-                    except TimeoutError:
-                        raise
-                    except (
-                        aiohttp.ClientConnectionError,
-                        aiohttp.ClientSSLError,
-                        ssl.SSLError,
-                    ):
-                        if attempt == 4:
-                            raise
-                        delay = (attempt + 1) * 0.5 + random.random()
-                        time.sleep(delay)
+                resp = self._session.put(self._url, data=data, timeout=self._timeout)
+                _raise_for_status(resp, self._url)
             finally:
                 self._buf.close()
                 super().close()

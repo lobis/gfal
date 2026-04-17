@@ -1366,6 +1366,7 @@ class TestCopyOutputFormat:
 
         assert rc == 0
         assert "Copying" in out
+        assert "(streamed)" in out
         assert "5" in out  # file size
 
     def test_output_contains_src_url(self, tmp_path):
