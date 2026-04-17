@@ -343,7 +343,6 @@ class AsyncGfalClient:
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
 
     def _stat_sync(self, url: str) -> StatResult:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             info = fso.info(path)
@@ -353,7 +352,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _ls_sync(self, url: str, detail: bool = True) -> list[Any]:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             try:
@@ -378,7 +376,6 @@ class AsyncGfalClient:
         return [StatResult.from_info(entry) for entry in raw_entries]
 
     def _mkdir_sync(self, url: str, mode: int = 0o755, parents: bool = False) -> None:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if parents:
@@ -396,7 +393,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rm_sync(self, url: str, recursive: bool = False) -> None:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.rm(path, recursive=recursive)
@@ -404,7 +400,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rmdir_sync(self, url: str) -> None:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.rmdir(path)
@@ -412,8 +407,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _rename_sync(self, src_url: str, dst_url: str) -> None:
-        src_url = self._url(src_url)
-        dst_url = self._url(dst_url)
         try:
             src_fs, src_path = fs.url_to_fs(src_url, self.storage_options)
             dst_fs, dst_path = fs.url_to_fs(dst_url, self.storage_options)
@@ -434,7 +427,6 @@ class AsyncGfalClient:
             raise self._map_error(e, src_url) from e
 
     def _chmod_sync(self, url: str, mode: int) -> None:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             fso.chmod(path, mode)
@@ -442,7 +434,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _open_sync(self, url: str, mode: str = "rb") -> Any:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             return fso.open(path, mode)
@@ -450,7 +441,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _getxattr_sync(self, url: str, name: str) -> str:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "getxattr"):
@@ -463,7 +453,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _setxattr_sync(self, url: str, name: str, value: str) -> None:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "setxattr"):
@@ -476,7 +465,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _listxattr_sync(self, url: str) -> list[str]:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "listxattr"):
@@ -489,7 +477,6 @@ class AsyncGfalClient:
             raise self._map_error(e, url) from e
 
     def _checksum_sync(self, url: str, algorithm: str) -> str:
-        url = self._url(url)
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             return compute_checksum(fso, path, algorithm.upper())
