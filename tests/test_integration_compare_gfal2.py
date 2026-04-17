@@ -130,7 +130,7 @@ class TestLegacyGfal2Runtime:
         """New gfal cp preserves mtime by default (--preserve-times defaults on)."""
         new_cmd = (
             "cp -r /repo /tmp/gfal-src && "
-            "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
             "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         rc_new, new_preserved, err_new = _copy_preserves_mtime_in_docker(new_cmd)
@@ -157,7 +157,7 @@ class TestLegacyGfal2Runtime:
         """
         rc_new, err_new = _copy_existing_dst_error_in_docker(
             "cp -r /repo /tmp/gfal-src && "
-            "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+            "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
             "gfal cp file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         # New CLI: default compare=None → EEXIST (17)

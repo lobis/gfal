@@ -199,8 +199,8 @@ def run_gfal_docker(
     # but /repo is mounted read-only.
     script = (
         "cp -r /repo /tmp/gfal-src && "
-        "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
-        f"python3.12 -c \"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:]; "
+        "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        f"python3 -c \"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:]; "
         'from gfal.cli.shell import main; main()"'
     )
 
@@ -217,9 +217,9 @@ def run_gfal2_docker(
     """Run legacy ``gfal-<cmd>`` inside the Docker xrootd-cern-test container.
 
     Alma's distro ``python3-gfal2`` bindings are built for Python 3.9 and crash
-    under the image's default Python 3.12. Force the legacy launcher scripts to
-    use Python 3.9 via ``GFAL_PYTHONBIN`` while keeping the new gfal CLI on
-    Python 3.12.
+    under the image's default Python 3 runtime. Force the legacy launcher
+    scripts to use Python 3.9 via ``GFAL_PYTHONBIN`` while keeping the new gfal
+    CLI on the image's default Python 3.
     """
     cmd_args = [str(a) for a in args]
     escaped = " ".join(f"'{a}'" for a in cmd_args)

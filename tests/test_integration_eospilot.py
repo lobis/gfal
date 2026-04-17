@@ -155,7 +155,7 @@ def _run_repo_gfal_docker_script(shell_script, proxy_cert):
     """Run a shell script in the Docker image after installing the current repo copy."""
     setup = (
         "cp -r /repo /tmp/gfal-src && "
-        "python3.12 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
+        "python3 -m pip install -q --no-deps /tmp/gfal-src > /dev/null 2>&1 && "
     )
     return _docker_run_command(f"{setup}{shell_script}", proxy_cert=proxy_cert)
 
@@ -176,7 +176,7 @@ def _preserve_times_setup(kind, url):
     if kind == "https":
         return textwrap.dedent(
             f"""
-            python3.12 - <<'PY'
+            python3 - <<'PY'
             import ssl
             import urllib.error
             import urllib.request
@@ -213,7 +213,7 @@ def _preserve_times_verify(kind, url):
     if kind == "local":
         return textwrap.dedent(
             f"""
-            python3.12 - <<'PY'
+            python3 - <<'PY'
             from pathlib import Path
             from urllib.parse import urlparse
 
