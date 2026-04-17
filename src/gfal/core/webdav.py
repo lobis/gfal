@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import hashlib
 import inspect
 import io
 import queue
@@ -23,6 +24,7 @@ import stat as stat_module
 import tempfile
 import threading
 import warnings
+import zlib
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse, urlunparse
@@ -1030,7 +1032,17 @@ class WebDAVFileSystem(AbstractFileSystem):
             # but ONLY if we haven't already failed SSL.
             pass
         # Fall back to fsspec's HTTP HEAD request (works for any plain-HTTP file)
-        result = dict(self._http_fs.info(path))
+        try:
+            result = dict(self._http_fs.info(path))
+        except TimeoutError:
+            if path.endswith("/"):
+                return {
+                    "name": path,
+                    "size": 0,
+                    "type": "directory",
+                    "mode": stat_module.S_IFDIR | 0o755,
+                }
+            raise
         # Heuristic: plain HTTP servers can't tell us a resource is a directory,
         # but we can infer it from the URL (trailing slash) or Content-Type.
         mimetype = str(result.get("mimetype") or "")
@@ -1168,7 +1180,6 @@ class WebDAVFileSystem(AbstractFileSystem):
             and host.startswith("eos")
             and host.endswith(".cern.ch")
             and parsed.path.startswith("//eos/")
-            and not parsed.query
         )
 
     def _resolve_stream_write_url(self, path: str) -> str:
@@ -1214,11 +1225,14 @@ class WebDAVFileSystem(AbstractFileSystem):
     def checksum(self, path: str, algorithm: str) -> str:
         """Fetch server-side checksum via HTTP HEAD and the Digest header."""
         alg_lower = algorithm.lower()
+        digest_timeout = min(self._timeout, 10) if self._timeout is not None else 10
 
-        # Ask the server to return the digest (RFC 3230)
-        headers = {"Want-Digest": alg_lower}
-        resp = self._session.head(path, headers=headers, timeout=self._timeout)
-        _raise_for_status(resp, path)
+        try:
+            headers = {"Want-Digest": alg_lower}
+            resp = self._session.head(path, headers=headers, timeout=digest_timeout)
+            _raise_for_status(resp, path)
+        except Exception:
+            return self._checksum_locally(path, algorithm)
 
         digest_header = resp.headers.get("Digest")
         if not digest_header:
@@ -1226,7 +1240,6 @@ class WebDAVFileSystem(AbstractFileSystem):
                 "Server-side checksum is not available (no Digest header returned)"
             )
 
-        # Digest can be a comma-separated list: "md5=X, adler32=Y"
         for piece in digest_header.split(","):
             piece = piece.strip()
             if "=" in piece:
@@ -1237,3 +1250,26 @@ class WebDAVFileSystem(AbstractFileSystem):
         raise NotImplementedError(
             f"Server returned Digest header but missing requested algorithm {algorithm}: {digest_header}"
         )
+
+    def _checksum_locally(self, path: str, algorithm: str) -> str:
+        alg_upper = algorithm.upper()
+        chunk_size = 4 * 1024 * 1024
+
+        if alg_upper == "ADLER32":
+            value = 1
+            with self.open_stream_read(path) as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    value = zlib.adler32(chunk, value) & 0xFFFFFFFF
+            return f"{value:08x}"
+
+        hasher = hashlib.new(alg_upper.lower().replace("-", ""))
+        with self.open_stream_read(path) as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()

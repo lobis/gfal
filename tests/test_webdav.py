@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import io
 import posixpath
 import queue
 import socket
@@ -1272,7 +1273,7 @@ class TestWebDAVChecksum:
         assert fs.checksum("https://server/file", "MD5") == "O123456789"
 
         fs._session.head.assert_called_with(
-            "https://server/file", headers={"Want-Digest": "md5"}, timeout=None
+            "https://server/file", headers={"Want-Digest": "md5"}, timeout=10
         )
 
     def test_checksum_no_digest_header_raises(self):
@@ -1463,6 +1464,36 @@ class TestWebDAVStreamWriteResolution:
         fs._session.put.assert_not_called()
         writer.close()
 
+    def test_open_stream_write_resolves_eos_redirect_with_query(self):
+        fs = WebDAVFileSystem()
+        response = MagicMock()
+        response.status_code = 307
+        response.headers = {
+            "Location": "http://data-node.cern.ch:8443/eos/test/file?token=abc"
+        }
+        fs._session.put = MagicMock(return_value=response)
+
+        writer = fs.open_stream_write(
+            "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/file.bin?eos.mtime=946684800",
+            content_length=123,
+        )
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        upload_response = MagicMock()
+        upload_response.status_code = 201
+        upload_response.headers = {}
+        upload_future.set_result(upload_response)
+        writer._upload_future = upload_future
+
+        assert writer._url == "http://data-node.cern.ch:8443/eos/test/file?token=abc"
+        fs._session.put.assert_called_once_with(
+            "https://eospilot.cern.ch//eos/pilot/opstest/dteam/python3-gfal/tmp/file.bin?eos.mtime=946684800",
+            data=b"",
+            timeout=fs._timeout,
+            headers={"Content-Length": "0"},
+            allow_redirects=False,
+        )
+        writer.close()
+
 
 class TestWebDAVStreamRead:
     def test_streaming_get_file_reads_from_response_queue(self):
@@ -1505,3 +1536,12 @@ class TestWebDAVStreamRead:
             timeout=fs._timeout,
             stream=True,
         )
+
+
+class TestWebDAVChecksumFallback:
+    def test_checksum_falls_back_to_client_side_when_head_times_out(self):
+        fs = WebDAVFileSystem()
+        fs._session.head = MagicMock(side_effect=TimeoutError("timed out"))
+        fs.open_stream_read = MagicMock(return_value=io.BytesIO(b"hello world"))
+
+        assert fs.checksum("https://example.org/data.bin", "ADLER32") == "1a0b045d"
