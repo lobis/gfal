@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 _DEFAULT_SUBPROCESS_TIMEOUT = int(os.environ.get("GFAL_TEST_SUBPROCESS_TIMEOUT", "30"))
 
@@ -100,7 +101,7 @@ def run_gfal(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _find_docker() -> str | None:
+def _find_docker() -> Optional[str]:
     """Return the path to the Docker binary, or None if not found."""
     for candidate in (
         "docker",
@@ -144,8 +145,8 @@ def docker_available() -> bool:
 def _docker_run_command(
     shell_script: str,
     *,
-    proxy_cert: str | None = None,
-    input: str | None = None,
+    proxy_cert: Optional[str] = None,
+    input: Optional[str] = None,
     timeout: int = 120,
 ):
     """Run a shell script inside the Docker test image."""
@@ -184,7 +185,7 @@ def _docker_run_command(
 
 
 def run_gfal_docker(
-    cmd, *args, proxy_cert: str | None = None, input: str | None = None
+    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
 ):
     """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
 
@@ -211,7 +212,7 @@ def run_gfal_docker(
 
 
 def run_gfal2_docker(
-    cmd, *args, proxy_cert: str | None = None, input: str | None = None
+    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
 ):
     """Run legacy ``gfal-<cmd>`` inside the Docker xrootd-cern-test container.
 

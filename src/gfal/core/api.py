@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from gfal.core import fs
@@ -29,9 +29,9 @@ from gfal.core.errors import (
     is_xrootd_permission_message,
 )
 
-WarnCallback = Callable[[str], None] | None
-ProgressCallback = Callable[[int], None] | None
-StartCallback = Callable[[], None] | None
+WarnCallback = Optional[Callable[[str], None]]
+ProgressCallback = Optional[Callable[[int], None]]
+StartCallback = Optional[Callable[[], None]]
 
 
 @dataclass(frozen=True)
