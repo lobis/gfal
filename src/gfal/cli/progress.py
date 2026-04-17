@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 import math
 import shutil
@@ -5,6 +6,7 @@ import struct
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 try:
     import fcntl
@@ -20,12 +22,40 @@ from fsspec.callbacks import Callback
 from gfal.cli.base import get_console, is_gfal2_compat
 
 
+def _format_hms(total_seconds):
+    total_seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
 def Progress(label, tui_callback=None):
     if tui_callback:
         return TuiProgress(tui_callback)
     if is_gfal2_compat():
         return LegacyProgress(label)
     return RichProgress(label)
+
+
+def Spinner(label):
+    if is_gfal2_compat():
+        return LegacySpinner(label)
+    return RichSpinner(label)
+
+
+def print_live_message(message):
+    if is_gfal2_compat():
+        print(message)
+        return
+
+    manager = getattr(RichProgress, "_shared", None)
+    if manager is not None and getattr(manager, "started", False):
+        with manager.lock:
+            manager.progress.console.print(message, markup=False, highlight=False)
+            manager.progress.refresh()
+        return
+
+    print(message)
 
 
 class TuiProgress(Callback):
@@ -82,7 +112,8 @@ class TuiProgress(Callback):
     def branch_coro(self, coro):
         return coro
 
-    def stop(self, success=True):
+    def stop(self, success=True, status=None):
+        del status
         if self.callback:
             self.callback(self.value, self.size, finished=True, success=success)
 
@@ -96,68 +127,163 @@ class TuiProgress(Callback):
 
 
 class RichProgress:
+    _shared = None
+    _shared_init_lock = threading.Lock()
+
     def __init__(self, label):
         self.label = label
         self._started_flag = False
-        from rich.progress import (
-            BarColumn,
-            DownloadColumn,
-            SpinnerColumn,
-            TextColumn,
-            TimeRemainingColumn,
-            TransferSpeedColumn,
-        )
-        from rich.progress import (
-            Progress as _RichProgress,
-        )
-
-        self.rich_progress = _RichProgress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=get_console(stderr=False),
-        )
         self.task_id = None
+        self._started_at = None
+
+    @classmethod
+    def _manager(cls):
+        if cls._shared is None:
+            with cls._shared_init_lock:
+                if cls._shared is None:
+                    from rich.progress import (
+                        BarColumn,
+                        DownloadColumn,
+                        SpinnerColumn,
+                        TextColumn,
+                        TimeElapsedColumn,
+                        TransferSpeedColumn,
+                    )
+                    from rich.progress import (
+                        Progress as _RichProgress,
+                    )
+                    from rich.text import Text
+
+                    class _PinnedElapsedColumn(TimeElapsedColumn):
+                        def render(self, task):
+                            final_elapsed = task.fields.get("final_elapsed")
+                            if final_elapsed:
+                                return Text(final_elapsed, style="progress.elapsed")
+                            return super().render(task)
+
+                    cls._shared = SimpleNamespace(
+                        lock=threading.Lock(),
+                        progress=_RichProgress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            DownloadColumn(),
+                            TransferSpeedColumn(),
+                            _PinnedElapsedColumn(),
+                            console=get_console(stderr=False),
+                            expand=True,
+                            transient=False,
+                            refresh_per_second=20,
+                        ),
+                        started=False,
+                        active=0,
+                    )
+        return cls._shared
+
+    def start(self):
+        manager = self._manager()
+        with manager.lock:
+            if self._started_flag:
+                return
+            if not manager.started:
+                manager.progress.start()
+                manager.started = True
+            self.task_id = manager.progress.add_task(self.label, total=None)
+            self._started_at = time.monotonic()
+            manager.active += 1
+            self._started_flag = True
+            manager.progress.refresh()
+
+    def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            kwargs = {}
+            if curr_size is not None:
+                kwargs["completed"] = curr_size
+            if total_size is not None:
+                kwargs["total"] = total_size
+            manager.progress.update(self.task_id, **kwargs)
+            manager.progress.refresh()
+
+    def set_description(self, label):
+        self.label = label
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            manager.progress.update(self.task_id, description=label)
+            manager.progress.refresh()
+
+    def stop(self, success, status=None):
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            self._started_flag = False
+            with contextlib.suppress(IndexError, KeyError, AttributeError):
+                task = manager.progress.tasks[self.task_id]
+                elapsed_text = (
+                    _format_hms(time.monotonic() - self._started_at)
+                    if self._started_at is not None
+                    else None
+                )
+                if success and task.total is not None:
+                    manager.progress.update(
+                        self.task_id,
+                        completed=task.total,
+                        final_elapsed=elapsed_text,
+                    )
+                elif elapsed_text is not None and status != "skipped":
+                    manager.progress.update(
+                        self.task_id,
+                        final_elapsed=elapsed_text,
+                    )
+                with contextlib.suppress(Exception):
+                    manager.progress.stop_task(self.task_id)
+                if status == "skipped":
+                    manager.progress.update(
+                        self.task_id,
+                        description=f"{self.label} [yellow]\\[SKIPPED][/]",
+                    )
+                elif success:
+                    manager.progress.update(
+                        self.task_id, description=f"{self.label} [green]\\[DONE][/]"
+                    )
+                else:
+                    manager.progress.update(
+                        self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
+                    )
+            manager.progress.refresh()
+            self._started_at = None
+            manager.active = max(0, manager.active - 1)
+            if manager.started and manager.active == 0:
+                manager.progress.stop()
+                manager.started = False
+
+
+class RichSpinner:
+    def __init__(self, label):
+        self.label = label
+        self._started_flag = False
+        self._status = None
 
     def start(self):
         if self._started_flag:
             return
+        console = get_console(stderr=False)
+        self._status = console.status(self.label)
+        self._status.start()
         self._started_flag = True
-        self.rich_progress.start()
-        self.task_id = self.rich_progress.add_task(self.label, total=None)
 
-    def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
-        if not self._started_flag:
-            return
-        kwargs = {}
-        if curr_size is not None:
-            kwargs["completed"] = curr_size
-        if total_size is not None:
-            kwargs["total"] = total_size
-        self.rich_progress.update(self.task_id, **kwargs)
-
-    def stop(self, success):
+    def stop(self, success=True, status=None):
+        del success, status
         if not self._started_flag:
             return
         self._started_flag = False
-        try:
-            task = self.rich_progress.tasks[self.task_id]
-            if success and task.total is not None:
-                self.rich_progress.update(self.task_id, completed=task.total)
-            if success:
-                self.rich_progress.update(
-                    self.task_id, description=f"{self.label} [green]\\[DONE][/]"
-                )
-            else:
-                self.rich_progress.update(
-                    self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
-                )
-        except Exception:
-            pass
-        self.rich_progress.stop()
+        with contextlib.suppress(Exception):
+            self._status.stop()
 
 
 class LegacyProgress:
@@ -236,7 +362,7 @@ class LegacyProgress:
             elif rate is not None:
                 self.status["rate"] = rate
 
-    def stop(self, success):
+    def stop(self, success, status=None):
         if not self.started:
             return
         with self.lock:
@@ -244,7 +370,7 @@ class LegacyProgress:
         if hasattr(self, "_thread"):
             self._thread.join(timeout=2)
         elapsed = (datetime.datetime.now() - self.start_time).total_seconds()
-        outcome = "DONE" if success else "FAILED"
+        outcome = "SKIPPED" if status == "skipped" else "DONE" if success else "FAILED"
         msg = f"{self.label}   [{outcome}]  after {elapsed:.0f}s"
         sys.stdout.write("\r" + msg + " " * max(0, self._terminal_width() - len(msg)))
         sys.stdout.flush()
@@ -278,8 +404,19 @@ class LegacyProgress:
     @staticmethod
     def _size_str(size):
         s = LegacyProgress._rate_str(size)
-        # strip the "/s" suffix and ensure it ends with B
         s = s[:-2]
         if not s.endswith("B"):
             s += "B"
         return s
+
+
+class LegacySpinner:
+    def __init__(self, label):
+        self.label = label
+        self._progress = LegacyProgress(label)
+
+    def start(self):
+        self._progress.start()
+
+    def stop(self, success=True, status=None):
+        self._progress.stop(success, status=status)

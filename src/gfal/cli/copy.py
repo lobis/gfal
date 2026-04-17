@@ -2,15 +2,19 @@
 gfal cp implementation.
 """
 
+import contextlib
+import errno
 import stat
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
-from gfal.cli.progress import Progress
+from gfal.cli.progress import Progress, Spinner, print_live_message
 from gfal.core import api as core_api
 from gfal.core import fs
 from gfal.core.api import (
@@ -24,12 +28,128 @@ from gfal.core.api import (
 from gfal.core.api import (
     tpc_applicable as _tpc_applicable,
 )
+from gfal.core.errors import GfalError, GfalPartialFailureError
 
 _make_hasher = core_api.make_hasher
 _update_hasher = core_api.update_hasher
 _finalise_hasher = core_api.finalise_hasher
 _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
+
+_DEFAULT_RECURSIVE_PARALLELISM = 5
+
+
+def _url_path_join(base_url, name):
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/") + "/" + name
+    return urlunparse(parsed._replace(path=path))
+
+
+class _TransferDisplay:
+    def __init__(
+        self,
+        src_url,
+        dst_url,
+        *,
+        quiet=False,
+        verbose=False,
+        src_size=None,
+        transfer_mode=None,
+    ):
+        self.src_url = src_url
+        self.dst_url = dst_url
+        self.quiet = quiet
+        self.verbose = verbose
+        self.src_size = src_size
+        self.show_progress = sys.stdout.isatty() and not verbose and not quiet
+        self.progress_bar = None
+        self.progress_started = False
+        self.transfer_start = time.monotonic()
+        self.transfer_mode = transfer_mode
+        self.final_status = None
+        self._lock = threading.Lock()
+
+    def _transfer_label(self):
+        mode_labels = {
+            "streamed": "streamed",
+            "tpc-pull": "TPC pull",
+            "tpc-push": "TPC push",
+            "tpc-xrootd": "TPC xrootd",
+        }
+        if self.transfer_mode is None:
+            return f"Copying {Path(self.src_url).name}"
+        mode = mode_labels.get(self.transfer_mode, self.transfer_mode)
+        return f"Copying {Path(self.src_url).name} ({mode})"
+
+    def start(self):
+        with self._lock:
+            if self.progress_started:
+                return
+            self.progress_started = True
+            if self.show_progress:
+                self.progress_bar = Progress(self._transfer_label())
+                if self.src_size is not None:
+                    self.progress_bar.update(total_size=self.src_size)
+                self.progress_bar.start()
+                return
+            if not self.quiet:
+                print(
+                    f"{self._transfer_label()} {self.src_size or 0} bytes  "
+                    f"{self.src_url}  =>  {self.dst_url}"
+                )
+
+    def update(self, bytes_transferred):
+        self.start()
+        with self._lock:
+            if self.show_progress and self.progress_bar is not None and self.src_size:
+                self.progress_bar.update(
+                    curr_size=bytes_transferred,
+                    total_size=self.src_size,
+                    elapsed=time.monotonic() - self.transfer_start,
+                )
+
+    def set_mode(self, mode):
+        with self._lock:
+            self.transfer_mode = mode
+            if self.show_progress and self.progress_bar is not None:
+                label = self._transfer_label()
+                if hasattr(self.progress_bar, "label"):
+                    self.progress_bar.label = label
+                if hasattr(self.progress_bar, "set_description"):
+                    self.progress_bar.set_description(label)
+
+    def set_total_size(self, total_size):
+        with self._lock:
+            self.src_size = total_size
+            if self.show_progress and self.progress_bar is not None and total_size:
+                self.progress_bar.update(total_size=total_size)
+
+    def mark_skipped(self):
+        with self._lock:
+            self.final_status = "skipped"
+            self.transfer_mode = None
+            if self.show_progress and self.progress_bar is not None:
+                label = self._transfer_label()
+                if hasattr(self.progress_bar, "label"):
+                    self.progress_bar.label = label
+                if hasattr(self.progress_bar, "set_description"):
+                    self.progress_bar.set_description(label)
+
+    def finish(self, success):
+        with self._lock:
+            if (
+                not self.progress_started
+                or not self.show_progress
+                or self.progress_bar is None
+            ):
+                return
+            if success and self.src_size and self.final_status != "skipped":
+                self.progress_bar.update(
+                    curr_size=self.src_size,
+                    total_size=self.src_size,
+                    elapsed=time.monotonic() - self.transfer_start,
+                )
+            self.progress_bar.stop(success, status=self.final_status)
 
 
 class CommandCopy(base.CommandBase):
@@ -70,6 +190,14 @@ class CommandCopy(base.CommandBase):
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
+    )
+    @base.arg(
+        "--parallel",
+        type=int,
+        default=_DEFAULT_RECURSIVE_PARALLELISM,
+        metavar="N",
+        help="maximum number of concurrent child transfers during recursive copy "
+        f"(default: {_DEFAULT_RECURSIVE_PARALLELISM})",
     )
     @base.arg(
         "--preserve-times",
@@ -212,6 +340,9 @@ class CommandCopy(base.CommandBase):
         if self.params.from_file and self.params.src:
             sys.stderr.write("Cannot combine --from-file with a positional source\n")
             return 1
+        if self.params.parallel < 1:
+            sys.stderr.write(f"{self.prog}: --parallel must be at least 1\n")
+            return 1
 
         # --copy-mode overrides --tpc/--tpc-only/--tpc-mode for backwards compatibility
         if self.params.copy_mode is not None:
@@ -284,8 +415,9 @@ class CommandCopy(base.CommandBase):
                 else:
                     self._do_copy(src, dst, opts)
             except Exception as e:
-                self._print_error(e)
-                rc = exception_exit_code(e)
+                if not getattr(e, "already_reported", False):
+                    self._print_error(e)
+                rc = exception_exit_code(getattr(e, "first_error", e))
                 if self.params.abort_on_failure:
                     return rc
 
@@ -324,7 +456,9 @@ class CommandCopy(base.CommandBase):
             )
 
         tpc = "auto"
-        if getattr(self.params, "tpc_only", False):
+        if getattr(self.params, "copy_mode", None) == "streamed":
+            tpc = "never"
+        elif getattr(self.params, "tpc_only", False):
             tpc = "only"
         elif getattr(self.params, "tpc", False):
             tpc = "auto"
@@ -343,6 +477,7 @@ class CommandCopy(base.CommandBase):
             tpc=tpc,
             tpc_direction=getattr(self.params, "tpc_mode", "pull"),
             recursive=getattr(self.params, "recursive", False),
+            abort_on_failure=getattr(self.params, "abort_on_failure", False),
             preserve_times=getattr(self.params, "preserve_times", True),
             preserve_times_explicit=preserve_times_explicit,
             compare=getattr(self.params, "compare", None),
@@ -352,6 +487,191 @@ class CommandCopy(base.CommandBase):
             evict=getattr(self.params, "evict", False),
             scitag=getattr(self.params, "scitag", None),
         )
+
+    def _warn_copy_message(self, message, dst_url):
+        if self._is_quiet():
+            return
+        if message.startswith("Skipping existing file ") or message.startswith(
+            "Skipping directory "
+        ):
+            print_live_message(message)
+            return
+        normalized = fs.normalize_url(dst_url)
+        scheme = urlparse(normalized).scheme.lower() or "unknown"
+        if message.startswith("--preserve-times"):
+            if scheme in self._preserve_times_warned:
+                return
+            self._preserve_times_warned.add(scheme)
+        sys.stderr.write(f"{self.prog}: warning: {message}\n")
+
+    def _child_error_callback(self, _child_src_url, _child_dst_url, error):
+        self._reported_child_errors.add(self._child_error_key(error))
+        self._print_error(error)
+
+    @staticmethod
+    def _child_error_key(error):
+        return (type(error), getattr(error, "errno", None), str(error))
+
+    def _traverse_callback(self, dir_src_url, dir_dst_url):
+        if self._is_quiet():
+            return
+        print_live_message(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
+
+    @staticmethod
+    def _is_skip_message(message):
+        return message.startswith("Skipping existing file ") or message.startswith(
+            "Skipping directory "
+        )
+
+    def _predicted_transfer_mode(self, src_url, dst_url):
+        copy_options = self._build_copy_options()
+        if copy_options.tpc == "never":
+            return "streamed"
+        if not _tpc_applicable(src_url, dst_url):
+            return "streamed"
+        src_scheme = urlparse(src_url).scheme.lower()
+        dst_scheme = urlparse(dst_url).scheme.lower()
+        if src_scheme == "root" and dst_scheme == "root":
+            return "tpc-xrootd"
+        return f"tpc-{copy_options.tpc_direction}"
+
+    def _recursive_parallelism(self, src_url, dst_url):
+        del src_url, dst_url
+        if getattr(self.params, "abort_on_failure", False):
+            return 1
+        return max(1, getattr(self.params, "parallel", _DEFAULT_RECURSIVE_PARALLELISM))
+
+    def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
+        copy_options = self._build_copy_options()
+        self._reported_child_errors = set()
+        src_fs, src_path = fs.url_to_fs(src_url, opts)
+        _dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+
+        try:
+            client.stat(dst_url)
+        except Exception as exc:
+            if exception_exit_code(exc) != errno.ENOENT:
+                raise
+            client.mkdir(dst_url, parents=copy_options.create_parents)
+
+        scan_spinner = None
+        if not self._is_quiet():
+            scan_spinner = Spinner(f"Scanning {src_url}  =>  {dst_url}")
+            scan_spinner.start()
+        try:
+            entries = src_fs.ls(src_path, detail=False)
+        except Exception:
+            if scan_spinner is not None:
+                scan_spinner.stop(False)
+            raise
+        else:
+            if scan_spinner is not None:
+                scan_spinner.stop(True)
+        child_jobs = []
+        for entry_path in entries:
+            name = Path(entry_path.rstrip("/")).name
+            if name in (".", ".."):
+                continue
+            child_jobs.append(
+                (_url_path_join(src_url, name), _url_path_join(dst_url, name))
+            )
+
+        max_parallel = min(
+            self._recursive_parallelism(src_url, dst_url), len(child_jobs)
+        )
+        if max_parallel <= 0:
+            max_parallel = 1
+
+        active = []
+        failures = []
+        pending = deque(child_jobs)
+
+        def _start_child(child_src_url, child_dst_url):
+            if self._cancel_event.is_set():
+                raise GfalError("Transfer cancelled", errno.ECANCELED)
+            display = _TransferDisplay(
+                child_src_url,
+                child_dst_url,
+                quiet=self._is_quiet(),
+                verbose=self.params.verbose,
+                transfer_mode=self._predicted_transfer_mode(
+                    child_src_url, child_dst_url
+                ),
+            )
+            if display.show_progress:
+                display.start()
+            with contextlib.suppress(Exception):
+                child_st = client.stat(child_src_url)
+                if not child_st.is_dir():
+                    display.set_total_size(child_st.st_size)
+
+            def _handle_warn(msg, dst=child_dst_url, child_display=display):
+                if self._is_skip_message(msg):
+                    child_display.mark_skipped()
+                    if child_display.show_progress:
+                        return
+                self._warn_copy_message(msg, dst)
+
+            handle = client.start_copy(
+                child_src_url,
+                child_dst_url,
+                options=copy_options,
+                progress_callback=display.update,
+                start_callback=display.start,
+                warn_callback=_handle_warn,
+                transfer_mode_callback=display.set_mode,
+                error_callback=self._child_error_callback,
+                traverse_callback=self._traverse_callback,
+                cancel_event=self._cancel_event,
+            )
+            active.append((child_src_url, child_dst_url, handle, display))
+
+        while pending or active:
+            if self._cancel_event.is_set():
+                for _, _, active_handle, active_display in active:
+                    active_handle.cancel()
+                    active_display.finish(False)
+                raise GfalError("Transfer cancelled", errno.ECANCELED)
+            while pending and len(active) < max_parallel:
+                child_src_url, child_dst_url = pending.popleft()
+                _start_child(child_src_url, child_dst_url)
+
+            completed_any = False
+            for child_src_url, child_dst_url, handle, display in list(active):
+                if not handle.done():
+                    continue
+                completed_any = True
+                active.remove((child_src_url, child_dst_url, handle, display))
+                try:
+                    handle.wait()
+                    display.finish(True)
+                except Exception as exc:
+                    display.finish(False)
+                    if self._child_error_key(exc) not in self._reported_child_errors:
+                        self._print_error(exc)
+                    failures.append(exc)
+                    if copy_options.abort_on_failure:
+                        for _, _, active_handle, active_display in active:
+                            active_handle.cancel()
+                            active_display.finish(False)
+                        raise exc
+
+            if not completed_any:
+                time.sleep(0.05)
+
+        client._async_client._preserve_times(
+            src_st,
+            dst_url,
+            dst_path,
+            copy_options,
+            lambda msg: self._warn_copy_message(msg, dst_url),
+        )
+
+        if failures:
+            raise GfalPartialFailureError(
+                f"{len(failures)} recursive transfer(s) failed",
+                failures,
+            )
 
     def _do_copy(self, src_url, dst_url, opts):
         """High-level copy wrapper over the library client."""
@@ -380,6 +700,7 @@ class CommandCopy(base.CommandBase):
                 f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
             )
 
+        src_st = None
         try:
             src_st = client.stat(src_url)
             dst_st = client.stat(dst_url)
@@ -392,70 +713,30 @@ class CommandCopy(base.CommandBase):
         except Exception:
             pass
 
-        src_size = None
+        if src_st is not None and src_st.is_dir() and self.params.recursive:
+            self._copy_directory_parallel(client, src_url, dst_url, opts, src_st)
+            return
+
         quiet = self._is_quiet()
-        show_progress = sys.stdout.isatty() and not self.params.verbose and not quiet
-        progress_started = [False]
-        transfer_start = time.monotonic()
-        transfer_mode = ["streamed"]
+        display = _TransferDisplay(
+            src_url,
+            dst_url,
+            quiet=quiet,
+            verbose=self.params.verbose,
+            transfer_mode=self._predicted_transfer_mode(src_url, dst_url),
+        )
+        if display.show_progress:
+            display.start()
+        self.progress_bar = display.progress_bar
+        with contextlib.suppress(Exception):
+            display.set_total_size(client.stat(src_url).st_size)
 
-        try:
-            src_size = client.stat(src_url).st_size
-        except Exception:
-            src_size = None
-
-        def _transfer_label():
-            mode_labels = {
-                "streamed": "streamed",
-                "tpc-pull": "TPC pull",
-                "tpc-push": "TPC push",
-                "tpc-xrootd": "TPC xrootd",
-            }
-            mode = mode_labels.get(transfer_mode[0], transfer_mode[0])
-            return f"Copying {Path(src_url).name} ({mode})"
-
-        def _start_progress():
-            if progress_started[0]:
-                return
-            progress_started[0] = True
-            if show_progress:
-                self.progress_bar = Progress(_transfer_label())
-                self.progress_bar.update(total_size=src_size if src_size else None)
-                self.progress_bar.start()
-            else:
-                if not quiet:
-                    print(
-                        f"{_transfer_label()} {src_size or 0} bytes  "
-                        f"{src_url}  =>  {dst_url}"
-                    )
-
-        def _progress(bytes_transferred):
-            _start_progress()
-            if show_progress and src_size:
-                self.progress_bar.update(
-                    curr_size=bytes_transferred,
-                    total_size=src_size,
-                    elapsed=time.monotonic() - transfer_start,
-                )
-
-        def _set_transfer_mode(mode):
-            transfer_mode[0] = mode
-
-        def _warn(message):
-            if quiet:
-                return
-            if message.startswith("Skipping existing file ") or message.startswith(
-                "Skipping directory "
-            ):
-                print(message)
-                return
-            normalized = fs.normalize_url(dst_url)
-            scheme = urlparse(normalized).scheme.lower() or "unknown"
-            if message.startswith("--preserve-times"):
-                if scheme in self._preserve_times_warned:
+        def _handle_warn(message):
+            if self._is_skip_message(message):
+                display.mark_skipped()
+                if display.show_progress:
                     return
-                self._preserve_times_warned.add(scheme)
-            sys.stderr.write(f"{self.prog}: warning: {message}\n")
+            self._warn_copy_message(message, dst_url)
 
         copy_failed = True
         try:
@@ -463,21 +744,18 @@ class CommandCopy(base.CommandBase):
                 src_url,
                 dst_url,
                 options=self._build_copy_options(),
-                progress_callback=_progress,
-                start_callback=_start_progress,
-                warn_callback=None if quiet else _warn,
-                transfer_mode_callback=_set_transfer_mode,
+                progress_callback=display.update,
+                start_callback=display.start,
+                warn_callback=_handle_warn,
+                transfer_mode_callback=display.set_mode,
+                error_callback=None if quiet else self._child_error_callback,
+                traverse_callback=None if quiet else self._traverse_callback,
+                cancel_event=self._cancel_event,
             )
             copy_failed = False
         finally:
-            if progress_started[0] and show_progress:
-                if not copy_failed and src_size:
-                    self.progress_bar.update(
-                        curr_size=src_size,
-                        total_size=src_size,
-                        elapsed=time.monotonic() - transfer_start,
-                    )
-                self.progress_bar.stop(not copy_failed)
+            display.finish(not copy_failed)
+            if display.show_progress:
                 print()
 
 

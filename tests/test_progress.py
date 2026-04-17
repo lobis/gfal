@@ -1,6 +1,11 @@
 """Tests for gfal_cli.progress — Progress bar unit tests."""
 
+import threading
+import time
+from types import SimpleNamespace
+
 from gfal.cli.progress import LegacyProgress as Progress
+from gfal.cli.progress import RichProgress, RichSpinner, print_live_message
 
 
 class TestProgressInit:
@@ -164,6 +169,13 @@ class TestProgressLifecycle:
         captured = capsys.readouterr()
         assert "[FAILED]" in captured.out
 
+    def test_stop_writes_skipped(self, capsys):
+        p = Progress("Copying myfile.txt")
+        p.start()
+        p.stop(True, status="skipped")
+        captured = capsys.readouterr()
+        assert "[SKIPPED]" in captured.out
+
     def test_stop_shows_elapsed(self, capsys):
         p = Progress("X")
         p.start()
@@ -202,3 +214,221 @@ class TestProgressUpdateEdgeCases:
         p.update(curr_size=500, total_size=1000, elapsed=1.0)
         assert p.status["percentage"] == 50.0
         assert p.status["rate"] == 500.0
+
+
+class TestRichProgress:
+    def test_rich_progress_manager_initialization_is_thread_safe(self, monkeypatch):
+        import sys
+        import types
+
+        created = []
+
+        def _column(*args, **kwargs):
+            del args, kwargs
+            return object()
+
+        class _FakeBackend:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                time.sleep(0.05)
+                created.append(self)
+
+        fake_progress_module = types.ModuleType("rich.progress")
+        fake_progress_module.BarColumn = _column
+        fake_progress_module.DownloadColumn = _column
+        fake_progress_module.SpinnerColumn = _column
+        fake_progress_module.TextColumn = _column
+        fake_progress_module.TimeElapsedColumn = object
+        fake_progress_module.TransferSpeedColumn = _column
+        fake_progress_module.Progress = _FakeBackend
+
+        fake_text_module = types.ModuleType("rich.text")
+        fake_text_module.Text = _column
+
+        monkeypatch.setitem(sys.modules, "rich.progress", fake_progress_module)
+        monkeypatch.setitem(sys.modules, "rich.text", fake_text_module)
+        monkeypatch.setattr(
+            "gfal.cli.progress.get_console", lambda stderr=False: object()
+        )
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichProgress, "_shared_init_lock", threading.Lock(), raising=False
+        )
+
+        results = []
+        threads = [
+            threading.Thread(target=lambda: results.append(RichProgress._manager()))
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(created) == 1
+        assert results[0] is results[1]
+
+    def test_rich_progress_refreshes_on_updates_and_stop(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                task_id = len(self.tasks)
+                self.tasks.append(SimpleNamespace(total=total))
+                self.calls.append(("add_task", description, total))
+                return task_id
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+                task = self.tasks[task_id]
+                if "total" in kwargs:
+                    task.total = kwargs["total"]
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                self.calls.append(("stop_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt (TPC pull)")
+        progress.start()
+        progress.update(total_size=10)
+        progress.set_description("Copying example.txt (streamed)")
+        progress.stop(True)
+
+        assert ("refresh",) in backend.calls
+        assert ("stop_task", 0) in backend.calls
+        assert backend.calls[-1] == ("stop",)
+        assert any(
+            call[0] == "update"
+            and call[1] == 0
+            and "final_elapsed" in call[2]
+            and call[2]["final_elapsed"]
+            for call in backend.calls
+        )
+
+    def test_rich_progress_stop_marks_skipped(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = [SimpleNamespace(total=10)]
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                self.calls.append(("add_task", description, total))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                self.calls.append(("stop_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt")
+        progress.start()
+        progress.stop(True, status="skipped")
+
+        assert (
+            "update",
+            0,
+            {"description": "Copying example.txt [yellow]\\[SKIPPED][/]"},
+        ) in backend.calls
+
+
+class TestRichSpinner:
+    def test_rich_spinner_uses_status_not_progress_rows(self, monkeypatch):
+        calls = []
+
+        class _FakeStatus:
+            def start(self):
+                calls.append(("start",))
+
+            def stop(self):
+                calls.append(("stop",))
+
+        class _FakeConsole:
+            def status(self, label):
+                calls.append(("status", label))
+                return _FakeStatus()
+
+        monkeypatch.setattr(
+            "gfal.cli.progress.get_console", lambda stderr=False: _FakeConsole()
+        )
+
+        spinner = RichSpinner("Scanning example")
+        spinner.start()
+        spinner.stop()
+
+        assert calls == [
+            ("status", "Scanning example"),
+            ("start",),
+            ("stop",),
+        ]
+
+
+class TestPrintLiveMessage:
+    def test_live_message_uses_active_progress_console(self, monkeypatch):
+        printed = []
+        refreshed = []
+
+        class _FakeConsole:
+            def print(self, message, markup=False, highlight=False):
+                printed.append((message, markup, highlight))
+
+        manager = SimpleNamespace(
+            lock=threading.Lock(),
+            progress=SimpleNamespace(
+                console=_FakeConsole(),
+                refresh=lambda: refreshed.append(True),
+            ),
+            started=True,
+            active=1,
+        )
+        monkeypatch.setattr(RichProgress, "_shared", manager, raising=False)
+
+        print_live_message("Skipping existing file dst")
+
+        assert printed == [("Skipping existing file dst", False, False)]
+        assert refreshed == [True]

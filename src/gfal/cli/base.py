@@ -1124,6 +1124,10 @@ class CommandBase:
             return self.return_code
 
         except KeyboardInterrupt:
+            self._cancel_event.set()
+            if self.progress_bar is not None:
+                self.progress_bar.stop(False)
+            t.join(2)
             sys.stderr.write("\nInterrupted\n")
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             return errno.EINTR

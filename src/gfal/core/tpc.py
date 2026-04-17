@@ -158,24 +158,32 @@ def _parse_tpc_body(resp, progress_callback=None):
     last_non_empty = ""
     in_marker = False
     marker_bytes = 0
-    for raw in resp.iter_lines(decode_unicode=True):
-        line = (raw or "").strip()
-        if line == "Perf Marker":
-            in_marker = True
-            marker_bytes = 0
-        elif line == "End" and in_marker:
-            in_marker = False
-            if progress_callback is not None and marker_bytes > 0:
-                progress_callback(marker_bytes)
-        elif in_marker and line.startswith("Stripe Bytes Transferred:"):
-            with contextlib.suppress(ValueError):
-                marker_bytes = int(line.split(":", 1)[1].strip())
-        elif line.startswith("success:"):
+    try:
+        for raw in resp.iter_lines(decode_unicode=True):
+            line = (raw or "").strip()
+            if line == "Perf Marker":
+                in_marker = True
+                marker_bytes = 0
+            elif line == "End" and in_marker:
+                in_marker = False
+                if progress_callback is not None and marker_bytes > 0:
+                    progress_callback(marker_bytes)
+            elif in_marker and line.startswith("Stripe Bytes Transferred:"):
+                with contextlib.suppress(ValueError):
+                    marker_bytes = int(line.split(":", 1)[1].strip())
+            elif line.startswith("success:"):
+                return
+            elif line.startswith("failure:"):
+                raise OSError(f"HTTP TPC server reported failure: {line[8:].strip()}")
+            if line:
+                last_non_empty = line
+    except ConnectionError:
+        if last_non_empty.startswith("success:"):
             return
-        elif line.startswith("failure:"):
-            raise OSError(f"HTTP TPC server reported failure: {line[8:].strip()}")
-        if line:
-            last_non_empty = line
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            resp.close()
 
     # Body ended without an explicit success/failure line
     if last_non_empty.startswith("failure:"):
@@ -271,7 +279,7 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
     props = {
         "source": src_url,
         "target": dst_url,
-        "thirdparty": True,
+        "thirdparty": "only",
         "force": True,
     }
     if timeout:
@@ -279,12 +287,21 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
 
     process.add_job(**props)
 
-    status, _ = process.prepare()
+    prepared = process.prepare()
+    status = prepared[0] if isinstance(prepared, tuple) else prepared
     if not status.ok:
+        if "tpc not supported" in status.message.lower():
+            raise NotImplementedError(status.message)
         raise OSError(f"XRootD TPC prepare failed: {status.message}")
 
-    status, results = process.run()
+    completed = process.run()
+    if isinstance(completed, tuple):
+        status, results = completed
+    else:
+        status, results = completed, None
     if not status.ok:
+        if "tpc not supported" in status.message.lower():
+            raise NotImplementedError(status.message)
         raise OSError(f"XRootD TPC failed: {status.message}")
 
     # Check individual job results
@@ -292,6 +309,8 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
         for r in results:
             job_status = getattr(r, "status", None)
             if job_status is not None and not job_status.ok:
+                if "tpc not supported" in job_status.message.lower():
+                    raise NotImplementedError(job_status.message)
                 raise OSError(f"XRootD TPC job failed: {job_status.message}")
 
     return True

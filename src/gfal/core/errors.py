@@ -91,3 +91,15 @@ class GfalTimeoutError(GfalError):
 
     def __init__(self, message: str):
         super().__init__(message, errno.ETIMEDOUT)
+
+
+class GfalPartialFailureError(GfalError):
+    """Raised when a multi-item operation reports child failures individually."""
+
+    def __init__(self, message: str, failures: list[Exception]):
+        first = failures[0] if failures else None
+        code = getattr(first, "errno", None) or errno.EIO
+        super().__init__(message, code)
+        self.failures = failures
+        self.first_error = first
+        self.already_reported = True

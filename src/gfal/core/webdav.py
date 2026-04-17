@@ -14,11 +14,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import queue
 import re
 import ssl
 import stat as stat_module
 import tempfile
 import threading
+import warnings
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse, urlunparse
@@ -134,6 +136,101 @@ class _SyncAiohttpResponse:
         for line in self.content.splitlines():
             yield line.decode("utf-8", "replace") if decode_unicode else line
 
+    def close(self) -> None:
+        return None
+
+
+_STREAM_EOF = object()
+
+
+def _should_suppress_loop_exception(context: dict[str, Any]) -> bool:
+    """Return True for benign aiohttp connection-lost future warnings.
+
+    aiohttp may leave behind a finished future with a connection-level
+    exception after a request has already effectively completed.  For large
+    streamed PUT uploads against EOS this shows up as:
+
+    ``Future exception was never retrieved`` / ``Connection lost``
+
+    on the private background loop used by the synchronous WebDAV adapter.
+    The copy layer already inspects the write result and destination size to
+    decide whether that late disconnect is a real error, so emitting the loop
+    warning only adds noise and can make the CLI feel hung.
+    """
+
+    if context.get("message") != "Future exception was never retrieved":
+        return False
+
+    exc = context.get("exception")
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(
+            exc,
+            (
+                ConnectionError,
+                BrokenPipeError,
+                ConnectionResetError,
+                aiohttp.ClientConnectionError,
+            ),
+        ):
+            return True
+        exc = exc.__cause__ or exc.__context__
+
+    return False
+
+
+class _StreamingAiohttpResponse:
+    """Requests-like response wrapper backed by a streaming aiohttp body."""
+
+    def __init__(
+        self,
+        *,
+        method: str,
+        url: str,
+        status_code: int,
+        headers: dict[str, str],
+        body_queue: queue.Queue[object],
+        completion_future,
+    ) -> None:
+        self.method = method
+        self.url = url
+        self.status_code = status_code
+        self.headers = headers
+        self._body_queue = body_queue
+        self._completion_future = completion_future
+        self._closed = False
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise HttpStatusError(self.status_code, self.url, self.headers)
+
+    def iter_lines(self, decode_unicode: bool = False):
+        pending = b""
+        while True:
+            item = self._body_queue.get()
+            if item is _STREAM_EOF:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            pending += item
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                line = line.rstrip(b"\r")
+                yield line.decode("utf-8", "replace") if decode_unicode else line
+
+        if pending:
+            yield pending.decode("utf-8", "replace") if decode_unicode else pending
+
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        with contextlib.suppress(Exception):
+            self._completion_future.result()
+
 
 class _SyncAiohttpSession:
     """Small synchronous wrapper around aiohttp for the sync WebDAV code paths."""
@@ -165,6 +262,13 @@ class _SyncAiohttpSession:
         def _runner() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            loop.set_exception_handler(
+                lambda current_loop, context: (
+                    None
+                    if _should_suppress_loop_exception(context)
+                    else current_loop.default_exception_handler(context)
+                )
+            )
             self._loop = loop
             ready.set()
             loop.run_forever()
@@ -179,6 +283,32 @@ class _SyncAiohttpSession:
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result()
+
+    def _make_connector(self) -> aiohttp.TCPConnector:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The ssl_shutdown_timeout parameter is deprecated",
+                category=DeprecationWarning,
+            )
+            return aiohttp.TCPConnector(
+                ssl=self._ssl_context,
+                enable_cleanup_closed=True,
+                ssl_shutdown_timeout=0,
+            )
+
+    def _make_client_session(self, *, timeout):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The ssl_shutdown_timeout parameter is deprecated",
+                category=DeprecationWarning,
+            )
+            return aiohttp.ClientSession(
+                connector=self._make_connector(),
+                timeout=timeout,
+                ssl_shutdown_timeout=0,
+            )
 
     async def _request_async(
         self,
@@ -195,7 +325,6 @@ class _SyncAiohttpSession:
 
         attempts = 5 if method.upper() in _RETRY_METHODS else 1
         for attempt in range(attempts):
-            connector = aiohttp.TCPConnector(ssl=self._ssl_context)
             client_timeout = (
                 aiohttp.ClientTimeout(total=timeout)
                 if timeout is not None
@@ -203,27 +332,23 @@ class _SyncAiohttpSession:
                 if self._timeout is not None
                 else None
             )
+            session = self._make_client_session(timeout=client_timeout)
+            resp = None
             try:
-                async with (
-                    aiohttp.ClientSession(
-                        connector=connector,
-                        timeout=client_timeout,
-                    ) as session,
-                    session.request(
-                        method,
-                        url,
-                        headers=request_headers,
-                        data=data,
-                    ) as resp,
-                ):
-                    body = await resp.read()
-                    return _SyncAiohttpResponse(
-                        method=method.upper(),
-                        url=str(resp.url),
-                        status_code=resp.status,
-                        headers=dict(resp.headers),
-                        content=body,
-                    )
+                resp = await session.request(
+                    method,
+                    url,
+                    headers=request_headers,
+                    data=data,
+                )
+                body = await resp.read()
+                return _SyncAiohttpResponse(
+                    method=method.upper(),
+                    url=str(resp.url),
+                    status_code=resp.status,
+                    headers=dict(resp.headers),
+                    content=body,
+                )
             except asyncio.TimeoutError as e:
                 raise TimeoutError(url) from e
             except (
@@ -234,8 +359,105 @@ class _SyncAiohttpSession:
                 if attempt == attempts - 1:
                     raise
                 await asyncio.sleep((attempt + 1) * 0.5)
+            finally:
+                if resp is not None:
+                    with contextlib.suppress(Exception):
+                        resp.close()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
 
         raise RuntimeError("unreachable")
+
+    async def _request_stream_async(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: Any = None,
+        timeout: float | None = None,
+    ) -> _StreamingAiohttpResponse:
+        request_headers = dict(self.headers)
+        if headers:
+            request_headers.update(headers)
+
+        attempts = 5 if method.upper() in _RETRY_METHODS else 1
+        last_timeout = None
+        for attempt in range(attempts):
+            client_timeout = (
+                aiohttp.ClientTimeout(total=timeout)
+                if timeout is not None
+                else aiohttp.ClientTimeout(total=self._timeout)
+                if self._timeout is not None
+                else None
+            )
+
+            session = self._make_client_session(timeout=client_timeout)
+            try:
+                resp = await session.request(
+                    method,
+                    url,
+                    headers=request_headers,
+                    data=data,
+                )
+                break
+            except asyncio.TimeoutError as exc:
+                last_timeout = exc
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                if attempt == attempts - 1:
+                    raise TimeoutError(url) from exc
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientSSLError,
+                ssl.SSLError,
+            ):
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                if attempt == attempts - 1:
+                    raise
+                await asyncio.sleep((attempt + 1) * 0.5)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                raise
+        else:
+            if last_timeout is not None:
+                raise TimeoutError(url) from last_timeout
+            raise RuntimeError("unreachable")
+
+        body_queue: queue.Queue[object] = queue.Queue()
+
+        async def _pump_response() -> None:
+            try:
+                async for chunk in resp.content.iter_any():
+                    if chunk:
+                        body_queue.put(chunk)
+            except asyncio.TimeoutError as exc:
+                body_queue.put(TimeoutError(url))
+                del exc
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientPayloadError,
+                ssl.SSLError,
+            ) as exc:
+                body_queue.put(ConnectionError(str(exc) or "Connection lost"))
+            finally:
+                with contextlib.suppress(Exception):
+                    resp.close()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                body_queue.put(_STREAM_EOF)
+
+        completion_future = asyncio.create_task(_pump_response())
+        return _StreamingAiohttpResponse(
+            method=method.upper(),
+            url=str(resp.url),
+            status_code=resp.status,
+            headers=dict(resp.headers),
+            body_queue=body_queue,
+            completion_future=completion_future,
+        )
 
     def request(
         self,
@@ -246,8 +468,17 @@ class _SyncAiohttpSession:
         data: Any = None,
         timeout: float | None = None,
         stream: bool = False,
-    ) -> _SyncAiohttpResponse:
-        del stream
+    ) -> _SyncAiohttpResponse | _StreamingAiohttpResponse:
+        if stream:
+            return self._run(
+                self._request_stream_async(
+                    method,
+                    url,
+                    headers=headers,
+                    data=data,
+                    timeout=timeout,
+                )
+            )
         return self._run(
             self._request_async(
                 method,

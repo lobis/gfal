@@ -312,6 +312,11 @@ Use:
 ssh lxplus.cern.ch '<command>'
 ```
 
+For the `lobis-eos-dev` VM, use the local SSH alias plus ProxyJump:
+```bash
+ssh -J lxplus lobis-eos-dev
+```
+
 Never run `gfal bringonline`, `gfal archivepoll`, `gfal evict`, `gfal token`,
 `gfal cp`, `gfal rm`, `gfal mkdir`, `gfal chmod`, `gfal save`, `gfal rename`
 without explicit user confirmation, even with `--dry-run`.

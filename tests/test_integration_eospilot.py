@@ -29,11 +29,15 @@ Known stable public source file
   ADLER32 : 335e754f
 """
 
+import errno
 import hashlib
 import os
+import re
 import socket
+import subprocess
 import sys
 import textwrap
+import time
 import uuid
 import zlib
 from pathlib import Path
@@ -41,7 +45,13 @@ from pathlib import Path
 import pytest
 
 from conftest import CI, require_test_prereq
-from helpers import _docker_run_command, docker_available, run_gfal, run_gfal_docker
+from helpers import (
+    _docker_run_command,
+    _subprocess_env,
+    docker_available,
+    run_gfal,
+    run_gfal_docker,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
@@ -149,6 +159,92 @@ def _run(cmd, proxy_cert, *args, timeout=None):
     if timeout is not None:
         kwargs["timeout"] = timeout
     return run_gfal(cmd, "-E", proxy_cert, "--no-verify", *args, **kwargs)
+
+
+def _run_tty_gfal(cmd, *args, timeout=180, env=None):
+    """Run ``gfal`` attached to a PTY so Rich progress output is emitted."""
+    require_test_prereq(sys.platform != "win32", "PTY-based timing test needs POSIX")
+    import pty  # noqa: PLC0415
+
+    script = (
+        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
+        "from gfal.cli.shell import main; main()"
+    )
+    subprocess_env = _subprocess_env()
+    subprocess_env["GFAL_CLI_GFAL2"] = "0"
+    subprocess_env.setdefault("TERM", "xterm")
+    subprocess_env.setdefault("NO_COLOR", "1")
+    subprocess_env.setdefault("COLUMNS", "180")
+    if env is not None:
+        subprocess_env.update(env)
+
+    master_fd, slave_fd = pty.openpty()
+    started = time.monotonic()
+    proc = None
+    chunks = []
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, *[str(arg) for arg in args]],
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=subprocess_env,
+        )
+        os.close(slave_fd)
+        slave_fd = None
+        deadline = started + timeout
+
+        while True:
+            if time.monotonic() > deadline:
+                proc.kill()
+                raise AssertionError(
+                    f"PTY gfal helper timed out after {timeout}s: {cmd} {' '.join(map(str, args))}"
+                )
+            try:
+                chunk = os.read(master_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if proc.poll() is not None:
+                continue
+
+        rc = proc.wait(timeout=5)
+    finally:
+        if slave_fd is not None:
+            os.close(slave_fd)
+        os.close(master_fd)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    elapsed = time.monotonic() - started
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    return rc, output, elapsed
+
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_ELAPSED_RE = re.compile(r"\b(\d+):(\d{2}):(\d{2})\b")
+
+
+def _strip_ansi(text):
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def _extract_progress_elapsed_seconds(output, *, mode):
+    cleaned = _strip_ansi(output).replace("\r", "\n")
+    lines = [
+        line
+        for line in cleaned.splitlines()
+        if f"({mode})" in line and "[DONE]" in line
+    ]
+    assert lines, f"No completed {mode} progress line found in output:\n{cleaned}"
+    match = _ELAPSED_RE.search(lines[-1])
+    assert match is not None, f"No elapsed time found in line: {lines[-1]!r}"
+    hours, minutes, seconds = (int(part) for part in match.groups())
+    return (hours * 3600) + (minutes * 60) + seconds
 
 
 def _run_repo_gfal_docker_script(shell_script, proxy_cert):
@@ -386,6 +482,33 @@ class TestEosPilotStreamingCopy:
         rc, out, err = _run("stat", proxy_cert, dst)
         assert rc == 0, err
         assert str(len(data)) in out
+
+    def test_streamed_copy_wall_time_tracks_reported_progress(
+        self, proxy_cert, pilot_dir, tmp_path
+    ):
+        """Wall time for streamed uploads should stay close to the reported elapsed time."""
+        src = tmp_path / "stream_timing.bin"
+        with src.open("wb") as handle:
+            handle.truncate(512 * 1024 * 1024)
+        dst = f"{pilot_dir}/stream_timing.bin"
+
+        rc, out, elapsed = _run_tty_gfal(
+            "cp",
+            "-E",
+            proxy_cert,
+            "--no-verify",
+            "--copy-mode",
+            "streamed",
+            src.as_uri(),
+            dst,
+            timeout=180,
+        )
+
+        assert rc == 0, out
+        reported = _extract_progress_elapsed_seconds(out, mode="streamed")
+        assert abs(elapsed - reported) <= max(4.0, reported * 0.5), (
+            f"wall={elapsed:.2f}s reported={reported}s\n{_strip_ansi(out)}"
+        )
 
     def test_no_overwrite_without_force(self, proxy_cert, pilot_dir, tmp_path):
         """Without -f and no --compare, cp to an existing dst returns EEXIST (17).

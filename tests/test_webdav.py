@@ -8,6 +8,7 @@ No external network access is required.
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import socket
 import ssl
@@ -24,6 +25,7 @@ from gfal.core.webdav import (
     _http_fs_opts,
     _parse_propfind,
     _RequestsPutFile,
+    _should_suppress_loop_exception,
     _SyncAiohttpSession,
 )
 
@@ -352,6 +354,184 @@ class TestSyncAiohttpSession:
             "/tmp/usercert.pem", "/tmp/userkey.pem"
         )
         assert session.cert == ("/tmp/usercert.pem", "/tmp/userkey.pem")
+
+    def test_suppresses_connection_lost_future_warning(self):
+        err = ConnectionError("Connection lost")
+
+        assert _should_suppress_loop_exception(
+            {
+                "message": "Future exception was never retrieved",
+                "exception": err,
+            }
+        )
+
+    def test_does_not_suppress_other_future_warnings(self):
+        assert not _should_suppress_loop_exception(
+            {
+                "message": "Future exception was never retrieved",
+                "exception": RuntimeError("boom"),
+            }
+        )
+
+    def test_does_not_suppress_other_loop_messages(self):
+        assert not _should_suppress_loop_exception(
+            {
+                "message": "Unhandled exception in event loop",
+                "exception": ConnectionError("Connection lost"),
+            }
+        )
+
+    def test_request_async_times_out_session_close(self, monkeypatch):
+        class _FakeResponse:
+            status = 201
+            headers = {"Content-Length": "0"}
+            url = "https://example.org/file"
+
+            async def read(self):
+                return b""
+
+            def close(self):
+                return None
+
+        class _FakeSession:
+            def __init__(self):
+                self.closed = False
+                self.close_cancelled = False
+
+            async def request(self, method, url, headers=None, data=None):
+                return _FakeResponse()
+
+            async def close(self):
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    self.close_cancelled = True
+                    raise
+                finally:
+                    self.closed = True
+
+        fake_session = _FakeSession()
+        monkeypatch.setattr(
+            _SyncAiohttpSession,
+            "_make_client_session",
+            lambda self, timeout: fake_session,
+        )
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        started = time.monotonic()
+        resp = asyncio.run(
+            session._request_async("PUT", "https://example.org/file", data=b"payload")
+        )
+        elapsed = time.monotonic() - started
+
+        assert resp.status_code == 201
+        assert elapsed < 2.5
+        assert fake_session.closed is True
+        assert fake_session.close_cancelled is True
+
+    def test_make_client_session_uses_fast_ssl_shutdown(self, monkeypatch):
+        connector_calls = []
+        session_calls = []
+        connector_instance = None
+
+        class _FakeConnector:
+            pass
+
+        class _FakeSession:
+            pass
+
+        def _fake_connector(**kwargs):
+            nonlocal connector_instance
+            connector_calls.append(kwargs)
+            connector_instance = _FakeConnector()
+            return connector_instance
+
+        def _fake_session(**kwargs):
+            session_calls.append(kwargs)
+            return _FakeSession()
+
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.ClientSession", _fake_session)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        client_timeout = aiohttp.ClientTimeout(total=3)
+        created = session._make_client_session(timeout=client_timeout)
+
+        assert isinstance(created, _FakeSession)
+        assert connector_calls == [
+            {
+                "ssl": session._ssl_context,
+                "enable_cleanup_closed": True,
+                "ssl_shutdown_timeout": 0,
+            }
+        ]
+        assert session_calls == [
+            {
+                "connector": connector_instance,
+                "timeout": client_timeout,
+                "ssl_shutdown_timeout": 0,
+            }
+        ]
+
+    def test_request_stream_async_retries_connection_errors(self, monkeypatch):
+        class _FakeContent:
+            async def iter_any(self):
+                if False:
+                    yield b""
+
+        class _FakeResponse:
+            status = 202
+            headers = {"Content-Length": "0"}
+            url = "https://example.org/file"
+            content = _FakeContent()
+
+            def close(self):
+                return None
+
+        class _FakeSession:
+            def __init__(self, *, should_fail):
+                self.should_fail = should_fail
+                self.closed = False
+
+            async def request(self, method, url, headers=None, data=None):
+                del method, url, headers, data
+                if self.should_fail:
+                    raise aiohttp.ClientConnectionError("Connection lost")
+                return _FakeResponse()
+
+            async def close(self):
+                self.closed = True
+
+        sessions = []
+
+        def _make_session(self, timeout):
+            del self, timeout
+            session = _FakeSession(should_fail=len(sessions) < 2)
+            sessions.append(session)
+            return session
+
+        async def _fake_sleep(delay):
+            del delay
+            return None
+
+        monkeypatch.setattr(
+            _SyncAiohttpSession,
+            "_make_client_session",
+            _make_session,
+        )
+        monkeypatch.setattr("gfal.core.webdav.asyncio.sleep", _fake_sleep)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        response = session.request(
+            "COPY",
+            "https://example.org/file",
+            stream=True,
+        )
+
+        assert list(response.iter_lines()) == []
+        assert len(sessions) == 3
+        assert sessions[0].closed is True
+        assert sessions[1].closed is True
 
 
 # ---------------------------------------------------------------------------
