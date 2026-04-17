@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from helpers import run_gfal
 
@@ -19,16 +20,16 @@ def _env_flag(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class DeploymentConfig:
     name: str
-    http_writable_base: str | None
-    http_denied_base: str | None
+    http_writable_base: Optional[str]
+    http_denied_base: Optional[str]
     http_denied_markers: tuple[str, ...]
-    root_writable_base: str | None
-    root_denied_base: str | None
+    root_writable_base: Optional[str]
+    root_denied_base: Optional[str]
     root_denied_markers: tuple[str, ...]
     verify_ssl: bool
-    cert: str | None
-    key: str | None
-    proxy: str | None
+    cert: Optional[str]
+    key: Optional[str]
+    proxy: Optional[str]
     supports_listing: bool
 
     @property
@@ -40,7 +41,7 @@ class DeploymentConfig:
         return bool(self.root_writable_base)
 
 
-def load_deployment_config() -> DeploymentConfig | None:
+def load_deployment_config() -> Optional[DeploymentConfig]:
     http_writable = os.environ.get("GFAL_DEPLOYMENT_HTTP_WRITABLE_BASE")
     root_writable = os.environ.get("GFAL_DEPLOYMENT_ROOT_WRITABLE_BASE")
     if not http_writable and not root_writable:
@@ -90,7 +91,7 @@ def run_deployment_gfal(
     config: DeploymentConfig,
     cmd: str,
     *args: str,
-    stdin_data: str | None = None,
+    stdin_data: Optional[str] = None,
 ):
     cmd_args = []
     if config.cert:

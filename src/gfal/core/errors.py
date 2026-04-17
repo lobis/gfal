@@ -1,4 +1,5 @@
 import errno
+from typing import Optional
 
 
 def is_xrootd_not_found_message(message: str) -> bool:
@@ -45,7 +46,7 @@ def is_xrootd_permission_message(message: str) -> bool:
 class GfalError(OSError):
     """Base class for all library-specific exceptions."""
 
-    def __init__(self, message: str, code: int | None = None):
+    def __init__(self, message: str, code: Optional[int] = None):
         super().__init__(message)
         self.errno = code
 
