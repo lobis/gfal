@@ -27,7 +27,7 @@ from gfal.core.api import (
 from gfal.core.api import (
     tpc_applicable as _tpc_applicable,
 )
-from gfal.core.errors import GfalPartialFailureError
+from gfal.core.errors import GfalError, GfalPartialFailureError
 
 _make_hasher = core_api.make_hasher
 _update_hasher = core_api.update_hasher
@@ -529,6 +529,8 @@ class CommandCopy(base.CommandBase):
         pending = list(child_jobs)
 
         def _start_child(child_src_url, child_dst_url):
+            if self._cancel_event.is_set():
+                raise GfalError("Transfer cancelled", errno.ECANCELED)
             display = _TransferDisplay(
                 child_src_url,
                 child_dst_url,
@@ -551,10 +553,16 @@ class CommandCopy(base.CommandBase):
                 transfer_mode_callback=display.set_mode,
                 error_callback=self._child_error_callback,
                 traverse_callback=self._traverse_callback,
+                cancel_event=self._cancel_event,
             )
             active.append((child_src_url, child_dst_url, handle, display))
 
         while pending or active:
+            if self._cancel_event.is_set():
+                for _, _, active_handle, active_display in active:
+                    active_handle.cancel()
+                    active_display.finish(False)
+                raise GfalError("Transfer cancelled", errno.ECANCELED)
             while pending and len(active) < max_parallel:
                 child_src_url, child_dst_url = pending.pop(0)
                 _start_child(child_src_url, child_dst_url)
@@ -664,6 +672,7 @@ class CommandCopy(base.CommandBase):
                 transfer_mode_callback=display.set_mode,
                 error_callback=None if quiet else self._child_error_callback,
                 traverse_callback=None if quiet else self._traverse_callback,
+                cancel_event=self._cancel_event,
             )
             copy_failed = False
         finally:

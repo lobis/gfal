@@ -868,6 +868,7 @@ class TestCliUsesLibraryCopy:
         )
         assert callable(kwargs["progress_callback"])
         assert callable(kwargs["start_callback"])
+        assert kwargs["cancel_event"] is cmd._cancel_event
 
     def test_do_copy_with_compare_none_delegates_correct_options(self, tmp_path):
         """--compare none should be forwarded as CopyOptions(compare='none')."""
@@ -1100,6 +1101,8 @@ class TestCliUsesLibraryCopy:
 
         mock_copy.assert_not_called()
         mock_start_copy.assert_called_once()
+        _, kwargs = mock_start_copy.call_args
+        assert kwargs["cancel_event"] is cmd._cancel_event
 
 
 class TestTpcOnlyPreflight:

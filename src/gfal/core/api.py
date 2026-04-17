@@ -67,7 +67,7 @@ class CopyOptions:
     destination_space_token: str | None = None
     strict: bool = False
     streams: int | None = None
-    tpc: str = "never"
+    tpc: str = "auto"
     tpc_direction: str = "pull"
     recursive: bool = False
     abort_on_failure: bool = False
@@ -359,8 +359,10 @@ class AsyncGfalClient:
         transfer_mode_callback: TransferModeCallback = None,
         error_callback: ErrorCallback = None,
         traverse_callback: TraverseCallback = None,
+        cancel_event: threading.Event | None = None,
     ) -> TransferHandle:
-        cancel_event = threading.Event()
+        if cancel_event is None:
+            cancel_event = threading.Event()
         result_holder: dict[str, Any] = {}
         exc_holder: dict[str, BaseException] = {}
 
@@ -682,7 +684,6 @@ class AsyncGfalClient:
 
         tpc_supported = tpc_applicable(src_url, dst_url)
         explicit_tpc = options.tpc in {"auto", "only"} and tpc_supported
-        auto_tpc = options.tpc == "auto" and tpc_supported
         if explicit_tpc:
             tpc_dst_url = self._transfer_destination_url(dst_url, src_st, options)
             try:
@@ -720,8 +721,7 @@ class AsyncGfalClient:
                         f"Third-party copy required but not available: {e}"
                     ) from e
             except Exception:
-                if not auto_tpc:
-                    raise
+                raise
 
         self._copy_file(
             src_url,
@@ -1261,6 +1261,7 @@ class GfalClient:
         transfer_mode_callback: TransferModeCallback = None,
         error_callback: ErrorCallback = None,
         traverse_callback: TraverseCallback = None,
+        cancel_event: threading.Event | None = None,
     ) -> TransferHandle:
         return self._async_client.start_copy(
             src_url,
@@ -1272,6 +1273,7 @@ class GfalClient:
             transfer_mode_callback=transfer_mode_callback,
             error_callback=error_callback,
             traverse_callback=traverse_callback,
+            cancel_event=cancel_event,
         )
 
     def _map_error(self, e: Exception, url: str) -> GfalError:

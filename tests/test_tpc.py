@@ -657,6 +657,39 @@ class TestTpcStartCallback:
             )
 
         cb.assert_called_once()
+        mock_process.add_job.assert_called_once()
+        _, kwargs = mock_process.add_job.call_args
+        assert kwargs["thirdparty"] == "only"
+
+    def test_xrootd_tpc_not_supported_raises_not_implemented(self):
+        xrd_status = MagicMock()
+        xrd_status.ok = False
+        xrd_status.message = "tpc not supported (destination)"
+
+        mock_process = MagicMock()
+        mock_process.prepare.return_value = xrd_status
+
+        mock_copy_process_cls = MagicMock(return_value=mock_process)
+        mock_xrd_client = MagicMock()
+        mock_xrd_client.CopyProcess = mock_copy_process_cls
+        mock_xrd_module = MagicMock()
+        mock_xrd_module.client = mock_xrd_client
+
+        import sys
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"XRootD": mock_xrd_module, "XRootD.client": mock_xrd_client},
+            ),
+            pytest.raises(NotImplementedError, match="tpc not supported"),
+        ):
+            tpc_mod._xrootd_tpc(
+                "root://a.example.com//file",
+                "root://b.example.com//file",
+                timeout=None,
+                verbose=False,
+            )
 
     def test_http_tpc_invokes_start_callback(self):
         session = MagicMock()

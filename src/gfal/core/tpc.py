@@ -279,7 +279,7 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
     props = {
         "source": src_url,
         "target": dst_url,
-        "thirdparty": True,
+        "thirdparty": "only",
         "force": True,
     }
     if timeout:
@@ -287,12 +287,21 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
 
     process.add_job(**props)
 
-    status, _ = process.prepare()
+    prepared = process.prepare()
+    status = prepared[0] if isinstance(prepared, tuple) else prepared
     if not status.ok:
+        if "tpc not supported" in status.message.lower():
+            raise NotImplementedError(status.message)
         raise OSError(f"XRootD TPC prepare failed: {status.message}")
 
-    status, results = process.run()
+    completed = process.run()
+    if isinstance(completed, tuple):
+        status, results = completed
+    else:
+        status, results = completed, None
     if not status.ok:
+        if "tpc not supported" in status.message.lower():
+            raise NotImplementedError(status.message)
         raise OSError(f"XRootD TPC failed: {status.message}")
 
     # Check individual job results
@@ -300,6 +309,8 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
         for r in results:
             job_status = getattr(r, "status", None)
             if job_status is not None and not job_status.ok:
+                if "tpc not supported" in job_status.message.lower():
+                    raise NotImplementedError(job_status.message)
                 raise OSError(f"XRootD TPC job failed: {job_status.message}")
 
     return True

@@ -343,19 +343,18 @@ class _SyncAiohttpSession:
                         body_queue.put(chunk)
             except asyncio.TimeoutError as exc:
                 body_queue.put(TimeoutError(url))
-                raise TimeoutError(url) from exc
+                del exc
             except (
                 aiohttp.ClientConnectionError,
                 aiohttp.ClientPayloadError,
                 ssl.SSLError,
             ) as exc:
                 body_queue.put(ConnectionError(str(exc) or "Connection lost"))
-                raise
             finally:
                 with contextlib.suppress(Exception):
                     resp.close()
                 with contextlib.suppress(Exception):
-                    await session.close()
+                    await asyncio.wait_for(session.close(), timeout=1)
                 body_queue.put(_STREAM_EOF)
 
         completion_future = asyncio.create_task(_pump_response())

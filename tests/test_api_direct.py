@@ -835,7 +835,11 @@ class TestGfalClientLibraryHelpers:
             return dst_fs, "/dst/file.txt"
 
         with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect):
-            client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="never"),
+            )
 
         assert dst_fs.size == 7
 
@@ -884,6 +888,79 @@ class TestGfalClientLibraryHelpers:
 
         assert started == [True]
         assert progress[-1] == 7
+
+    def test_copy_default_http_to_http_attempts_tpc(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch("gfal.core.tpc.do_tpc", return_value=True) as mock_tpc,
+        ):
+            client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
+
+        mock_tpc.assert_called_once()
+
+    def test_copy_auto_tpc_definitive_failure_does_not_fallback_to_streaming(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+            def open(self, path, mode):
+                raise AssertionError("Streaming fallback should not start")
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(FileNotFoundError("/dst/file.txt"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            patch(
+                "gfal.core.tpc.do_tpc",
+                side_effect=OSError("TPC pull failed definitively"),
+            ),
+            pytest.raises(GfalError, match="TPC pull failed definitively"),
+        ):
+            client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
 
     def test_transfer_destination_url_skips_remote_mtime_without_explicit_flag(self):
         client = GfalClient()
