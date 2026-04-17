@@ -122,7 +122,8 @@ jobs:
           ${{ runner.os }}-conda-eos-
     - uses: conda-incubator/setup-miniconda@v3
       with:
-        auto-activate-base: true
+        activate-environment: eos-integration
+        auto-activate-base: false
         channels: conda-forge
         channel-priority: strict
         miniforge-variant: Miniforge3
@@ -132,7 +133,7 @@ jobs:
     - name: Install dependencies
       shell: bash -el {0}
       run: |
-        conda install -y -n base -c conda-forge xrootd
+        conda install -y xrootd
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
         sudo apt-get update
