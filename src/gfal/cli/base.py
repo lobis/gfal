@@ -769,6 +769,18 @@ def _version_callback(ctx, param, value):
     ctx.exit()
 
 
+# Mapping from POSIX errno values to human-readable descriptions, used by
+# CommandBase._format_error() when an exception carries an errno but no strerror.
+_ERRNO_DESCRIPTIONS = {
+    errno.ENOENT: "No such file or directory",
+    errno.EACCES: "Permission denied",
+    errno.EEXIST: "File exists",
+    errno.EISDIR: "Is a directory",
+    errno.ENOTDIR: "Not a directory",
+    errno.ETIMEDOUT: "Operation timed out",
+}
+
+
 # ---------------------------------------------------------------------------
 # CommandBase
 # ---------------------------------------------------------------------------
@@ -987,15 +999,7 @@ class CommandBase:
         # "url: No such file or directory" instead of a bare URL.
         err_code = getattr(e, "errno", None)
         if isinstance(err_code, int) and isinstance(e, OSError):
-            _errno_descriptions = {
-                errno.ENOENT: "No such file or directory",
-                errno.EACCES: "Permission denied",
-                errno.EEXIST: "File exists",
-                errno.EISDIR: "Is a directory",
-                errno.ENOTDIR: "Not a directory",
-                errno.ETIMEDOUT: "Operation timed out",
-            }
-            desc = _errno_descriptions.get(err_code)
+            desc = _ERRNO_DESCRIPTIONS.get(err_code)
             if desc and desc not in msg:
                 return f"{path}: {desc}" if path else f"{msg}: {desc}"
         # SSL / connection errors from aiohttp (used by fsspec)

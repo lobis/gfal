@@ -1575,7 +1575,7 @@ class TestEosPilotXrootd:
         expected = f"{zlib.adler32(data) & 0xFFFFFFFF:08x}"
 
         dst = f"{xrootd_pilot_dir}/xrd_sum.txt"
-        rc, out, err = self._run("cp", proxy_cert, str(src), dst)
+        rc, out, err = self._run("cp", proxy_cert, src.as_uri(), dst)
         assert rc == 0, err
 
         rc, out, err = self._run("sum", proxy_cert, dst, "ADLER32")
