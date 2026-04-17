@@ -134,6 +134,9 @@ class RichProgress:
                     TransferSpeedColumn(),
                     TimeRemainingColumn(),
                     console=get_console(stderr=False),
+                    expand=True,
+                    transient=False,
+                    refresh_per_second=20,
                 ),
                 started=False,
                 active=0,
@@ -151,6 +154,7 @@ class RichProgress:
             self.task_id = manager.progress.add_task(self.label, total=None)
             manager.active += 1
             self._started_flag = True
+            manager.progress.refresh()
 
     def update(self, curr_size=None, total_size=None, rate=None, elapsed=None):
         manager = self._manager()
@@ -163,6 +167,7 @@ class RichProgress:
             if total_size is not None:
                 kwargs["total"] = total_size
             manager.progress.update(self.task_id, **kwargs)
+            manager.progress.refresh()
 
     def set_description(self, label):
         self.label = label
@@ -171,6 +176,7 @@ class RichProgress:
             if not self._started_flag:
                 return
             manager.progress.update(self.task_id, description=label)
+            manager.progress.refresh()
 
     def stop(self, success):
         manager = self._manager()
@@ -182,6 +188,8 @@ class RichProgress:
                 task = manager.progress.tasks[self.task_id]
                 if success and task.total is not None:
                     manager.progress.update(self.task_id, completed=task.total)
+                with contextlib.suppress(Exception):
+                    manager.progress.stop_task(self.task_id)
                 if success:
                     manager.progress.update(
                         self.task_id, description=f"{self.label} [green]\\[DONE][/]"
@@ -192,6 +200,7 @@ class RichProgress:
                     )
             except Exception:
                 pass
+            manager.progress.refresh()
             manager.active = max(0, manager.active - 1)
             if manager.started and manager.active == 0:
                 manager.progress.stop()
@@ -215,6 +224,7 @@ class RichSpinner:
             self.task_id = manager.progress.add_task(self.label, total=None)
             manager.active += 1
             self._started_flag = True
+            manager.progress.refresh()
 
     def stop(self, success=True):
         del success
@@ -225,6 +235,7 @@ class RichSpinner:
             self._started_flag = False
             with contextlib.suppress(Exception):
                 manager.progress.remove_task(self.task_id)
+            manager.progress.refresh()
             manager.active = max(0, manager.active - 1)
             if manager.started and manager.active == 0:
                 manager.progress.stop()

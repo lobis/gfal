@@ -60,6 +60,7 @@ def _default_params(**kwargs):
         "tpc_only": False,
         "tpc_mode": "pull",
         "copy_mode": None,
+        "parallel": 5,
         "just_copy": False,
         "disable_cleanup": False,
         "no_delegation": False,
@@ -444,6 +445,19 @@ class TestExecuteCp:
         rc = cmd.execute_cp()
         assert rc == 0
         assert dst.read_bytes() == b"hello"
+
+    def test_copy_rejects_non_positive_parallel(self, tmp_path, capsys):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"hello")
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()], parallel=0)
+
+        rc = cmd.execute_cp()
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "--parallel must be at least 1" in err
 
     def test_copy_preserve_times_file(self, tmp_path):
         """Times are preserved by default (preserve_times=True is the default)."""
@@ -899,6 +913,42 @@ class TestCliUsesLibraryCopy:
         assert opts.preserve_times is True
         assert opts.preserve_times_explicit is True
         assert opts.tpc == "auto"
+
+    def test_build_copy_options_copy_mode_streamed_disables_tpc(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"], copy_mode="streamed")
+
+        opts = cmd._build_copy_options()
+
+        assert opts.tpc == "never"
+
+    def test_recursive_parallelism_defaults_to_five(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"])
+
+        assert cmd._recursive_parallelism("https://a", "https://b") == 5
+
+    def test_recursive_parallelism_uses_parallel_flag(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"], parallel=7)
+
+        assert cmd._recursive_parallelism("https://a", "https://b") == 7
+
+    def test_predicted_transfer_mode_uses_streaming_for_copy_mode_streamed(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src="https://src.example/file",
+            dst=["https://dst.example/file"],
+            copy_mode="streamed",
+        )
+
+        assert (
+            cmd._predicted_transfer_mode(
+                "https://src.example/file",
+                "https://dst.example/file",
+            )
+            == "streamed"
+        )
 
     def test_do_copy_non_tty_reports_tpc_mode(self, tmp_path, capsys):
         src = tmp_path / "src.txt"

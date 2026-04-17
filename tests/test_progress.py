@@ -1,6 +1,10 @@
 """Tests for gfal_cli.progress — Progress bar unit tests."""
 
+import threading
+from types import SimpleNamespace
+
 from gfal.cli.progress import LegacyProgress as Progress
+from gfal.cli.progress import RichProgress
 
 
 class TestProgressInit:
@@ -202,3 +206,58 @@ class TestProgressUpdateEdgeCases:
         p.update(curr_size=500, total_size=1000, elapsed=1.0)
         assert p.status["percentage"] == 50.0
         assert p.status["rate"] == 500.0
+
+
+class TestRichProgress:
+    def test_rich_progress_refreshes_on_updates_and_stop(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                task_id = len(self.tasks)
+                self.tasks.append(SimpleNamespace(total=total))
+                self.calls.append(("add_task", description, total))
+                return task_id
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+                task = self.tasks[task_id]
+                if "total" in kwargs:
+                    task.total = kwargs["total"]
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                self.calls.append(("stop_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt (TPC pull)")
+        progress.start()
+        progress.update(total_size=10)
+        progress.set_description("Copying example.txt (streamed)")
+        progress.stop(True)
+
+        assert ("refresh",) in backend.calls
+        assert ("stop_task", 0) in backend.calls
+        assert backend.calls[-1] == ("stop",)

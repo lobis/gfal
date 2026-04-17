@@ -35,8 +35,7 @@ _finalise_hasher = core_api.finalise_hasher
 _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
 
-_RECURSIVE_TPC_PARALLELISM = 4
-_RECURSIVE_STREAM_PARALLELISM = 2
+_DEFAULT_RECURSIVE_PARALLELISM = 5
 
 
 def _url_path_join(base_url, name):
@@ -46,7 +45,16 @@ def _url_path_join(base_url, name):
 
 
 class _TransferDisplay:
-    def __init__(self, src_url, dst_url, *, quiet=False, verbose=False, src_size=None):
+    def __init__(
+        self,
+        src_url,
+        dst_url,
+        *,
+        quiet=False,
+        verbose=False,
+        src_size=None,
+        transfer_mode=None,
+    ):
         self.src_url = src_url
         self.dst_url = dst_url
         self.quiet = quiet
@@ -56,7 +64,7 @@ class _TransferDisplay:
         self.progress_bar = None
         self.progress_started = False
         self.transfer_start = time.monotonic()
-        self.transfer_mode = None
+        self.transfer_mode = transfer_mode
         self._lock = threading.Lock()
 
     def _transfer_label(self):
@@ -169,6 +177,14 @@ class CommandCopy(base.CommandBase):
     )
     @base.arg(
         "-r", "--recursive", action="store_true", help="copy directories recursively"
+    )
+    @base.arg(
+        "--parallel",
+        type=int,
+        default=_DEFAULT_RECURSIVE_PARALLELISM,
+        metavar="N",
+        help="maximum number of concurrent child transfers during recursive copy "
+        f"(default: {_DEFAULT_RECURSIVE_PARALLELISM})",
     )
     @base.arg(
         "--preserve-times",
@@ -311,6 +327,9 @@ class CommandCopy(base.CommandBase):
         if self.params.from_file and self.params.src:
             sys.stderr.write("Cannot combine --from-file with a positional source\n")
             return 1
+        if self.params.parallel < 1:
+            sys.stderr.write(f"{self.prog}: --parallel must be at least 1\n")
+            return 1
 
         # --copy-mode overrides --tpc/--tpc-only/--tpc-mode for backwards compatibility
         if self.params.copy_mode is not None:
@@ -424,7 +443,9 @@ class CommandCopy(base.CommandBase):
             )
 
         tpc = "auto"
-        if getattr(self.params, "tpc_only", False):
+        if getattr(self.params, "copy_mode", None) == "streamed":
+            tpc = "never"
+        elif getattr(self.params, "tpc_only", False):
             tpc = "only"
         elif getattr(self.params, "tpc", False):
             tpc = "auto"
@@ -478,15 +499,23 @@ class CommandCopy(base.CommandBase):
             return
         print(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
 
+    def _predicted_transfer_mode(self, src_url, dst_url):
+        copy_options = self._build_copy_options()
+        if copy_options.tpc == "never":
+            return "streamed"
+        if not _tpc_applicable(src_url, dst_url):
+            return "streamed"
+        src_scheme = urlparse(src_url).scheme.lower()
+        dst_scheme = urlparse(dst_url).scheme.lower()
+        if src_scheme == "root" and dst_scheme == "root":
+            return "tpc-xrootd"
+        return f"tpc-{copy_options.tpc_direction}"
+
     def _recursive_parallelism(self, src_url, dst_url):
+        del src_url, dst_url
         if getattr(self.params, "abort_on_failure", False):
             return 1
-        copy_mode = getattr(self.params, "copy_mode", None)
-        if copy_mode == "streamed":
-            return _RECURSIVE_STREAM_PARALLELISM
-        if _tpc_applicable(src_url, dst_url):
-            return _RECURSIVE_TPC_PARALLELISM
-        return _RECURSIVE_STREAM_PARALLELISM
+        return max(1, getattr(self.params, "parallel", _DEFAULT_RECURSIVE_PARALLELISM))
 
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
@@ -536,6 +565,9 @@ class CommandCopy(base.CommandBase):
                 child_dst_url,
                 quiet=self._is_quiet(),
                 verbose=self.params.verbose,
+                transfer_mode=self._predicted_transfer_mode(
+                    child_src_url, child_dst_url
+                ),
             )
             if display.show_progress:
                 display.start()
@@ -653,6 +685,7 @@ class CommandCopy(base.CommandBase):
             dst_url,
             quiet=quiet,
             verbose=self.params.verbose,
+            transfer_mode=self._predicted_transfer_mode(src_url, dst_url),
         )
         if display.show_progress:
             display.start()
