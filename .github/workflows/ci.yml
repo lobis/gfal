@@ -947,8 +947,8 @@ jobs:
     - name: Index local conda channel
       shell: bash -el {0}
       run: |
-        conda install -y conda-build
-        conda index conda-dist
+        conda install -y conda-build conda-index
+        python -m conda_index conda-dist
     - name: Install local conda package
       shell: bash -el {0}
       run: conda install -y -c "file://${GITHUB_WORKSPACE}/conda-dist" -c conda-forge gfal
