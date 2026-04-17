@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 _DEFAULT_SUBPROCESS_TIMEOUT = int(os.environ.get("GFAL_TEST_SUBPROCESS_TIMEOUT", "30"))
 
@@ -101,7 +100,7 @@ def run_gfal(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _find_docker() -> Optional[str]:
+def _find_docker() -> str | None:
     """Return the path to the Docker binary, or None if not found."""
     for candidate in (
         "docker",
@@ -145,8 +144,8 @@ def docker_available() -> bool:
 def _docker_run_command(
     shell_script: str,
     *,
-    proxy_cert: Optional[str] = None,
-    input: Optional[str] = None,
+    proxy_cert: str | None = None,
+    input: str | None = None,
     timeout: int = 120,
 ):
     """Run a shell script inside the Docker test image."""
@@ -185,7 +184,7 @@ def _docker_run_command(
 
 
 def run_gfal_docker(
-    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+    cmd, *args, proxy_cert: str | None = None, input: str | None = None
 ):
     """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
 
@@ -212,19 +211,19 @@ def run_gfal_docker(
 
 
 def run_gfal2_docker(
-    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+    cmd, *args, proxy_cert: str | None = None, input: str | None = None
 ):
     """Run legacy ``gfal-<cmd>`` inside the Docker xrootd-cern-test container.
 
-    Alma's distro ``python3-gfal2`` bindings are built for Python 3.9 and crash
-    under the image's default Python 3 runtime. Force the legacy launcher
-    scripts to use Python 3.9 via ``GFAL_PYTHONBIN`` while keeping the new gfal
-    CLI on the image's default Python 3.
+    Alma's distro ``python3-gfal2`` bindings are built for the image's system
+    Python and crash under the image's default Python 3 runtime. Force the
+    legacy launcher scripts to use ``/usr/bin/python3`` via ``GFAL_PYTHONBIN``
+    while keeping the new gfal CLI on the image's default Python 3.
     """
     cmd_args = [str(a) for a in args]
     escaped = " ".join(f"'{a}'" for a in cmd_args)
     return _docker_run_command(
-        f"GFAL_PYTHONBIN=/usr/bin/python3.9 gfal-{cmd} {escaped}",
+        f"GFAL_PYTHONBIN=/usr/bin/python3 gfal-{cmd} {escaped}",
         proxy_cert=proxy_cert,
         input=input,
     )

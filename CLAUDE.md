@@ -357,9 +357,8 @@ assert "/tmp" in str(tree.path)
 assert Path(str(tree.path)).parts[-1] == "tmp"
 ```
 
-Similarly, never use `str | None` type unions in test files — use
-`Optional[str]` from `typing` instead, since CI still tests Python 3.9
-where PEP 604 unions are not supported at runtime.
+Similarly, avoid `str | None` type unions in test files unless the runtime
+floor for that code path clearly supports them everywhere the tests execute.
 
 ### Windows subprocess encoding
 

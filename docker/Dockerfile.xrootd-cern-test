@@ -16,7 +16,7 @@
 FROM almalinux:9
 
 # Install system dependencies.
-# python3.9 is kept for legacy gfal2-utils; the new gfal CLI runs on a Miniforge
+# The system Python is kept for legacy gfal2-utils; the new gfal CLI runs on a Miniforge
 # Python 3.11 environment installed below because conda-forge's xrootd builds
 # do not yet support Python 3.12+.
 RUN set -euxo pipefail \

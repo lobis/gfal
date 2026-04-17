@@ -9,7 +9,6 @@ For writable EOSPilot HTTPS operations, the new CLI follows the same native
 integration suite, while legacy gfal2-utils still run inside Docker.
 """
 
-from typing import Optional
 from uuid import uuid4
 
 import pytest
@@ -27,7 +26,7 @@ from test_integration_eospilot import _PILOT_BASE, _PUBSRC, _find_proxy
 pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 
-_LEGACY_PROBE_CACHE: Optional[tuple[bool, str]] = None
+_LEGACY_PROBE_CACHE: tuple[bool, str] | None = None
 
 
 def _legacy_gfal2_probe() -> tuple[bool, str]:
@@ -141,7 +140,7 @@ class TestLegacyGfal2Runtime:
         """Legacy gfal2-util gfal-copy does NOT preserve mtime by default."""
         _xfail_if_legacy_unusable()
         rc_old, old_preserved, err_old = _copy_preserves_mtime_in_docker(
-            "GFAL_PYTHONBIN=/usr/bin/python3.9 "
+            "GFAL_PYTHONBIN=/usr/bin/python3 "
             "gfal-copy file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         if rc_old != 0 and "gfal-copy: command not found" in err_old.lower():
@@ -168,7 +167,7 @@ class TestLegacyGfal2Runtime:
 
         _xfail_if_legacy_unusable()
         rc_old, err_old = _copy_existing_dst_error_in_docker(
-            "GFAL_PYTHONBIN=/usr/bin/python3.9 "
+            "GFAL_PYTHONBIN=/usr/bin/python3 "
             "gfal-copy file:///tmp/gfal-copy-src file:///tmp/gfal-copy-dst"
         )
         # Legacy also returns EEXIST
