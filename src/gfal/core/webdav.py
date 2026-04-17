@@ -796,7 +796,12 @@ class _RequestsPutFile(io.RawIOBase):
 class _StreamingRequestsPutFile(io.RawIOBase):
     """Write-only file object that streams data to an HTTP PUT request."""
 
-    def __init__(self, session, url: str, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        session,
+        url: str,
+        timeout: float | None = None,
+    ) -> None:
         self._session = session
         self._url = url
         self._timeout = timeout
@@ -827,7 +832,7 @@ class _StreamingRequestsPutFile(io.RawIOBase):
 
     def write(self, b) -> int:  # type: ignore[override]
         self._ensure_upload_started()
-        data = bytes(b)
+        data = b if isinstance(b, bytes) else bytes(b)
         while True:
             self._check_upload_result()
             try:

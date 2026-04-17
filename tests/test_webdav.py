@@ -413,6 +413,7 @@ class TestSyncAiohttpSession:
                 self.close_cancelled = False
 
             async def request(self, method, url, headers=None, data=None):
+                del method, url, headers, data
                 return _FakeResponse()
 
             async def close(self):
@@ -1221,13 +1222,37 @@ class TestWebDAVChecksum:
 
 
 class TestStreamingRequestsPutFile:
+    def test_streaming_writer_keeps_bytes_without_copy(self):
+        session = MagicMock()
+        upload_future: concurrent.futures.Future = concurrent.futures.Future()
+        response = MagicMock()
+        response.status_code = 201
+        response.headers = {}
+        upload_future.set_result(response)
+        session.request_upload_stream.return_value = upload_future
+
+        payload = b"payload"
+        writer = _StreamingRequestsPutFile(session, "https://example.org/file")
+        assert writer.write(payload) == len(payload)
+        writer.close()
+
+        body_queue = session.request_upload_stream.call_args.kwargs["body_queue"]
+        first_item = body_queue.get_nowait()
+        assert first_item is payload
+
     def test_write_starts_upload_before_close(self):
         first_chunk = threading.Event()
         upload_finished: concurrent.futures.Future = concurrent.futures.Future()
 
         class _Session:
             def request_upload_stream(
-                self, method, url, *, body_queue, timeout, headers=None
+                self,
+                method,
+                url,
+                *,
+                body_queue,
+                timeout,
+                headers=None,
             ):
                 del method, url, timeout, headers
 

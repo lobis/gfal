@@ -203,6 +203,10 @@ class _FakeDestinationFs:
     def open(self, path: str, mode: str):
         return _StreamingRequestsPutFile(self._session, path)
 
+    def open_stream_write(self, path: str, *, content_length: int | None = None):
+        del content_length
+        return _StreamingRequestsPutFile(self._session, path)
+
 
 class TestStreamingCopyRegression:
     def test_copy_loop_starts_http_upload_before_source_reaches_eof(
