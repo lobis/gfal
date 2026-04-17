@@ -38,6 +38,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -58,6 +60,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install package and test dependencies
       run: pip install --no-cache-dir ".[dev]"
     - name: Run unit and functional tests
@@ -76,6 +80,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
+    - name: Cache conda packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
     - uses: conda-incubator/setup-miniconda@v3
       with:
         activate-environment: xrootd-test
@@ -84,6 +93,8 @@ jobs:
         channel-priority: strict
         miniforge-variant: Miniforge3
         python-version: "3.12"
+        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        use-only-tar-bz2: true
     - name: Install XRootD runtime via conda
       shell: bash -el {0}
       run: conda install -y xrootd
@@ -106,6 +117,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -160,6 +173,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install local test dependencies
       run: pip install --no-cache-dir ".[dev]"
     - name: Install host proxy tooling
@@ -212,6 +227,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
 
     - name: Install local test dependencies
       run: |
@@ -759,6 +776,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.x"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install build dependencies
       run: python -m pip install build hatchling hatch-vcs
     - name: Build sdist and wheel
@@ -813,6 +832,11 @@ jobs:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
+    - name: Cache conda packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
     - uses: conda-incubator/setup-miniconda@v3
       with:
         activate-environment: conda-build
@@ -821,6 +845,8 @@ jobs:
         channel-priority: strict
         miniforge-variant: Miniforge3
         python-version: "3.12"
+        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        use-only-tar-bz2: true
     - name: Install conda build dependencies
       shell: bash -el {0}
       run: conda install -y conda-build anaconda-client hatchling hatch-vcs
@@ -893,6 +919,11 @@ jobs:
       with:
         name: conda-package-distributions
         path: conda-dist/noarch/
+    - name: Cache conda packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
     - uses: conda-incubator/setup-miniconda@v3
       with:
         activate-environment: conda-test
@@ -901,6 +932,8 @@ jobs:
         channel-priority: strict
         miniforge-variant: Miniforge3
         python-version: "3.12"
+        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        use-only-tar-bz2: true
     - name: Index local conda channel
       shell: bash -el {0}
       run: |
@@ -1026,6 +1059,11 @@ jobs:
       with:
         name: conda-package-distributions
         path: conda-dist/noarch/
+    - name: Cache conda packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
     - uses: conda-incubator/setup-miniconda@v3
       with:
         activate-environment: conda-publish
@@ -1034,6 +1072,8 @@ jobs:
         channel-priority: strict
         miniforge-variant: Miniforge3
         python-version: "3.12"
+        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        use-only-tar-bz2: true
     - name: Install upload client
       if: env.ANACONDA_API_TOKEN != ''
       shell: bash -el {0}
