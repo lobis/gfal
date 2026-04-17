@@ -2063,12 +2063,19 @@ class TestEosPilotCopyToStdout:
 @requires_proxy
 @requires_xrootd_env
 class TestEosPilotXrootdRecursiveCopy:
-    """Recursive copy (-r) tests over root:// to/from eospilot."""
+    """Recursive copy (-r) tests over root:// to/from eospilot.
+
+    NOTE: When Docker fallback is active, tmp_path-based file:// URIs are
+    accessible inside the container because _docker_run_command mounts
+    /tmp:/tmp (see helpers.py).
+    """
 
     def _run(self, cmd, proxy_cert, *args, **kwargs):
         if _xrootd_gsi_native():
             return run_gfal(cmd, *args, **kwargs)
-        return run_gfal_docker(cmd, *args, proxy_cert=proxy_cert)
+        # Forward timeout (and any other kwargs) so Docker runs respect the
+        # caller's settings instead of silently falling back to the default.
+        return run_gfal_docker(cmd, *args, proxy_cert=proxy_cert, **kwargs)
 
     @pytest.fixture
     def xrootd_pilot_dir(self, proxy_cert):

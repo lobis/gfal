@@ -200,7 +200,11 @@ def _docker_run_command(
 
 
 def run_gfal_docker(
-    cmd, *args, proxy_cert: Optional[str] = None, input: Optional[str] = None
+    cmd,
+    *args,
+    proxy_cert: Optional[str] = None,
+    input: Optional[str] = None,
+    timeout: int = 120,
 ):
     """Run ``gfal <cmd>`` inside the Docker xrootd-cern-test container.
 
@@ -223,7 +227,7 @@ def run_gfal_docker(
     cmd_args = [str(a) for a in args]
     escaped = " ".join(f"'{a}'" for a in cmd_args)
     return _docker_run_command(
-        f"{script} {escaped}", proxy_cert=proxy_cert, input=input
+        f"{script} {escaped}", proxy_cert=proxy_cert, input=input, timeout=timeout
     )
 
 
