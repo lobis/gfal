@@ -902,6 +902,78 @@ class TestCliUsesLibraryCopy:
         out = capsys.readouterr().out
         assert "TPC pull" in out
 
+    def test_do_copy_tty_tpc_progress_finishes_at_full_size(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+
+        class _FakeProgress:
+            def __init__(self, label):
+                self.label = label
+                self.calls = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def update(self, **kwargs):
+                self.calls.append(("update", kwargs))
+
+            def stop(self, success):
+                self.calls.append(("stop", success))
+
+        fake_instances = []
+
+        def _make_progress(label):
+            progress = _FakeProgress(label)
+            fake_instances.append(progress)
+            return progress
+
+        with (
+            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
+            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                FileNotFoundError(),
+                SimpleNamespace(st_size=5),
+            ]
+
+            def _copy_side_effect(*args, **kwargs):
+                kwargs["transfer_mode_callback"]("tpc-pull")
+                kwargs["start_callback"]()
+                kwargs["progress_callback"](3)
+
+            mock_client.copy.side_effect = _copy_side_effect
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert len(fake_instances) == 1
+        progress = fake_instances[0]
+        assert progress.label == "Copying src.txt (TPC pull)"
+        assert progress.calls[0] == ("update", {"total_size": 5})
+        assert progress.calls[1] == ("start",)
+        assert progress.calls[2] == (
+            "update",
+            {
+                "curr_size": 3,
+                "total_size": 5,
+                "elapsed": progress.calls[2][1]["elapsed"],
+            },
+        )
+        assert progress.calls[3] == (
+            "update",
+            {
+                "curr_size": 5,
+                "total_size": 5,
+                "elapsed": progress.calls[3][1]["elapsed"],
+            },
+        )
+        assert progress.calls[4] == ("stop", True)
+
 
 class TestTpcOnlyPreflight:
     def test_tpc_only_unsupported_pair_skips_destination_probe(self, tmp_path):
