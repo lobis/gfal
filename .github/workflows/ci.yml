@@ -869,7 +869,7 @@ jobs:
       run: |
         export PKG_VERSION="$(python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
-        conda build recipe --output-folder conda-dist
+        conda build --override-channels -c conda-forge recipe --output-folder conda-dist
     - name: Store conda package
       uses: actions/upload-artifact@v7
       with:
