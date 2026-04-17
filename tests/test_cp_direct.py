@@ -60,7 +60,7 @@ def _default_params(**kwargs):
         "tpc_only": False,
         "tpc_mode": "pull",
         "copy_mode": None,
-        "parallel": 5,
+        "parallel": 1,
         "just_copy": False,
         "disable_cleanup": False,
         "no_delegation": False,
@@ -922,11 +922,11 @@ class TestCliUsesLibraryCopy:
 
         assert opts.tpc == "never"
 
-    def test_recursive_parallelism_defaults_to_five(self):
+    def test_recursive_parallelism_defaults_to_sequential(self):
         cmd = _make_cmd()
         cmd.params = _default_params(src="src", dst=["dst"])
 
-        assert cmd._recursive_parallelism("https://a", "https://b") == 5
+        assert cmd._recursive_parallelism("https://a", "https://b") == 1
 
     def test_recursive_parallelism_uses_parallel_flag(self):
         cmd = _make_cmd()

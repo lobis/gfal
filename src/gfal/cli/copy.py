@@ -36,7 +36,7 @@ _finalise_hasher = core_api.finalise_hasher
 _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
 
-_DEFAULT_RECURSIVE_PARALLELISM = 5
+_DEFAULT_RECURSIVE_PARALLELISM = 1
 
 
 def _url_path_join(base_url, name):
