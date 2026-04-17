@@ -36,6 +36,21 @@ def Spinner(label):
     return RichSpinner(label)
 
 
+def print_live_message(message):
+    if is_gfal2_compat():
+        print(message)
+        return
+
+    manager = getattr(RichProgress, "_shared", None)
+    if manager is not None and getattr(manager, "started", False):
+        with manager.lock:
+            manager.progress.console.print(message, markup=False, highlight=False)
+            manager.progress.refresh()
+        return
+
+    print(message)
+
+
 class TuiProgress(Callback):
     """Callback that bridges fsspec's callback API to the TUI progress modal.
 
@@ -211,35 +226,23 @@ class RichSpinner:
     def __init__(self, label):
         self.label = label
         self._started_flag = False
-        self.task_id = None
+        self._status = None
 
     def start(self):
-        manager = RichProgress._manager()
-        with manager.lock:
-            if self._started_flag:
-                return
-            if not manager.started:
-                manager.progress.start()
-                manager.started = True
-            self.task_id = manager.progress.add_task(self.label, total=None)
-            manager.active += 1
-            self._started_flag = True
-            manager.progress.refresh()
+        if self._started_flag:
+            return
+        console = get_console(stderr=False)
+        self._status = console.status(self.label)
+        self._status.start()
+        self._started_flag = True
 
     def stop(self, success=True):
         del success
-        manager = RichProgress._manager()
-        with manager.lock:
-            if not self._started_flag:
-                return
-            self._started_flag = False
-            with contextlib.suppress(Exception):
-                manager.progress.remove_task(self.task_id)
-            manager.progress.refresh()
-            manager.active = max(0, manager.active - 1)
-            if manager.started and manager.active == 0:
-                manager.progress.stop()
-                manager.started = False
+        if not self._started_flag:
+            return
+        self._started_flag = False
+        with contextlib.suppress(Exception):
+            self._status.stop()
 
 
 class LegacyProgress:

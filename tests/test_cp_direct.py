@@ -950,6 +950,20 @@ class TestCliUsesLibraryCopy:
             == "streamed"
         )
 
+    def test_warn_copy_message_routes_skip_through_live_output(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"])
+
+        with patch("gfal.cli.copy.print_live_message") as mock_live_message:
+            cmd._warn_copy_message(
+                "Skipping existing file https://example.org/dst (matching size)",
+                "https://example.org/dst",
+            )
+
+        mock_live_message.assert_called_once_with(
+            "Skipping existing file https://example.org/dst (matching size)"
+        )
+
     def test_do_copy_non_tty_reports_tpc_mode(self, tmp_path, capsys):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"

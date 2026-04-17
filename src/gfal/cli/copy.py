@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
-from gfal.cli.progress import Progress, Spinner
+from gfal.cli.progress import Progress, Spinner, print_live_message
 from gfal.core import api as core_api
 from gfal.core import fs
 from gfal.core.api import (
@@ -481,7 +481,7 @@ class CommandCopy(base.CommandBase):
         if message.startswith("Skipping existing file ") or message.startswith(
             "Skipping directory "
         ):
-            print(message)
+            print_live_message(message)
             return
         normalized = fs.normalize_url(dst_url)
         scheme = urlparse(normalized).scheme.lower() or "unknown"
@@ -497,7 +497,7 @@ class CommandCopy(base.CommandBase):
     def _traverse_callback(self, dir_src_url, dir_dst_url):
         if self._is_quiet():
             return
-        print(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
+        print_live_message(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
 
     def _predicted_transfer_mode(self, src_url, dst_url):
         copy_options = self._build_copy_options()

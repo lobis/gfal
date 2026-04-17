@@ -4,7 +4,7 @@ import threading
 from types import SimpleNamespace
 
 from gfal.cli.progress import LegacyProgress as Progress
-from gfal.cli.progress import RichProgress
+from gfal.cli.progress import RichProgress, RichSpinner, print_live_message
 
 
 class TestProgressInit:
@@ -261,3 +261,60 @@ class TestRichProgress:
         assert ("refresh",) in backend.calls
         assert ("stop_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
+
+
+class TestRichSpinner:
+    def test_rich_spinner_uses_status_not_progress_rows(self, monkeypatch):
+        calls = []
+
+        class _FakeStatus:
+            def start(self):
+                calls.append(("start",))
+
+            def stop(self):
+                calls.append(("stop",))
+
+        class _FakeConsole:
+            def status(self, label):
+                calls.append(("status", label))
+                return _FakeStatus()
+
+        monkeypatch.setattr(
+            "gfal.cli.progress.get_console", lambda stderr=False: _FakeConsole()
+        )
+
+        spinner = RichSpinner("Scanning example")
+        spinner.start()
+        spinner.stop()
+
+        assert calls == [
+            ("status", "Scanning example"),
+            ("start",),
+            ("stop",),
+        ]
+
+
+class TestPrintLiveMessage:
+    def test_live_message_uses_active_progress_console(self, monkeypatch):
+        printed = []
+        refreshed = []
+
+        class _FakeConsole:
+            def print(self, message, markup=False, highlight=False):
+                printed.append((message, markup, highlight))
+
+        manager = SimpleNamespace(
+            lock=threading.Lock(),
+            progress=SimpleNamespace(
+                console=_FakeConsole(),
+                refresh=lambda: refreshed.append(True),
+            ),
+            started=True,
+            active=1,
+        )
+        monkeypatch.setattr(RichProgress, "_shared", manager, raising=False)
+
+        print_live_message("Skipping existing file dst")
+
+        assert printed == [("Skipping existing file dst", False, False)]
+        assert refreshed == [True]
