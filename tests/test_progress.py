@@ -268,6 +268,13 @@ class TestRichProgress:
         assert ("refresh",) in backend.calls
         assert ("stop_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
+        assert any(
+            call[0] == "update"
+            and call[1] == 0
+            and "final_elapsed" in call[2]
+            and call[2]["final_elapsed"]
+            for call in backend.calls
+        )
 
     def test_rich_progress_stop_marks_skipped(self, monkeypatch):
         class _FakeRichBackend:

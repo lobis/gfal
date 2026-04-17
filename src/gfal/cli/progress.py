@@ -22,6 +22,13 @@ from fsspec.callbacks import Callback
 from gfal.cli.base import get_console, is_gfal2_compat
 
 
+def _format_hms(total_seconds):
+    total_seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
 def Progress(label, tui_callback=None):
     if tui_callback:
         return TuiProgress(tui_callback)
@@ -124,6 +131,7 @@ class RichProgress:
         self.label = label
         self._started_flag = False
         self.task_id = None
+        self._started_at = None
 
     @classmethod
     def _manager(cls):
@@ -139,6 +147,14 @@ class RichProgress:
             from rich.progress import (
                 Progress as _RichProgress,
             )
+            from rich.text import Text
+
+            class _PinnedElapsedColumn(TimeElapsedColumn):
+                def render(self, task):
+                    final_elapsed = task.fields.get("final_elapsed")
+                    if final_elapsed:
+                        return Text(final_elapsed, style="progress.elapsed")
+                    return super().render(task)
 
             cls._shared = SimpleNamespace(
                 lock=threading.Lock(),
@@ -148,7 +164,7 @@ class RichProgress:
                     BarColumn(),
                     DownloadColumn(),
                     TransferSpeedColumn(),
-                    TimeElapsedColumn(),
+                    _PinnedElapsedColumn(),
                     console=get_console(stderr=False),
                     expand=True,
                     transient=False,
@@ -168,6 +184,7 @@ class RichProgress:
                 manager.progress.start()
                 manager.started = True
             self.task_id = manager.progress.add_task(self.label, total=None)
+            self._started_at = time.monotonic()
             manager.active += 1
             self._started_flag = True
             manager.progress.refresh()
@@ -202,8 +219,22 @@ class RichProgress:
             self._started_flag = False
             try:
                 task = manager.progress.tasks[self.task_id]
+                elapsed_text = (
+                    _format_hms(time.monotonic() - self._started_at)
+                    if self._started_at is not None
+                    else None
+                )
                 if success and task.total is not None:
-                    manager.progress.update(self.task_id, completed=task.total)
+                    manager.progress.update(
+                        self.task_id,
+                        completed=task.total,
+                        final_elapsed=elapsed_text,
+                    )
+                elif elapsed_text is not None and status != "skipped":
+                    manager.progress.update(
+                        self.task_id,
+                        final_elapsed=elapsed_text,
+                    )
                 with contextlib.suppress(Exception):
                     manager.progress.stop_task(self.task_id)
                 if status == "skipped":
@@ -222,6 +253,7 @@ class RichProgress:
             except Exception:
                 pass
             manager.progress.refresh()
+            self._started_at = None
             manager.active = max(0, manager.active - 1)
             if manager.started and manager.active == 0:
                 manager.progress.stop()
