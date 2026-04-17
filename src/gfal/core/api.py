@@ -1084,6 +1084,14 @@ class AsyncGfalClient:
         with contextlib.suppress(ImportError):
             import aiohttp as _aiohttp
 
+            if isinstance(e, _aiohttp.ClientSSLError):
+                return GfalError(msg, errno.EHOSTDOWN)
+            if isinstance(e, _aiohttp.ClientConnectionError):
+                ec = getattr(e, "errno", None) or errno.ECONNREFUSED
+                if isinstance(ec, int) and ec > 0:
+                    return GfalError(msg, ec)
+                return GfalError(msg, errno.ECONNREFUSED)
+
             cause: BaseException | None = e.__cause__ or e.__context__
             _seen: set[int] = set()
             while cause is not None and id(cause) not in _seen:

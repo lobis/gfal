@@ -473,6 +473,64 @@ class TestSyncAiohttpSession:
             }
         ]
 
+    def test_request_stream_async_retries_connection_errors(self, monkeypatch):
+        class _FakeContent:
+            async def iter_any(self):
+                if False:
+                    yield b""
+
+        class _FakeResponse:
+            status = 202
+            headers = {"Content-Length": "0"}
+            url = "https://example.org/file"
+            content = _FakeContent()
+
+            def close(self):
+                return None
+
+        class _FakeSession:
+            def __init__(self, *, should_fail):
+                self.should_fail = should_fail
+                self.closed = False
+
+            async def request(self, method, url, headers=None, data=None):
+                del method, url, headers, data
+                if self.should_fail:
+                    raise aiohttp.ClientConnectionError("Connection lost")
+                return _FakeResponse()
+
+            async def close(self):
+                self.closed = True
+
+        sessions = []
+
+        def _make_session(self, timeout):
+            del self, timeout
+            session = _FakeSession(should_fail=len(sessions) < 2)
+            sessions.append(session)
+            return session
+
+        async def _fake_sleep(delay):
+            del delay
+            return None
+
+        monkeypatch.setattr(
+            _SyncAiohttpSession,
+            "_make_client_session",
+            _make_session,
+        )
+        monkeypatch.setattr("gfal.core.webdav.asyncio.sleep", _fake_sleep)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        response = asyncio.run(
+            session._request_stream_async("COPY", "https://example.org/file")
+        )
+
+        assert list(response.iter_lines()) == []
+        assert len(sessions) == 3
+        assert sessions[0].closed is True
+        assert sessions[1].closed is True
+
 
 # ---------------------------------------------------------------------------
 # WebDAVFileSystem integration tests against mock server

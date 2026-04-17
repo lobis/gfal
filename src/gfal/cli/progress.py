@@ -127,6 +127,9 @@ class TuiProgress(Callback):
 
 
 class RichProgress:
+    _shared = None
+    _shared_init_lock = threading.Lock()
+
     def __init__(self, label):
         self.label = label
         self._started_flag = False
@@ -135,44 +138,46 @@ class RichProgress:
 
     @classmethod
     def _manager(cls):
-        if not hasattr(cls, "_shared"):
-            from rich.progress import (
-                BarColumn,
-                DownloadColumn,
-                SpinnerColumn,
-                TextColumn,
-                TimeElapsedColumn,
-                TransferSpeedColumn,
-            )
-            from rich.progress import (
-                Progress as _RichProgress,
-            )
-            from rich.text import Text
+        if cls._shared is None:
+            with cls._shared_init_lock:
+                if cls._shared is None:
+                    from rich.progress import (
+                        BarColumn,
+                        DownloadColumn,
+                        SpinnerColumn,
+                        TextColumn,
+                        TimeElapsedColumn,
+                        TransferSpeedColumn,
+                    )
+                    from rich.progress import (
+                        Progress as _RichProgress,
+                    )
+                    from rich.text import Text
 
-            class _PinnedElapsedColumn(TimeElapsedColumn):
-                def render(self, task):
-                    final_elapsed = task.fields.get("final_elapsed")
-                    if final_elapsed:
-                        return Text(final_elapsed, style="progress.elapsed")
-                    return super().render(task)
+                    class _PinnedElapsedColumn(TimeElapsedColumn):
+                        def render(self, task):
+                            final_elapsed = task.fields.get("final_elapsed")
+                            if final_elapsed:
+                                return Text(final_elapsed, style="progress.elapsed")
+                            return super().render(task)
 
-            cls._shared = SimpleNamespace(
-                lock=threading.Lock(),
-                progress=_RichProgress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    DownloadColumn(),
-                    TransferSpeedColumn(),
-                    _PinnedElapsedColumn(),
-                    console=get_console(stderr=False),
-                    expand=True,
-                    transient=False,
-                    refresh_per_second=20,
-                ),
-                started=False,
-                active=0,
-            )
+                    cls._shared = SimpleNamespace(
+                        lock=threading.Lock(),
+                        progress=_RichProgress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            DownloadColumn(),
+                            TransferSpeedColumn(),
+                            _PinnedElapsedColumn(),
+                            console=get_console(stderr=False),
+                            expand=True,
+                            transient=False,
+                            refresh_per_second=20,
+                        ),
+                        started=False,
+                        active=0,
+                    )
         return cls._shared
 
     def start(self):
@@ -217,7 +222,7 @@ class RichProgress:
             if not self._started_flag:
                 return
             self._started_flag = False
-            try:
+            with contextlib.suppress(IndexError, KeyError, AttributeError):
                 task = manager.progress.tasks[self.task_id]
                 elapsed_text = (
                     _format_hms(time.monotonic() - self._started_at)
@@ -250,8 +255,6 @@ class RichProgress:
                     manager.progress.update(
                         self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
                     )
-            except Exception:
-                pass
             manager.progress.refresh()
             self._started_at = None
             manager.active = max(0, manager.active - 1)

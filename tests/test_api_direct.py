@@ -6,10 +6,12 @@ collected in the pytest process.
 
 import errno
 import io
+import ssl
 import stat
 import sys
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -571,6 +573,24 @@ class TestGfalClientMapError:
         e.errno = 0
         result = self.client._map_error(e, "file:///test")
         assert result.errno == errno.EIO
+
+    def test_direct_aiohttp_ssl_error_maps_to_hostdown(self):
+        import aiohttp
+
+        conn_key = SimpleNamespace(host="example.com", port=443, ssl=False)
+        e = aiohttp.ClientSSLError(conn_key, ssl.SSLError("bad cert"))
+        result = self.client._map_error(e, "https://example.com/file")
+        assert isinstance(result, GfalError)
+        assert result.errno == errno.EHOSTDOWN
+
+    def test_direct_aiohttp_connection_error_maps_errno(self):
+        import aiohttp
+
+        e = aiohttp.ClientConnectionError("refused")
+        e.errno = errno.ECONNRESET
+        result = self.client._map_error(e, "https://example.com/file")
+        assert isinstance(result, GfalError)
+        assert result.errno == errno.ECONNRESET
 
 
 # ---------------------------------------------------------------------------

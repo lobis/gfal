@@ -8,6 +8,7 @@ import stat
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -504,7 +505,12 @@ class CommandCopy(base.CommandBase):
         sys.stderr.write(f"{self.prog}: warning: {message}\n")
 
     def _child_error_callback(self, _child_src_url, _child_dst_url, error):
+        self._reported_child_errors.add(self._child_error_key(error))
         self._print_error(error)
+
+    @staticmethod
+    def _child_error_key(error):
+        return (type(error), getattr(error, "errno", None), str(error))
 
     def _traverse_callback(self, dir_src_url, dir_dst_url):
         if self._is_quiet():
@@ -537,8 +543,9 @@ class CommandCopy(base.CommandBase):
 
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
+        self._reported_child_errors = set()
         src_fs, src_path = fs.url_to_fs(src_url, opts)
-        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+        _dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
 
         try:
             client.stat(dst_url)
@@ -553,7 +560,11 @@ class CommandCopy(base.CommandBase):
             scan_spinner.start()
         try:
             entries = src_fs.ls(src_path, detail=False)
-        finally:
+        except Exception:
+            if scan_spinner is not None:
+                scan_spinner.stop(False)
+            raise
+        else:
             if scan_spinner is not None:
                 scan_spinner.stop(True)
         child_jobs = []
@@ -573,7 +584,7 @@ class CommandCopy(base.CommandBase):
 
         active = []
         failures = []
-        pending = list(child_jobs)
+        pending = deque(child_jobs)
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -590,7 +601,9 @@ class CommandCopy(base.CommandBase):
             if display.show_progress:
                 display.start()
             with contextlib.suppress(Exception):
-                display.set_total_size(client.stat(child_src_url).st_size)
+                child_st = client.stat(child_src_url)
+                if not child_st.is_dir():
+                    display.set_total_size(child_st.st_size)
 
             def _handle_warn(msg, dst=child_dst_url, child_display=display):
                 if self._is_skip_message(msg):
@@ -620,7 +633,7 @@ class CommandCopy(base.CommandBase):
                     active_display.finish(False)
                 raise GfalError("Transfer cancelled", errno.ECANCELED)
             while pending and len(active) < max_parallel:
-                child_src_url, child_dst_url = pending.pop(0)
+                child_src_url, child_dst_url = pending.popleft()
                 _start_child(child_src_url, child_dst_url)
 
             completed_any = False
@@ -634,7 +647,8 @@ class CommandCopy(base.CommandBase):
                     display.finish(True)
                 except Exception as exc:
                     display.finish(False)
-                    self._print_error(exc)
+                    if self._child_error_key(exc) not in self._reported_child_errors:
+                        self._print_error(exc)
                     failures.append(exc)
                     if copy_options.abort_on_failure:
                         for _, _, active_handle, active_display in active:

@@ -381,26 +381,50 @@ class _SyncAiohttpSession:
         if headers:
             request_headers.update(headers)
 
-        client_timeout = (
-            aiohttp.ClientTimeout(total=timeout)
-            if timeout is not None
-            else aiohttp.ClientTimeout(total=self._timeout)
-            if self._timeout is not None
-            else None
-        )
-
-        session = self._make_client_session(timeout=client_timeout)
-
-        try:
-            resp = await session.request(
-                method,
-                url,
-                headers=request_headers,
-                data=data,
+        attempts = 5 if method.upper() in _RETRY_METHODS else 1
+        last_timeout = None
+        for attempt in range(attempts):
+            client_timeout = (
+                aiohttp.ClientTimeout(total=timeout)
+                if timeout is not None
+                else aiohttp.ClientTimeout(total=self._timeout)
+                if self._timeout is not None
+                else None
             )
-        except Exception:
-            await session.close()
-            raise
+
+            session = self._make_client_session(timeout=client_timeout)
+            try:
+                resp = await session.request(
+                    method,
+                    url,
+                    headers=request_headers,
+                    data=data,
+                )
+                break
+            except asyncio.TimeoutError as exc:
+                last_timeout = exc
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                if attempt == attempts - 1:
+                    raise TimeoutError(url) from exc
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientSSLError,
+                ssl.SSLError,
+            ):
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                if attempt == attempts - 1:
+                    raise
+                await asyncio.sleep((attempt + 1) * 0.5)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(session.close(), timeout=1)
+                raise
+        else:
+            if last_timeout is not None:
+                raise TimeoutError(url) from last_timeout
+            raise RuntimeError("unreachable")
 
         body_queue: queue.Queue[object] = queue.Queue()
 
@@ -444,7 +468,7 @@ class _SyncAiohttpSession:
         data: Any = None,
         timeout: float | None = None,
         stream: bool = False,
-    ) -> _SyncAiohttpResponse:
+    ) -> _SyncAiohttpResponse | _StreamingAiohttpResponse:
         if stream:
             return self._run(
                 self._request_stream_async(
