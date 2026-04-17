@@ -168,13 +168,15 @@ def _docker_run_command(
     env_args = []
 
     if proxy and Path(proxy).is_file():
-        # When /tmp is already mounted, the proxy at /tmp/x509proxy is
-        # automatically available.  For proxies outside /tmp, add an
-        # explicit mount.
         proxy_path = Path(proxy).resolve()
-        if not str(proxy_path).startswith("/tmp/"):
+        if str(proxy_path).startswith("/tmp/"):
+            # /tmp is already bind-mounted — the proxy is visible at its
+            # original host path inside the container.
+            env_args += ["-e", f"X509_USER_PROXY={proxy_path}"]
+        else:
+            # Proxy lives outside /tmp: add an explicit bind mount.
             volume_args += ["-v", f"{proxy}:/tmp/x509proxy:ro"]
-        env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
+            env_args += ["-e", "X509_USER_PROXY=/tmp/x509proxy"]
 
     proc = subprocess.run(
         [
