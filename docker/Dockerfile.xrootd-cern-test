@@ -82,12 +82,13 @@ RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Mi
          "aiohttp>=3.8.0" \
          "click>=8.0.0" \
          "fsspec>=2023.1.0" \
-         "fsspec-xrootd>=0.5.3" \
          "rich>=13.0.0" \
+         "rich-click>=1.7.0" \
          truststore \
          "urllib3>=2.0.0" \
          xrootd \
     && /opt/conda/bin/python -m pip install --no-cache-dir --upgrade pip \
+    && /opt/conda/bin/python -m pip install --no-cache-dir "fsspec-xrootd>=0.5.2" \
     && /opt/conda/bin/conda clean -afy
 
 # Make the Miniforge Python 3.12 runtime the default for the new gfal CLI.

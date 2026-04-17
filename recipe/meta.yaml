@@ -26,10 +26,9 @@ requirements:
     - aiohttp >=3.8.0
     - click >=8.0.0
     - fsspec >=2023.1.0
-    - fsspec-xrootd >=0.5.1  # [py==39]
-    - fsspec-xrootd >=0.5.3  # [py>=310]
     - python >=3.9
     - rich >=13.0.0
+    - rich-click >=1.7.0
     - truststore  # [py>=310]
     - urllib3 >=2.0.0
     - xrootd >=5.9.2
@@ -37,11 +36,11 @@ requirements:
 test:
   imports:
     - XRootD
-    - fsspec_xrootd
     - gfal
+    - rich_click
   commands:
     - gfal --help
-    - python -c "from XRootD import client; import fsspec_xrootd; import gfal"
+    - python -c "from XRootD import client; import gfal; import rich_click"
   requires:
     - pip
 
