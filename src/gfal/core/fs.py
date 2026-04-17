@@ -390,7 +390,7 @@ def xrootd_ls_enrich(fso, path):
         is_dir = bool(flags & StatInfoFlags.IS_DIR)
         entries.append(
             {
-                "name": path + "/" + item.name,
+                "name": path.rstrip("/") + "/" + item.name,
                 "size": item.statinfo.size,
                 "type": "directory" if is_dir else "file",
                 "mtime": item.statinfo.modtime,

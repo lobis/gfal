@@ -513,3 +513,46 @@ class TestBuildStorageOptionsBearerToken:
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         assert "bearer_token" not in opts
+
+
+class TestXrootdLsEnrichPathJoin:
+    """xrootd_ls_enrich() joins the listed path with each entry's name.
+    When the parent path already ends with '/' (as it does for absolute
+    XRootD paths like '/eos/dir/'), naive concatenation produces '//'
+    which is misinterpreted by XRootD-aware consumers."""
+
+    def test_trailing_slash_parent_does_not_double(self):
+        from unittest.mock import MagicMock
+
+        from gfal.core.fs import xrootd_ls_enrich
+
+        # Build a fake fso with a _myclient.dirlist() that returns one entry.
+        # Flags=0 → regular file.
+        statinfo = MagicMock(flags=0, size=42, modtime=1700000000)
+        item = MagicMock(name="entry", statinfo=statinfo)
+        item.name = "file.txt"
+        status = MagicMock(ok=True)
+        myclient = MagicMock()
+        myclient.dirlist.return_value = (status, [item])
+        fso = MagicMock(_myclient=myclient, timeout=30)
+
+        entries = xrootd_ls_enrich(fso, "/eos/dir/")
+        assert len(entries) == 1
+        # Must be exactly one slash between parent and child.
+        assert entries[0]["name"] == "/eos/dir/file.txt"
+
+    def test_no_trailing_slash_parent_still_joins(self):
+        from unittest.mock import MagicMock
+
+        from gfal.core.fs import xrootd_ls_enrich
+
+        statinfo = MagicMock(flags=0, size=0, modtime=0)
+        item = MagicMock(statinfo=statinfo)
+        item.name = "a.txt"
+        status = MagicMock(ok=True)
+        myclient = MagicMock()
+        myclient.dirlist.return_value = (status, [item])
+        fso = MagicMock(_myclient=myclient, timeout=30)
+
+        entries = xrootd_ls_enrich(fso, "/eos/dir")
+        assert entries[0]["name"] == "/eos/dir/a.txt"

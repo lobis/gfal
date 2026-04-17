@@ -969,3 +969,67 @@ class TestWebDAVChecksum:
 
         with pytest.raises(NotImplementedError):
             fs.checksum("https://server/file", "adler32")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for error-mapping / makedirs / href decoding
+# ---------------------------------------------------------------------------
+
+
+class TestWebDAVMvErrorMapping:
+    """MOVE on a missing source should surface as FileNotFoundError, not
+    a generic HttpStatusError — so the CLI's error-formatting layer can
+    emit a POSIX-style message."""
+
+    def test_mv_missing_source_raises_file_not_found(self, dav_server):
+        fs = WebDAVFileSystem()
+        with pytest.raises(FileNotFoundError):
+            fs.mv(dav_server + "/ghost.txt", dav_server + "/new.txt")
+
+
+class TestWebDAVMakedirsErrors:
+    """makedirs must fail loudly when the final MKCOL request fails; in
+    particular, creating a directory whose immediate parent doesn't exist
+    and which the server rejects with 409 must raise, not silently
+    succeed."""
+
+    def test_makedirs_final_component_exists_without_exist_ok(self, dav_server):
+        with _vfs_lock:
+            _vfs.add("/already/")
+        fs = WebDAVFileSystem()
+        with pytest.raises(FileExistsError):
+            fs.makedirs(dav_server + "/already")
+
+    def test_makedirs_final_component_exists_with_exist_ok_is_ok(self, dav_server):
+        with _vfs_lock:
+            _vfs.add("/already/")
+        fs = WebDAVFileSystem()
+        # Must not raise.
+        fs.makedirs(dav_server + "/already", exist_ok=True)
+
+
+class TestParsePropfindHrefDecoding:
+    """DAV hrefs are percent-encoded; the parser must decode them so that
+    downstream URL comparisons (self-entry filtering in ls()) succeed for
+    paths containing reserved characters like spaces."""
+
+    def test_percent_encoded_href_is_decoded(self):
+        xml = b"""\
+<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/my%20dir/file.txt</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:getcontentlength>10</D:getcontentlength>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+        entries = _parse_propfind(xml, "http://server/my dir/")
+        assert len(entries) == 1
+        # href must be decoded — no literal %20 in the stored name
+        assert "%20" not in entries[0]["name"]
+        assert entries[0]["name"].endswith("/my dir/file.txt")
