@@ -1,4 +1,4 @@
-# xrootd-cern-test — Alma Linux 9 image with CERN CAs + XRootD Python bindings
+# xrootd-cern-test — Alma Linux 10 image with CERN CAs + XRootD Python bindings
 #
 # Used by integration tests (TestEosPilotXrootd) that require GSI authentication
 # against eospilot.cern.ch via root://.  GSI auth needs CERN CA certificates in
@@ -13,7 +13,7 @@
 # The repo is mounted read-only at /repo at container run time (not baked in)
 # so that code changes are picked up without rebuilding the image.
 
-FROM almalinux:9
+FROM almalinux:10
 
 # Install system dependencies.
 # The system Python is kept for legacy gfal2-utils; the new gfal CLI runs on a Miniforge
