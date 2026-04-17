@@ -858,7 +858,7 @@ jobs:
         channels: conda-forge
         channel-priority: strict
         miniforge-variant: Miniforge3
-        python-version: "3.12"
+        python-version: "3.11"
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
         use-only-tar-bz2: true
     - name: Install conda build dependencies
