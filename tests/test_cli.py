@@ -13,7 +13,6 @@ that hasn't run ``pip install -e .``).
 import shutil
 import subprocess
 import sys
-from typing import Optional
 
 import pytest
 
@@ -24,7 +23,7 @@ from helpers import _subprocess_env
 # ---------------------------------------------------------------------------
 
 
-def _find_binary(cmd: str) -> Optional[str]:
+def _find_binary(cmd: str) -> str | None:
     """Locate the gfal binary, preferring the active venv over PATH.
 
     Using shutil.which() alone can pick up a system-installed binary whose
