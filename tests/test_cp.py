@@ -575,6 +575,22 @@ class TestCopyOverwrite:
         assert output.count("two.txt") == 1
         assert "Copy complete" in output
 
+    def test_single_file_tty_uses_rich_copy_summary(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        rc, output = _run_gfal_tty("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert "Source" in output
+        assert "Destination" in output
+        assert "Starting transfers" in output
+        assert "Copy complete" in output
+        assert "Copied  : 1 file" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+
     # --- -f / --force --------------------------------------------------------
 
     def test_force_overwrite_ignores_compare(self, tmp_path):

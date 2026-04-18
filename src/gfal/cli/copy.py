@@ -1031,6 +1031,50 @@ class CommandCopy(base.CommandBase):
         block.append(_short_elapsed_text(elapsed), style="bold")
         return block
 
+    def _render_single_final_summary(
+        self,
+        copied,
+        copied_bytes,
+        skipped,
+        failed,
+        elapsed,
+        *,
+        cancelled=False,
+    ):
+        block = Text()
+        block.append("\n")
+        if cancelled:
+            block.append("⚠ Copy interrupted", style="bold yellow")
+        else:
+            block.append("✓ Copy complete", style="bold green")
+        block.append("\n")
+        block.append("  Copied")
+        block.append("  : ", style="dim")
+        block.append(_file_count_text(copied), style="green")
+        if copied_bytes:
+            block.append("   ", style="dim")
+            block.append(_TransferDisplay._size_text(copied_bytes), style="green")
+        block.append("\n")
+        block.append("  Skipped")
+        block.append(" : ", style="dim")
+        if skipped:
+            block.append(_file_count_text(skipped), style="yellow")
+        else:
+            block.append("0", style="yellow")
+        block.append("\n")
+        block.append("  Failed")
+        block.append("  : ", style="dim")
+        block.append(_file_count_text(failed), style="red" if failed else "")
+        block.append("\n")
+        block.append("  Avg rate")
+        block.append(": ", style="dim")
+        block.append(_average_rate_text(copied_bytes, elapsed), style="bold")
+        block.append("\n")
+        block.append("  Elapsed")
+        block.append(" : ", style="dim")
+        block.append(_short_elapsed_text(elapsed), style="bold")
+        return block
+
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         recursive_start = time.monotonic()
         copy_options = self._build_copy_options()
@@ -1343,6 +1387,10 @@ class CommandCopy(base.CommandBase):
             return
 
         quiet = self._is_quiet()
+        rich_single_layout = self._use_recursive_rich_layout() and not quiet
+        if rich_single_layout:
+            print_live_message(self._render_recursive_intro(src_url, dst_url))
+            print_live_message(self._render_recursive_transfer_start())
         display = _TransferDisplay(
             src_url,
             dst_url,
@@ -1364,6 +1412,7 @@ class CommandCopy(base.CommandBase):
             self._warn_copy_message(message, dst_url)
 
         copy_failed = True
+        cancelled = False
         try:
             client.copy(
                 src_url,
@@ -1378,9 +1427,28 @@ class CommandCopy(base.CommandBase):
                 cancel_event=self._cancel_event,
             )
             copy_failed = False
+        except Exception as exc:
+            if exception_exit_code(exc) == errno.ECANCELED:
+                cancelled = True
+            raise
         finally:
             display.finish(not copy_failed)
-            if display.show_progress:
+            if rich_single_layout:
+                skipped = int(getattr(display, "final_status", None) == "skipped")
+                copied = int(not copy_failed and not skipped)
+                failed = int(copy_failed and not cancelled)
+                copied_bytes = display.src_size if copied and display.src_size else 0
+                print_live_message(
+                    self._render_single_final_summary(
+                        copied,
+                        copied_bytes,
+                        skipped,
+                        failed,
+                        time.monotonic() - display.transfer_start,
+                        cancelled=cancelled,
+                    )
+                )
+            elif display.show_progress:
                 print()
 
 
