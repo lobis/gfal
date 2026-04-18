@@ -380,7 +380,10 @@ def xrootd_ls_enrich(fso, path):
         return fso.ls(path, detail=True)
 
     timeout = getattr(fso, "timeout", 30)
-    status, deets = fso._myclient.dirlist(path, DirListFlags.STAT, timeout=timeout)
+    try:
+        status, deets = fso._myclient.dirlist(path, DirListFlags.STAT, timeout=timeout)
+    except Exception:
+        return fso.ls(path, detail=True)
     if not status.ok:
         return fso.ls(path, detail=True)
 
