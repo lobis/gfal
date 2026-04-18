@@ -721,6 +721,15 @@ class CommandCopy(base.CommandBase):
         updated["limited_to"] = len(limited)
         return limited, updated
 
+    @staticmethod
+    def _recursive_result_summary(copied, skipped, failed):
+        parts = [f"Recursive copy complete: {copied} copied"]
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        if failed:
+            parts.append(f"{failed} failed")
+        return ", ".join(parts)
+
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
         self._reported_child_errors = set()
@@ -782,6 +791,8 @@ class CommandCopy(base.CommandBase):
         active = []
         failures = []
         pending = deque(child_jobs)
+        copied_count = 0
+        skipped_count = 0
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -842,6 +853,10 @@ class CommandCopy(base.CommandBase):
                 try:
                     handle.wait()
                     display.finish(True)
+                    if getattr(display, "final_status", None) == "skipped":
+                        skipped_count += 1
+                    else:
+                        copied_count += 1
                 except Exception as exc:
                     display.finish(False)
                     if self._child_error_key(exc) not in self._reported_child_errors:
@@ -863,6 +878,15 @@ class CommandCopy(base.CommandBase):
             copy_options,
             lambda msg: self._warn_copy_message(msg, dst_url),
         )
+
+        if not self._is_quiet():
+            print_live_message(
+                self._recursive_result_summary(
+                    copied_count,
+                    skipped_count,
+                    len(failures),
+                )
+            )
 
         if failures:
             raise GfalPartialFailureError(

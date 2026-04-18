@@ -1205,6 +1205,10 @@ class TestCliUsesLibraryCopy:
             == "Recursive scan complete: 2 files, 1 queued to copy, 1 already present and likely skipped"
             for call in mock_live_message.call_args_list
         )
+        assert any(
+            call.args[0] == "Recursive copy complete: 2 copied"
+            for call in mock_live_message.call_args_list
+        )
 
     def test_recursive_limit_caps_started_children_and_summary(self, tmp_path):
         src = tmp_path / "srcdir"
@@ -1252,6 +1256,10 @@ class TestCliUsesLibraryCopy:
         assert any(
             call.args[0]
             == "Recursive scan complete: 3 files, 2 queued to copy, 0 already present and likely skipped (limited to 2)"
+            for call in mock_live_message.call_args_list
+        )
+        assert any(
+            call.args[0] == "Recursive copy complete: 2 copied"
             for call in mock_live_message.call_args_list
         )
 

@@ -434,6 +434,13 @@ class TestRecursivePrioritization:
         assert summary["limited_to"] == 2
         assert summary["queued_first"] == 2
 
+    def test_recursive_result_summary_includes_skips_and_failures(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_result_summary(2, 1, 3)
+
+        assert message == "Recursive copy complete: 2 copied, 1 skipped, 3 failed"
+
 
 # ===================================================================
 # copy.py: _predicted_transfer_mode
