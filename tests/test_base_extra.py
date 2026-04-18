@@ -657,6 +657,7 @@ class TestCommandBaseExecute:
 
         monkeypatch.delenv("X509_USER_PROXY", raising=False)
         monkeypatch.delenv("X509_USER_CERT", raising=False)
+        monkeypatch.delenv("X509_USER_KEY", raising=False)
         monkeypatch.setattr("gfal.cli.base._proxy_is_expired", lambda _path: True)
 
         already_existed = proxy_path.exists()
@@ -672,6 +673,8 @@ class TestCommandBaseExecute:
             rc = cmd.execute(func)
             assert rc == 0
             assert os.environ.get("X509_USER_PROXY") is None
+            assert os.environ.get("X509_USER_CERT") is None
+            assert os.environ.get("X509_USER_KEY") is None
         finally:
             if not already_existed:
                 with contextlib.suppress(OSError):

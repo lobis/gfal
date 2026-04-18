@@ -1128,7 +1128,7 @@ class CommandBase:
             # Auto-detect proxy at the standard location used by voms-proxy-init
             # (Unix only — os.getuid() is not available on Windows)
             default_proxy = Path(f"/tmp/x509up_u{os.getuid()}")
-            if default_proxy.exists() and not _proxy_is_expired(default_proxy):
+            if default_proxy.is_file() and not _proxy_is_expired(default_proxy):
                 os.environ["X509_USER_PROXY"] = str(default_proxy)
 
         self._setup_logger(
