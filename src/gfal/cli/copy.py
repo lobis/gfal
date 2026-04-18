@@ -772,15 +772,19 @@ class CommandCopy(base.CommandBase):
         return limited, updated
 
     @staticmethod
-    def _recursive_result_summary(copied, skipped, failed):
+    def _recursive_result_summary(copied, skipped, failed, elapsed=None):
         parts = [f"Recursive copy complete: {copied} copied"]
         if skipped:
             parts.append(f"{skipped} skipped")
         if failed:
             parts.append(f"{failed} failed")
+        if elapsed is not None:
+            elapsed_text = time.strftime("%H:%M:%S", time.gmtime(max(0.0, elapsed)))
+            parts.append(f"elapsed {elapsed_text}")
         return ", ".join(parts)
 
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
+        recursive_start = time.monotonic()
         copy_options = self._build_copy_options()
         self._reported_child_errors = set()
         src_fs, src_path = fs.url_to_fs(src_url, opts)
@@ -976,6 +980,7 @@ class CommandCopy(base.CommandBase):
                     copied_count,
                     skipped_count,
                     len(failures),
+                    time.monotonic() - recursive_start,
                 )
             )
 

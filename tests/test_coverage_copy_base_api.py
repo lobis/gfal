@@ -441,6 +441,16 @@ class TestRecursivePrioritization:
 
         assert message == "Recursive copy complete: 2 copied, 1 skipped, 3 failed"
 
+    def test_recursive_result_summary_includes_elapsed(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_result_summary(2, 1, 3, elapsed=65.2)
+
+        assert (
+            message
+            == "Recursive copy complete: 2 copied, 1 skipped, 3 failed, elapsed 00:01:05"
+        )
+
 
 # ===================================================================
 # copy.py: _predicted_transfer_mode

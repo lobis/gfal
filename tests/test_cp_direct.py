@@ -1203,7 +1203,8 @@ class TestCliUsesLibraryCopy:
         final_summary_index = next(
             index
             for index, event in enumerate(events)
-            if event == ("message", "Recursive copy complete: 2 copied")
+            if event[0] == "message"
+            and event[1].startswith("Recursive copy complete: 2 copied, elapsed ")
         )
         stop_index = next(
             index for index, event in enumerate(events) if event[0] == "stop"
@@ -1380,7 +1381,7 @@ class TestCliUsesLibraryCopy:
             for call in mock_live_message.call_args_list
         )
         assert any(
-            call.args[0] == "Recursive copy complete: 2 copied"
+            call.args[0].startswith("Recursive copy complete: 2 copied, elapsed ")
             for call in mock_live_message.call_args_list
         )
 
@@ -1433,7 +1434,7 @@ class TestCliUsesLibraryCopy:
             for call in mock_live_message.call_args_list
         )
         assert any(
-            call.args[0] == "Recursive copy complete: 2 copied"
+            call.args[0].startswith("Recursive copy complete: 2 copied, elapsed ")
             for call in mock_live_message.call_args_list
         )
 
