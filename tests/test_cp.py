@@ -1005,7 +1005,7 @@ class TestCopyFromFile:
         sources_file = tmp_path / "sources.txt"
         sources_file.write_text(f"{src1.as_uri()}\n{src2.as_uri()}\n")
 
-        rc, out, err = run_gfal(
+        rc, _out, _err = run_gfal(
             "cp", "--from-file", str(sources_file), "--limit", "1", dstdir.as_uri()
         )
 
@@ -1031,7 +1031,7 @@ class TestCopyFromFile:
         dst = tmp_path / "dst.txt"
         src.write_text("x")
 
-        rc, out, err = run_gfal("cp", "--limit", "0", src.as_uri(), dst.as_uri())
+        rc, _out, err = run_gfal("cp", "--limit", "0", src.as_uri(), dst.as_uri())
 
         assert rc != 0
         assert "--limit must be at least 1" in err

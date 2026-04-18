@@ -351,13 +351,21 @@ class RichProgress:
                         self.task_id,
                         final_elapsed=elapsed_text,
                     )
-                final_message = _final_status_text(self.label, success, status)
+                final_message = (
+                    _final_status_text(self.label, success, status)
+                    if _should_emit_live_final_message(success, status)
+                    else None
+                )
                 removed = False
                 remove_task = getattr(manager.progress, "remove_task", None)
                 if remove_task is not None:
                     with contextlib.suppress(Exception):
                         remove_task(self.task_id)
                         removed = True
+                console = getattr(manager.progress, "console", None)
+                if removed and console is not None and final_message is not None:
+                    with contextlib.suppress(Exception):
+                        console.print(final_message, markup=False, highlight=False)
                 if not removed:
                     with contextlib.suppress(Exception):
                         manager.progress.stop_task(self.task_id)
@@ -376,12 +384,6 @@ class RichProgress:
                             description=f"{self.label} [red]\\[FAILED][/]",
                         )
                 manager.progress.refresh()
-                console = getattr(manager.progress, "console", None)
-                if console is not None and _should_emit_live_final_message(
-                    success, status
-                ):
-                    with contextlib.suppress(Exception):
-                        console.print(final_message, markup=False, highlight=False)
             manager.progress.refresh()
             self._started_at = None
             manager.active = max(0, manager.active - 1)

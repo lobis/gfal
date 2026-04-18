@@ -406,9 +406,7 @@ class TestRichProgress:
         progress.start()
         progress.stop(True, status="skipped")
 
-        assert backend.printed == [
-            ("Copying example.txt [SKIPPED]", False, False),
-        ]
+        assert backend.printed == []
         assert (
             "update",
             0,
