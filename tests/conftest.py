@@ -30,7 +30,7 @@ _NETWORK_RERUNS_DELAY = 30  # seconds between retries
 def pytest_collection_modifyitems(items):
     """Add rerun-failure markers to all tests tagged with ``network``."""
     for item in items:
-        if item.get_closest_marker("network") and not item.get_closest_marker("flaky"):
+        if item.get_closest_marker("network"):
             item.add_marker(
                 pytest.mark.flaky(
                     reruns=_NETWORK_RERUNS, reruns_delay=_NETWORK_RERUNS_DELAY
