@@ -6,6 +6,7 @@ import contextlib
 import errno
 import logging
 import os
+import ssl
 import sys
 import time
 from importlib.metadata import PackageNotFoundError
@@ -135,6 +136,16 @@ def exception_exit_code(e: Exception) -> int:
         return errno.EACCES
 
     return 1
+
+
+def _proxy_is_expired(proxy_path: Path) -> bool:
+    """Return True when a parseable auto-detected proxy has expired."""
+    with contextlib.suppress(Exception):
+        cert_info = ssl._ssl._test_decode_cert(str(proxy_path))  # type: ignore[attr-defined]
+        not_after = cert_info.get("notAfter")
+        if not_after:
+            return ssl.cert_time_to_seconds(not_after) <= time.time()
+    return False
 
 
 try:
@@ -1117,7 +1128,7 @@ class CommandBase:
             # Auto-detect proxy at the standard location used by voms-proxy-init
             # (Unix only — os.getuid() is not available on Windows)
             default_proxy = Path(f"/tmp/x509up_u{os.getuid()}")
-            if default_proxy.exists():
+            if default_proxy.exists() and not _proxy_is_expired(default_proxy):
                 os.environ["X509_USER_PROXY"] = str(default_proxy)
 
         self._setup_logger(
