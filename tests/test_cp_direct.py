@@ -1118,7 +1118,7 @@ class TestCliUsesLibraryCopy:
         mock_progress.assert_not_called()
         assert mock_count_progress.call_args_list[0].args == ("Scanning files", 2)
         assert mock_count_progress.call_args_list[1].args == ("Copying files", 2)
-        assert mock_count_progress.call_args_list[1].kwargs == {"transient": False}
+        assert mock_count_progress.call_args_list[1].kwargs == {"transient": True}
         fake_scan_progress.start.assert_called_once()
         fake_copy_progress.start.assert_called_once()
         fake_scan_progress.stop.assert_called_once_with(True)
@@ -1193,7 +1193,7 @@ class TestCliUsesLibraryCopy:
 
         mock_progress.assert_not_called()
         assert mock_count_progress.call_args_list[1].args == ("Copying files", 2)
-        assert mock_count_progress.call_args_list[1].kwargs == {"transient": False}
+        assert mock_count_progress.call_args_list[1].kwargs == {"transient": True}
         fake_scan_progress.start.assert_called_once()
         fake_copy_progress.start.assert_called_once()
         fake_scan_progress.stop.assert_called_once_with(True)
@@ -1209,6 +1209,7 @@ class TestCliUsesLibraryCopy:
             for index, event in enumerate(events)
             if event[0] == "message" and "Copy complete" in str(event[1])
         )
+        assert str(events[final_summary_index][1]).startswith("\n✓ Copy complete")
         stop_index = next(
             index for index, event in enumerate(events) if event[0] == "copy-stop"
         )

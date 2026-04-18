@@ -957,6 +957,7 @@ class CommandCopy(base.CommandBase):
         skipped_total = matched + skipped
 
         block = Text()
+        block.append("\n")
         block.append("✓ Copy complete", style="bold green")
         block.append("\n")
         block.append("  Copied")
@@ -1099,7 +1100,7 @@ class CommandCopy(base.CommandBase):
             aggregate_progress = CountProgress(
                 "Copying files",
                 len(child_jobs),
-                transient=not rich_recursive_layout,
+                transient=rich_recursive_layout,
             )
             aggregate_progress.start()
 

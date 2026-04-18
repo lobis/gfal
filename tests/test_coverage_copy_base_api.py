@@ -507,7 +507,7 @@ class TestRecursivePrioritization:
         )
 
         output = str(renderable)
-        assert "Copy complete" in output
+        assert output.startswith("\n✓ Copy complete")
         assert "Copied  : 4 files" in output
         assert (
             "Skipped : 219 files matched by size during scan; 2 skipped during transfer"
