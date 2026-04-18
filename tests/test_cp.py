@@ -4,8 +4,10 @@ import errno
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import sys
+import textwrap
 import zlib
 
 import pytest
@@ -58,6 +60,75 @@ def _run_gfal_tty(*args):
                 continue
 
         rc = proc.wait(timeout=5)
+    finally:
+        if slave_fd is not None:
+            os.close(slave_fd)
+        os.close(master_fd)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    return rc, _ANSI_ESCAPE_RE.sub("", output)
+
+
+def _run_gfal_tty_with_sigint(*args, preamble="", interrupt_after=1.0, timeout=10):
+    """Run ``gfal`` in a PTY and send one SIGINT after ``interrupt_after`` seconds."""
+    if sys.platform == "win32":
+        pytest.skip("PTY-based progress test needs POSIX")
+
+    import pty
+
+    script = "\n".join(
+        [
+            "import sys",
+            textwrap.dedent(preamble).strip(),
+            "sys.argv=['gfal'] + sys.argv[1:]",
+            "from gfal.cli.shell import main",
+            "main()",
+        ]
+    )
+    env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
+
+    master_fd, slave_fd = pty.openpty()
+    proc = None
+    chunks = []
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, *[str(arg) for arg in args]],
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+        )
+        os.close(slave_fd)
+        slave_fd = None
+        sent_sigint = False
+        start = None
+
+        while True:
+            if start is None:
+                import time as _time
+
+                start = _time.monotonic()
+            if not sent_sigint:
+                import time as _time
+
+                if _time.monotonic() - start >= interrupt_after:
+                    proc.send_signal(signal.SIGINT)
+                    sent_sigint = True
+            try:
+                chunk = os.read(master_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if proc.poll() is not None:
+                continue
+
+        rc = proc.wait(timeout=timeout)
     finally:
         if slave_fd is not None:
             os.close(slave_fd)
@@ -590,6 +661,70 @@ class TestCopyOverwrite:
         assert "Copied  : 1 file" in output
         assert "Avg rate:" in output
         assert "Elapsed :" in output
+
+    def test_recursive_tty_sigint_shows_summary_and_exits_once(self, tmp_path):
+        srcdir = tmp_path / "src_interrupt"
+        dstdir = tmp_path / "dst_interrupt"
+        srcdir.mkdir()
+        (srcdir / "one.txt").write_text("one")
+        (srcdir / "two.txt").write_text("two")
+
+        preamble = """
+import errno
+import threading
+import time
+from gfal.core.errors import GfalError
+import gfal.cli.copy as copy_mod
+
+class _Handle:
+    def __init__(self, cancel_event):
+        self._cancel_event = cancel_event
+        self._done = False
+        def _runner():
+            while not cancel_event.is_set():
+                time.sleep(0.05)
+            self._done = True
+        self._thread = threading.Thread(target=_runner, daemon=True)
+        self._thread.start()
+
+    def done(self):
+        return self._done or not self._thread.is_alive()
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        if self._cancel_event.is_set():
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+        return None
+
+    def cancel(self):
+        self._cancel_event.set()
+
+def _start_copy(self, src_url, dst_url, **kwargs):
+    kwargs["transfer_mode_callback"]("tpc-pull")
+    kwargs["start_callback"]()
+    return _Handle(kwargs["cancel_event"])
+
+copy_mod.GfalClient.start_copy = _start_copy
+        """
+
+        rc, output = _run_gfal_tty_with_sigint(
+            "cp",
+            "-r",
+            "--parallel",
+            "5",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+            preamble=preamble,
+            interrupt_after=0.5,
+        )
+
+        assert rc != 0
+        assert "Copy interrupted" in output
+        assert "Copied  :" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+        assert "Transfer cancelled: Operation canceled" in output
+        assert "Interrupted" not in output
 
     # --- -f / --force --------------------------------------------------------
 

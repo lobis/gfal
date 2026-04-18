@@ -1163,4 +1163,8 @@ class CommandBase:
             finally:
                 with contextlib.suppress(Exception):
                     signal.signal(signal.SIGINT, original_handler)
+            with contextlib.suppress(Exception):
+                sys.stdout.flush()
+            with contextlib.suppress(Exception):
+                sys.stderr.flush()
             return self.return_code if self.return_code is not None else errno.EINTR
