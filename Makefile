@@ -3,8 +3,9 @@ NAME_DIST = gfal
 SPECFILE = $(NAME).spec
 DIST_DIR = dist
 RPMBUILD = $(shell pwd)/rpmbuild
+LXPLUS_HOST ?= lxplus
 
-.PHONY: all clean dist srpm rpm prepare badges
+.PHONY: all clean dist srpm rpm prepare badges deploy-lxplus
 
 badges:
 	python3 scripts/update_badge_counts.py
@@ -53,3 +54,31 @@ rpm: srpm
 		--define "_topdir $(RPMBUILD)" \
 		--define "pkg_version $${VERSION}" \
 		--define "pkg_release $${RELEASE:-1}"
+
+deploy-lxplus:
+	@set -e; \
+	BRANCH_NAME=$$(git rev-parse --abbrev-ref HEAD); \
+	BRANCH_SAFE=$$(printf '%s' "$$BRANCH_NAME" | tr '/:' '--'); \
+	REMOTE_DIR="tmp/$(NAME)-$$BRANCH_SAFE"; \
+	ssh "$(LXPLUS_HOST)" "mkdir -p \"\$$HOME/$$REMOTE_DIR\""; \
+	echo "Deploying $$BRANCH_NAME to $(LXPLUS_HOST):~/$$REMOTE_DIR"; \
+	rsync -az --delete \
+		--exclude '.venv' \
+		--exclude '.mypy_cache' \
+		--exclude '.pytest_cache' \
+		--exclude '.ruff_cache' \
+		--exclude 'dist' \
+		--exclude 'rpmbuild' \
+		./ "$(LXPLUS_HOST):$$REMOTE_DIR/"; \
+	ssh "$(LXPLUS_HOST)" "set -e; \
+		cd \"\$$HOME/$$REMOTE_DIR\"; \
+		python3 -m venv .venv; \
+		. .venv/bin/activate; \
+		python -m pip install --upgrade pip >/dev/null; \
+		python -m pip install -e .; \
+		python -c \"import gfal; print(gfal.__file__)\"; \
+		gfal version"; \
+	echo ""; \
+	echo "Environment ready on $(LXPLUS_HOST)."; \
+	echo "Load it with:"; \
+	echo "  ssh $(LXPLUS_HOST) 'cd \$$HOME/$$REMOTE_DIR && . .venv/bin/activate && exec \$$SHELL -l'"

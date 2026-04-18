@@ -49,6 +49,7 @@ def _default_params(**kwargs):
         "recursive": False,
         "preserve_times": True,
         "from_file": None,
+        "limit": None,
         "dry_run": False,
         "abort_on_failure": False,
         "transfer_timeout": 0,
@@ -207,7 +208,10 @@ class TestWarnCopyMessage:
         cmd = _make_cmd()
         cmd.params = _default_params(quiet=False)
         cmd._preserve_times_warned = set()
-        with patch("gfal.cli.copy.print_live_message") as mock_plm:
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=False),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
             cmd._warn_copy_message("Skipping existing file /foo", "file:///dst")
         mock_plm.assert_called_once()
 
@@ -215,9 +219,34 @@ class TestWarnCopyMessage:
         cmd = _make_cmd()
         cmd.params = _default_params(quiet=False)
         cmd._preserve_times_warned = set()
-        with patch("gfal.cli.copy.print_live_message") as mock_plm:
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=False),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
             cmd._warn_copy_message("Skipping directory /bar", "file:///dst")
         mock_plm.assert_called_once()
+
+    def test_skip_message_suppressed_when_live_progress_active(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(quiet=False)
+        cmd._preserve_times_warned = set()
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
+            cmd._warn_copy_message("Skipping existing file /foo", "file:///dst")
+        mock_plm.assert_not_called()
+
+    def test_non_skip_warning_uses_live_message_when_progress_active(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(quiet=False)
+        cmd._preserve_times_warned = set()
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
+            cmd._warn_copy_message("some warning", "file:///dst")
+        mock_plm.assert_called_once_with("gfal-cp: warning: some warning")
 
     def test_preserve_times_dedup_per_scheme(self, capsys):
         """Lines 499-505: preserve-times warning deduped by scheme."""
@@ -271,6 +300,222 @@ class TestTraverseCallback:
             cmd._traverse_callback("root://src/dir", "root://dst/dir")
         mock_plm.assert_called_once()
         assert "Scanning" in mock_plm.call_args[0][0]
+
+
+class TestRecursivePrioritization:
+    def test_missing_files_prioritized_for_compare_none(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("present.bin", "src://present.bin", "dst://present.bin", {"size": 1}),
+            ("missing.bin", "src://missing.bin", "dst://missing.bin", {"size": 1}),
+        ]
+        dst_entries = [{"name": "/dst/present.bin", "size": 1}]
+
+        jobs = cmd._prioritize_recursive_child_jobs(src_entries, dst_entries, "none")
+
+        assert jobs == [
+            ("src://missing.bin", "dst://missing.bin"),
+            ("src://present.bin", "dst://present.bin"),
+        ]
+
+    def test_size_compare_prioritizes_mismatches_before_equal_sizes(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("same.bin", "src://same.bin", "dst://same.bin", {"size": 4}),
+            ("diff.bin", "src://diff.bin", "dst://diff.bin", {"size": 8}),
+        ]
+        dst_entries = [
+            {"name": "/dst/same.bin", "size": 4},
+            {"name": "/dst/diff.bin", "size": 2},
+        ]
+
+        jobs = cmd._prioritize_recursive_child_jobs(src_entries, dst_entries, "size")
+
+        assert jobs == [
+            ("src://diff.bin", "dst://diff.bin"),
+            ("src://same.bin", "dst://same.bin"),
+        ]
+
+    def test_size_mtime_prioritizes_mismatches_before_matching_entries(self):
+        cmd = _make_cmd()
+        src_entries = [
+            (
+                "match.bin",
+                "src://match.bin",
+                "dst://match.bin",
+                {"size": 4, "mtime": 100.0},
+            ),
+            (
+                "stale.bin",
+                "src://stale.bin",
+                "dst://stale.bin",
+                {"size": 4, "mtime": 100.0},
+            ),
+        ]
+        dst_entries = [
+            {"name": "/dst/match.bin", "size": 4, "mtime": 100.0},
+            {"name": "/dst/stale.bin", "size": 4, "mtime": 90.0},
+        ]
+
+        jobs = cmd._prioritize_recursive_child_jobs(
+            src_entries, dst_entries, "size_mtime"
+        )
+
+        assert jobs == [
+            ("src://stale.bin", "dst://stale.bin"),
+            ("src://match.bin", "dst://match.bin"),
+        ]
+
+    def test_classify_recursive_jobs_reports_skip_summary_for_compare_none(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("present.bin", "src://present.bin", "dst://present.bin", {"size": 1}),
+            ("missing.bin", "src://missing.bin", "dst://missing.bin", {"size": 1}),
+        ]
+        dst_entries = [{"name": "/dst/present.bin", "size": 1}]
+
+        jobs, summary = cmd._classify_recursive_child_jobs(
+            src_entries, dst_entries, "none"
+        )
+
+        assert jobs == [
+            ("src://missing.bin", "dst://missing.bin"),
+            ("src://present.bin", "dst://present.bin"),
+        ]
+        assert summary == {
+            "total": 2,
+            "queued_first": 1,
+            "likely_skipped": 1,
+            "deferred_existing": 1,
+            "compare_mode": "none",
+        }
+
+    def test_recursive_scan_summary_formats_checksum_deferred_work(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_scan_summary(
+            {
+                "total": 5,
+                "queued_first": 2,
+                "likely_skipped": 0,
+                "deferred_existing": 3,
+                "compare_mode": "checksum",
+            }
+        )
+
+        assert (
+            message
+            == "Recursive scan complete: 5 files, 2 missing files queued first, 3 existing files deferred for checksum comparison"
+        )
+
+    def test_apply_job_limit_truncates_jobs_and_marks_summary(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(limit=2)
+
+        jobs, summary = cmd._apply_job_limit(
+            [
+                ("src://one", "dst://one"),
+                ("src://two", "dst://two"),
+                ("src://three", "dst://three"),
+            ],
+            {
+                "total": 3,
+                "queued_first": 3,
+                "likely_skipped": 0,
+                "deferred_existing": 0,
+                "compare_mode": "none",
+            },
+        )
+
+        assert jobs == [
+            ("src://one", "dst://one"),
+            ("src://two", "dst://two"),
+        ]
+        assert summary["limited_to"] == 2
+        assert summary["queued_first"] == 2
+
+    def test_recursive_result_summary_includes_skips_and_failures(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_result_summary(2, 1, 3)
+
+        assert message == "Recursive copy complete: 2 copied, 1 skipped, 3 failed"
+
+    def test_recursive_result_summary_includes_elapsed(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_result_summary(2, 1, 3, elapsed=65.2)
+
+        assert (
+            message
+            == "Recursive copy complete: 2 copied, 1 skipped, 3 failed, elapsed 00:01:05"
+        )
+
+    def test_render_recursive_scan_summary_shows_limit_and_scan_estimate(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_scan_summary(
+            {
+                "total": 45572,
+                "queued_first": 45353,
+                "likely_skipped": 219,
+                "deferred_existing": 0,
+                "compare_mode": "size",
+                "selected": 4,
+                "limited_to": 4,
+            }
+        )
+
+        output = str(renderable)
+        assert "Scan complete" in output
+        assert "Files discovered : 45,572" in output
+        assert "Eligible to copy : 45,353" in output
+        assert "Already up to date (size match) : 219 (scan estimate)" in output
+        assert "Copy limit applied : 4 files" in output
+        assert output.endswith("\n")
+
+    def test_render_recursive_intro_adds_visual_gap_before_scan_block(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_intro(
+            "https://example.org/src",
+            "https://example.org/dst",
+        )
+
+        output = str(renderable)
+        assert "Source      https://example.org/src" in output
+        assert "Destination https://example.org/dst" in output
+        assert output.endswith("\n")
+
+    def test_render_recursive_final_summary_promotes_skips(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_final_summary(
+            copied=4,
+            copied_bytes=4400000000,
+            skipped=2,
+            failed=1,
+            elapsed=28.0,
+            scan_summary={
+                "total": 45572,
+                "queued_first": 45353,
+                "likely_skipped": 219,
+                "deferred_existing": 0,
+                "compare_mode": "size",
+                "selected": 4,
+            },
+        )
+
+        output = str(renderable)
+        assert output.startswith("\n✓ Copy complete")
+        assert "Copied  : 4 files" in output
+        assert (
+            "Skipped : 219 files matched by size during scan; 2 skipped during transfer"
+            in output
+        )
+        assert "Failed  : 1 file" in output
+        assert "Avg rate: 149.9 MB/s" in output
+        assert "Elapsed : 28.0s" in output
 
 
 # ===================================================================

@@ -8,6 +8,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+from rich.text import Text
+
 try:
     import fcntl
     import termios
@@ -20,6 +22,36 @@ except ImportError:
 from fsspec.callbacks import Callback
 
 from gfal.cli.base import get_console, is_gfal2_compat
+
+
+def _format_binary_rate(rate):
+    if rate is None or rate <= 0:
+        return "?"
+    value = float(rate)
+    units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s", "PB/s"]
+    unit = units[0]
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B/s":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
+def _format_binary_size(size):
+    if size is None or size <= 0:
+        return "0 B"
+    value = float(size)
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    unit = units[0]
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
 
 
 def _format_hms(total_seconds):
@@ -37,25 +69,103 @@ def Progress(label, tui_callback=None):
     return RichProgress(label)
 
 
+def CountProgress(label, total, transient=True):
+    if is_gfal2_compat():
+        return LegacyCountProgress(label, total, transient=transient)
+    return RichCountProgress(label, total, transient=transient)
+
+
 def Spinner(label):
     if is_gfal2_compat():
         return LegacySpinner(label)
     return RichSpinner(label)
 
 
-def print_live_message(message):
+def _active_live_manager():
     if is_gfal2_compat():
-        print(message)
-        return
+        return None
 
-    manager = getattr(RichProgress, "_shared", None)
-    if manager is not None and getattr(manager, "started", False):
+    for progress_cls in (RichProgress, RichCountProgress):
+        shared = getattr(progress_cls, "_shared", None)
+        if isinstance(shared, dict):
+            for manager in shared.values():
+                if (
+                    manager is not None
+                    and getattr(manager, "started", False)
+                    and getattr(manager, "active", 0) > 0
+                ):
+                    return manager
+            continue
+        if (
+            shared is not None
+            and getattr(shared, "started", False)
+            and getattr(shared, "active", 0) > 0
+        ):
+            return shared
+    return None
+
+
+def print_live_message(message):
+    renderable = _status_renderable(message)
+    manager = _active_live_manager()
+    if manager is not None:
         with manager.lock:
-            manager.progress.console.print(message, markup=False, highlight=False)
+            if getattr(manager, "kind", None) == "count" and manager.started:
+                with contextlib.suppress(Exception):
+                    manager.progress.stop()
+                manager.started = False
+                manager.progress.console.print(
+                    renderable, markup=False, highlight=False
+                )
+                with contextlib.suppress(Exception):
+                    manager.progress.start()
+                manager.started = True
+            else:
+                manager.progress.console.print(
+                    renderable, markup=False, highlight=False
+                )
             manager.progress.refresh()
         return
 
-    print(message)
+    if isinstance(renderable, str):
+        print(renderable)
+        return
+    get_console(stderr=False).print(renderable, markup=False, highlight=False)
+
+
+def _status_renderable(message):
+    if not isinstance(message, str):
+        return message
+
+    styles = {
+        "[DONE]": "green",
+        "[FAILED]": "red",
+        "[SKIPPED]": "yellow",
+    }
+    for marker, style in styles.items():
+        if marker not in message:
+            continue
+        prefix, suffix = message.split(marker, 1)
+        renderable = Text(prefix)
+        renderable.append(marker, style=style)
+        renderable.append(suffix)
+        return renderable
+    return message
+
+
+def _final_status_text(label, success, status=None):
+    outcome = "SKIPPED" if status == "skipped" else "DONE" if success else "FAILED"
+    return f"{label} [{outcome}]"
+
+
+def _should_emit_live_final_message(success, status=None):
+    del success, status
+    return True
+
+
+def has_live_progress():
+    """Return True when Rich progress is currently managing live output."""
+    return _active_live_manager() is not None
 
 
 class TuiProgress(Callback):
@@ -175,6 +285,7 @@ class RichProgress:
                             transient=False,
                             refresh_per_second=20,
                         ),
+                        kind="progress",
                         started=False,
                         active=0,
                     )
@@ -240,21 +351,39 @@ class RichProgress:
                         self.task_id,
                         final_elapsed=elapsed_text,
                     )
-                with contextlib.suppress(Exception):
-                    manager.progress.stop_task(self.task_id)
-                if status == "skipped":
-                    manager.progress.update(
-                        self.task_id,
-                        description=f"{self.label} [yellow]\\[SKIPPED][/]",
-                    )
-                elif success:
-                    manager.progress.update(
-                        self.task_id, description=f"{self.label} [green]\\[DONE][/]"
-                    )
-                else:
-                    manager.progress.update(
-                        self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
-                    )
+                final_message = (
+                    _final_status_text(self.label, success, status)
+                    if _should_emit_live_final_message(success, status)
+                    else None
+                )
+                removed = False
+                remove_task = getattr(manager.progress, "remove_task", None)
+                if remove_task is not None:
+                    with contextlib.suppress(Exception):
+                        remove_task(self.task_id)
+                        removed = True
+                console = getattr(manager.progress, "console", None)
+                if removed and console is not None and final_message is not None:
+                    with contextlib.suppress(Exception):
+                        console.print(final_message, markup=False, highlight=False)
+                if not removed:
+                    with contextlib.suppress(Exception):
+                        manager.progress.stop_task(self.task_id)
+                    if status == "skipped":
+                        manager.progress.update(
+                            self.task_id,
+                            description=f"{self.label} [yellow]\\[SKIPPED][/]",
+                        )
+                    elif success:
+                        manager.progress.update(
+                            self.task_id, description=f"{self.label} [green]\\[DONE][/]"
+                        )
+                    else:
+                        manager.progress.update(
+                            self.task_id,
+                            description=f"{self.label} [red]\\[FAILED][/]",
+                        )
+                manager.progress.refresh()
             manager.progress.refresh()
             self._started_at = None
             manager.active = max(0, manager.active - 1)
@@ -284,6 +413,141 @@ class RichSpinner:
         self._started_flag = False
         with contextlib.suppress(Exception):
             self._status.stop()
+
+
+class RichCountProgress:
+    _shared = {}
+    _shared_init_lock = threading.Lock()
+
+    def __init__(self, label, total, transient=True):
+        self.label = label
+        self.total = total
+        self.transient = transient
+        self._started_flag = False
+        self.task_id = None
+
+    def _manager(self):
+        key = bool(self.transient)
+        if key not in self._shared:
+            with self._shared_init_lock:
+                if key not in self._shared:
+                    from rich.progress import (
+                        BarColumn,
+                        ProgressColumn,
+                        SpinnerColumn,
+                        TextColumn,
+                        TimeElapsedColumn,
+                    )
+                    from rich.progress import Progress as _RichProgress
+                    from rich.text import Text
+
+                    class _CountBytesColumn(ProgressColumn):
+                        def render(self, task):
+                            return Text(
+                                _format_binary_size(
+                                    task.fields.get("bytes_completed", 0)
+                                ),
+                                style="progress.download",
+                            )
+
+                    class _CountTransferRateColumn(ProgressColumn):
+                        def render(self, task):
+                            bytes_completed = task.fields.get("bytes_completed", 0)
+                            elapsed = task.elapsed or 0.0
+                            if bytes_completed <= 0 or elapsed <= 0:
+                                return Text("?", style="dim")
+                            return Text(
+                                _format_binary_rate(bytes_completed / elapsed),
+                                style="progress.data.speed",
+                            )
+
+                    self._shared[key] = SimpleNamespace(
+                        lock=threading.Lock(),
+                        progress=_RichProgress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TextColumn("{task.completed}/{task.total} files"),
+                            TextColumn("{task.fields[bytes_completed_human]}"),
+                            _CountBytesColumn(),
+                            _CountTransferRateColumn(),
+                            TimeElapsedColumn(),
+                            console=get_console(stderr=False),
+                            expand=True,
+                            transient=key,
+                            refresh_per_second=10,
+                            redirect_stdout=False,
+                            redirect_stderr=False,
+                        ),
+                        kind="count",
+                        started=False,
+                        active=0,
+                    )
+        return self._shared[key]
+
+    def start(self):
+        manager = self._manager()
+        with manager.lock:
+            if self._started_flag:
+                return
+            if not manager.started:
+                manager.progress.start()
+                manager.started = True
+            self.task_id = None
+            with contextlib.suppress(TypeError):
+                self.task_id = manager.progress.add_task(
+                    self.label,
+                    total=self.total,
+                    bytes_completed=0,
+                    bytes_completed_human="0 B",
+                )
+            if self.task_id is None:
+                self.task_id = manager.progress.add_task(
+                    self.label,
+                    total=self.total,
+                    bytes_completed_human="0 B",
+                )
+            manager.active += 1
+            self._started_flag = True
+            manager.progress.refresh()
+
+    def update(self, completed=None, total=None, bytes_completed=None):
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            kwargs = {}
+            if completed is not None:
+                kwargs["completed"] = completed
+            if total is not None:
+                kwargs["total"] = total
+            if bytes_completed is not None:
+                kwargs["bytes_completed"] = bytes_completed
+                kwargs["bytes_completed_human"] = _format_binary_size(bytes_completed)
+            manager.progress.update(self.task_id, **kwargs)
+            manager.progress.refresh()
+
+    def stop(self, success=True, status=None):
+        del success, status
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            self._started_flag = False
+            remove_task = getattr(manager.progress, "remove_task", None)
+            if remove_task is not None:
+                with contextlib.suppress(Exception):
+                    remove_task(self.task_id)
+            else:
+                with contextlib.suppress(Exception):
+                    manager.progress.stop_task(self.task_id)
+            with contextlib.suppress(Exception):
+                manager.progress.refresh()
+            manager.active = max(0, manager.active - 1)
+            if manager.started and manager.active == 0:
+                with contextlib.suppress(Exception):
+                    manager.progress.stop()
+                manager.started = False
 
 
 class LegacyProgress:
@@ -420,3 +684,19 @@ class LegacySpinner:
 
     def stop(self, success=True, status=None):
         self._progress.stop(success, status=status)
+
+
+class LegacyCountProgress:
+    def __init__(self, label, total, transient=True):
+        del total
+        del transient
+        self._spinner = LegacySpinner(label)
+
+    def start(self):
+        self._spinner.start()
+
+    def update(self, completed=None, total=None, bytes_completed=None):
+        del completed, total, bytes_completed
+
+    def stop(self, success=True, status=None):
+        self._spinner.stop(success=success, status=status)

@@ -26,6 +26,7 @@ from gfal.cli.base import (
     is_gfal2_compat,
     surl,
 )
+from gfal.core.errors import GfalError
 
 # ---------------------------------------------------------------------------
 # surl()
@@ -474,6 +475,31 @@ class TestCommandBaseExecutor:
         cmd._executor(func)
         assert cmd.return_code == 1
 
+    def test_executor_cancelled_error_is_silent_when_cancelled(self):
+        cmd = self._make_cmd()
+        cmd._cancel_event.set()
+        called = []
+        cmd._print_error = lambda e: called.append(e)
+
+        def func(self):
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+
+        cmd._executor(func)
+        assert cmd.return_code == errno.ECANCELED
+        assert called == []
+
+    def test_executor_cancelled_error_prints_when_not_cancelled(self):
+        cmd = self._make_cmd()
+        called = []
+        cmd._print_error = lambda e: called.append(e)
+
+        def func(self):
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+
+        cmd._executor(func)
+        assert cmd.return_code == errno.ECANCELED
+        assert len(called) == 1
+
 
 # ---------------------------------------------------------------------------
 # Additional base.py tests for execute() with various params
@@ -618,6 +644,193 @@ class TestCommandBaseExecute:
             if not already_existed:
                 with contextlib.suppress(OSError):
                     proxy_path.unlink()
+
+    def test_execute_keyboard_interrupt_returns_worker_code_when_worker_finishes(
+        self, monkeypatch
+    ):
+        cmd = self._make_minimal_cmd_with_params()
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls == 1:
+                    cmd.return_code = errno.ECANCELED
+                    self._alive = False
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        rc = cmd.execute(func)
+        assert rc == errno.ECANCELED
+
+    def test_execute_keyboard_interrupt_waits_for_worker_summary_path(
+        self, monkeypatch
+    ):
+        cmd = self._make_minimal_cmd_with_params()
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls == 1:
+                    raise KeyboardInterrupt
+                if self._join_calls == 4:
+                    cmd.return_code = errno.ECANCELED
+                    self._alive = False
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        rc = cmd.execute(func)
+        assert rc == errno.ECANCELED
+
+    def test_execute_keyboard_interrupt_times_out_when_worker_does_not_finish(
+        self, monkeypatch, capsys
+    ):
+        cmd = self._make_minimal_cmd_with_params()
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls == 1:
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        times = iter([100.0, 111.0])
+        monkeypatch.setattr("gfal.cli.base.time.monotonic", lambda: next(times))
+        rc = cmd.execute(func)
+        captured = capsys.readouterr()
+        assert rc == errno.EINTR
+        assert "Interrupted" in captured.err
+
+    def test_execute_keyboard_interrupt_second_signal_aborts_cleanup_wait(
+        self, monkeypatch, capsys
+    ):
+        cmd = self._make_minimal_cmd_with_params()
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls in (1, 2):
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        rc = cmd.execute(func)
+        captured = capsys.readouterr()
+        assert rc == errno.EINTR
+        assert "Interrupted" in captured.err
+
+    def test_execute_keyboard_interrupt_emits_pending_command_summary(
+        self, monkeypatch, capsys
+    ):
+        class _SummaryCmd(self._make_minimal_cmd_with_params().__class__):
+            def _emit_interrupt_summary_if_pending(self_inner):
+                print("SUMMARY")
+                return True
+
+        cmd = _SummaryCmd()
+        cmd.params = self._make_minimal_cmd_with_params().params
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls == 1:
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        times = iter([100.0, 111.0])
+        monkeypatch.setattr("gfal.cli.base.time.monotonic", lambda: next(times))
+        rc = cmd.execute(func)
+        captured = capsys.readouterr()
+        assert rc == errno.EINTR
+        assert "SUMMARY" in captured.out
+        assert "Interrupted" not in captured.err
 
 
 # ---------------------------------------------------------------------------

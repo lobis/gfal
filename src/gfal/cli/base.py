@@ -6,8 +6,8 @@ import contextlib
 import errno
 import logging
 import os
-import signal
 import sys
+import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -797,6 +797,14 @@ class CommandBase:
         self.argv = None
         self._cancel_event = Event()
 
+    def _emit_interrupt_summary_if_pending(self):
+        """Allow commands to render a final interrupt summary during shutdown."""
+        return False
+
+    def _emit_interrupt_error_if_pending(self):
+        """Allow commands to render a final interrupt error during shutdown."""
+        return False
+
     @contextlib.contextmanager
     def spinner(self, message):
         """Displays a rich status spinner for blocking operations.
@@ -1078,8 +1086,12 @@ class CommandBase:
             if isinstance(e, OSError) and e.errno == errno.EPIPE:
                 self.return_code = 0
                 return
-            self._print_error(e)
             self.return_code = exception_exit_code(e)
+            if not (
+                self._cancel_event.is_set()
+                and self.return_code in {errno.ECANCELED, errno.EINTR}
+            ):
+                self._print_error(e)
 
     def execute(self, func):
         # Forced IP family (IPv4/v6)
@@ -1120,7 +1132,7 @@ class CommandBase:
             self._executor(func)
             return self.return_code
 
-        t = Thread(target=self._executor, args=[func], daemon=True)
+        t = Thread(target=self._executor, args=[func])
         t.start()
 
         try:
@@ -1148,7 +1160,44 @@ class CommandBase:
             self._cancel_event.set()
             if self.progress_bar is not None:
                 self.progress_bar.stop(False)
-            t.join(2)
-            sys.stderr.write("\nInterrupted\n")
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            return errno.EINTR
+
+            # Give the worker a short grace window to tear down any live
+            # progress UI and render the recursive cancel summary. A second
+            # Ctrl-C during this wait is treated as an explicit request to
+            # abort immediately.
+            deadline = time.monotonic() + 10.0
+            try:
+                while t.is_alive() and time.monotonic() < deadline:
+                    t.join(0.1)
+            except KeyboardInterrupt:
+                summary_emitted = False
+                error_emitted = False
+                with contextlib.suppress(Exception):
+                    summary_emitted = bool(self._emit_interrupt_summary_if_pending())
+                with contextlib.suppress(Exception):
+                    error_emitted = bool(self._emit_interrupt_error_if_pending())
+                if not summary_emitted:
+                    sys.stderr.write("\nInterrupted\n")
+                with contextlib.suppress(Exception):
+                    sys.stdout.flush()
+                with contextlib.suppress(Exception):
+                    sys.stderr.flush()
+                return errno.EINTR
+
+            summary_emitted = False
+            error_emitted = False
+            with contextlib.suppress(Exception):
+                summary_emitted = bool(self._emit_interrupt_summary_if_pending())
+            with contextlib.suppress(Exception):
+                error_emitted = bool(self._emit_interrupt_error_if_pending())
+            with contextlib.suppress(Exception):
+                sys.stdout.flush()
+            with contextlib.suppress(Exception):
+                sys.stderr.flush()
+            if t.is_alive():
+                if not summary_emitted and not error_emitted:
+                    sys.stderr.write("\nInterrupted\n")
+                    with contextlib.suppress(Exception):
+                        sys.stderr.flush()
+                return errno.EINTR
+            return self.return_code if self.return_code is not None else errno.EINTR

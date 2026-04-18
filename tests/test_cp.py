@@ -3,9 +3,147 @@
 import errno
 import hashlib
 import os
+import re
+import signal
+import subprocess
+import sys
+import textwrap
 import zlib
 
+import pytest
+
 from helpers import run_gfal
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _run_gfal_tty(*args, preamble=""):
+    """Run ``gfal`` attached to a PTY so Rich progress output is emitted."""
+    if sys.platform == "win32":
+        import pytest
+
+        pytest.skip("PTY-based progress test needs POSIX")
+
+    import pty
+
+    script = "\n".join(
+        [
+            "import sys",
+            textwrap.dedent(preamble).strip(),
+            "sys.argv=['gfal'] + sys.argv[1:]",
+            "from gfal.cli.shell import main",
+            "main()",
+        ]
+    )
+    env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
+
+    master_fd, slave_fd = pty.openpty()
+    proc = None
+    chunks = []
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, *[str(arg) for arg in args]],
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+        )
+        os.close(slave_fd)
+        slave_fd = None
+
+        while True:
+            try:
+                chunk = os.read(master_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if proc.poll() is not None:
+                continue
+
+        rc = proc.wait(timeout=5)
+    finally:
+        if slave_fd is not None:
+            os.close(slave_fd)
+        os.close(master_fd)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    return rc, _ANSI_ESCAPE_RE.sub("", output)
+
+
+def _run_gfal_tty_with_sigint(*args, preamble="", interrupt_after=1.0, timeout=10):
+    """Run ``gfal`` in a PTY and send one SIGINT after ``interrupt_after`` seconds."""
+    if sys.platform == "win32":
+        pytest.skip("PTY-based progress test needs POSIX")
+
+    import pty
+
+    script = "\n".join(
+        [
+            "import sys",
+            textwrap.dedent(preamble).strip(),
+            "sys.argv=['gfal'] + sys.argv[1:]",
+            "from gfal.cli.shell import main",
+            "main()",
+        ]
+    )
+    env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
+
+    master_fd, slave_fd = pty.openpty()
+    proc = None
+    chunks = []
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, *[str(arg) for arg in args]],
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+        )
+        os.close(slave_fd)
+        slave_fd = None
+        sent_sigint = False
+        start = None
+
+        while True:
+            if start is None:
+                import time as _time
+
+                start = _time.monotonic()
+            if not sent_sigint:
+                import time as _time
+
+                if _time.monotonic() - start >= interrupt_after:
+                    proc.send_signal(signal.SIGINT)
+                    sent_sigint = True
+            try:
+                chunk = os.read(master_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if proc.poll() is not None:
+                continue
+
+        rc = proc.wait(timeout=timeout)
+    finally:
+        if slave_fd is not None:
+            os.close(slave_fd)
+        os.close(master_fd)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    return rc, _ANSI_ESCAPE_RE.sub("", output)
+
 
 # ---------------------------------------------------------------------------
 # Basic copy
@@ -447,6 +585,248 @@ class TestCopyOverwrite:
         assert "Skipping existing file" in out
         assert dst.read_bytes() == b"old content"
 
+    @pytest.mark.parametrize(
+        ("compare_mode", "src_bytes", "dst_bytes", "same_mtime", "skip_hint"),
+        [
+            ("none", b"new content", b"old content", False, "skipped"),
+            ("size", b"AAAA", b"BBBB", False, "skipped"),
+            ("size_mtime", b"AAAA", b"BBBB", True, "skipped"),
+            ("checksum", b"same content", b"same content", False, "skipped"),
+        ],
+    )
+    def test_progress_output_hides_skip_messages_for_compare_modes(
+        self,
+        tmp_path,
+        compare_mode,
+        src_bytes,
+        dst_bytes,
+        same_mtime,
+        skip_hint,
+    ):
+        """TTY progress rows should absorb skip messaging without extra warning lines."""
+        srcdir = tmp_path / f"src_{compare_mode}"
+        dstdir = tmp_path / f"dst_{compare_mode}"
+        srcdir.mkdir()
+        dstdir.mkdir()
+        src = srcdir / "item.bin"
+        dst = dstdir / "item.bin"
+        src.write_bytes(src_bytes)
+        dst.write_bytes(dst_bytes)
+        if same_mtime:
+            t = 1_000_000_000
+            os.utime(src, (t, t))
+            os.utime(dst, (t, t))
+
+        rc, output = _run_gfal_tty(
+            "cp",
+            "-r",
+            "--parallel",
+            "2",
+            "--compare",
+            compare_mode,
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+        )
+
+        assert rc == 0
+        assert "Skipping existing file" not in output
+        assert skip_hint in output
+        assert "Scan complete" in output
+
+    def test_recursive_tty_outputs_one_done_line_per_file(self, tmp_path):
+        srcdir = tmp_path / "src_hist"
+        dstdir = tmp_path / "dst_hist"
+        srcdir.mkdir()
+        (srcdir / "one.txt").write_text("one")
+        (srcdir / "two.txt").write_text("two")
+
+        rc, output = _run_gfal_tty("cp", "-r", srcdir.as_uri(), dstdir.as_uri())
+
+        assert rc == 0
+        assert "Source" in output
+        assert "Destination" in output
+        assert "Starting transfers" in output
+        assert output.count("copied") >= 2
+        assert output.count("one.txt") == 1
+        assert output.count("two.txt") == 1
+        assert "Copy complete" in output
+
+    def test_single_file_tty_uses_rich_copy_summary(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        rc, output = _run_gfal_tty("cp", src.as_uri(), dst.as_uri())
+
+        assert rc == 0
+        assert "Source" in output
+        assert "Destination" in output
+        assert "Starting transfers" in output
+        assert "Copy complete" in output
+        assert "Copied  : 1 file" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+
+    def test_recursive_tty_sigint_shows_summary_and_exits_once(self, tmp_path):
+        srcdir = tmp_path / "src_interrupt"
+        dstdir = tmp_path / "dst_interrupt"
+        srcdir.mkdir()
+        (srcdir / "one.txt").write_text("one")
+        (srcdir / "two.txt").write_text("two")
+
+        preamble = """
+import errno
+import os
+import signal
+import threading
+import time
+from gfal.core.errors import GfalError
+import gfal.cli.copy as copy_mod
+
+_sigint_started = [False]
+
+class _Handle:
+    def __init__(self, cancel_event):
+        self._cancel_event = cancel_event
+        self._done = False
+        def _runner():
+            while not cancel_event.is_set():
+                time.sleep(0.05)
+            self._done = True
+        self._thread = threading.Thread(target=_runner, daemon=True)
+        self._thread.start()
+
+    def done(self):
+        return self._done or not self._thread.is_alive()
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        if self._cancel_event.is_set():
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+        return None
+
+    def cancel(self):
+        self._cancel_event.set()
+
+def _start_copy(self, src_url, dst_url, **kwargs):
+    kwargs["transfer_mode_callback"]("tpc-pull")
+    kwargs["start_callback"]()
+    if not _sigint_started[0]:
+        _sigint_started[0] = True
+
+        def _send_sigint():
+            time.sleep(0.2)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        threading.Thread(target=_send_sigint, daemon=True).start()
+    return _Handle(kwargs["cancel_event"])
+
+copy_mod.GfalClient.start_copy = _start_copy
+        """
+
+        rc, output = _run_gfal_tty(
+            "cp",
+            "-r",
+            "--parallel",
+            "5",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+            preamble=preamble,
+        )
+
+        assert rc != 0
+        assert "Copy interrupted" in output
+        assert "Copied  :" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+        assert "Transfer cancelled: Operation canceled" in output
+        assert "Interrupted" not in output
+
+    def test_recursive_tty_sigint_with_completed_transfers_shows_summary(
+        self, tmp_path
+    ):
+        """Summary must appear even when some transfers completed before SIGINT."""
+        srcdir = tmp_path / "src_int_done"
+        dstdir = tmp_path / "dst_int_done"
+        srcdir.mkdir()
+        for i in range(5):
+            (srcdir / f"file{i:02d}.txt").write_text(f"content {i}")
+
+        preamble = """
+import errno
+import os
+import signal
+import threading
+import time
+from gfal.core.errors import GfalError
+import gfal.cli.copy as copy_mod
+
+_counter_lock = threading.Lock()
+_counter = [0]
+_sigint_started = [False]
+
+class _Handle:
+    def __init__(self, cancel_event, complete_fast):
+        self._cancel_event = cancel_event
+        self._complete_fast = complete_fast
+        self._done = False
+        def _runner():
+            if complete_fast:
+                time.sleep(0.05)
+            else:
+                while not cancel_event.is_set():
+                    time.sleep(0.02)
+            self._done = True
+        self._thread = threading.Thread(target=_runner, daemon=True)
+        self._thread.start()
+
+    def done(self):
+        return self._done
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        if not self._complete_fast and self._cancel_event.is_set():
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+        return None
+
+    def cancel(self):
+        self._cancel_event.set()
+
+def _start_copy(self, src_url, dst_url, **kwargs):
+    with _counter_lock:
+        n = _counter[0]
+        _counter[0] += 1
+    kwargs["transfer_mode_callback"]("tpc-pull")
+    kwargs["start_callback"]()
+    if n == 3 and not _sigint_started[0]:
+        _sigint_started[0] = True
+
+        def _send_sigint():
+            time.sleep(0.2)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        threading.Thread(target=_send_sigint, daemon=True).start()
+    return _Handle(kwargs["cancel_event"], complete_fast=(n < 3))
+
+copy_mod.GfalClient.start_copy = _start_copy
+        """
+
+        rc, output = _run_gfal_tty(
+            "cp",
+            "-r",
+            "--parallel",
+            "5",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+            preamble=preamble,
+        )
+
+        assert rc != 0
+        assert "Copy interrupted" in output, f"Summary missing from output:\n{output}"
+        assert "Copied  :" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+
     # --- -f / --force --------------------------------------------------------
 
     def test_force_overwrite_ignores_compare(self, tmp_path):
@@ -850,6 +1230,25 @@ class TestCopyFromFile:
         assert (dstdir / "s1.txt").read_bytes() == b"one"
         assert (dstdir / "s2.txt").read_bytes() == b"two"
 
+    def test_from_file_limit(self, tmp_path):
+        src1 = tmp_path / "s1.txt"
+        src2 = tmp_path / "s2.txt"
+        src1.write_bytes(b"one")
+        src2.write_bytes(b"two")
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+
+        sources_file = tmp_path / "sources.txt"
+        sources_file.write_text(f"{src1.as_uri()}\n{src2.as_uri()}\n")
+
+        rc, _out, _err = run_gfal(
+            "cp", "--from-file", str(sources_file), "--limit", "1", dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert (dstdir / "s1.txt").read_bytes() == b"one"
+        assert not (dstdir / "s2.txt").exists()
+
     def test_from_file_cannot_combine_with_src(self, tmp_path):
         src = tmp_path / "src.txt"
         src.write_text("x")
@@ -862,6 +1261,16 @@ class TestCopyFromFile:
         )
 
         assert rc != 0
+
+    def test_limit_must_be_positive(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("x")
+
+        rc, _out, err = run_gfal("cp", "--limit", "0", src.as_uri(), dst.as_uri())
+
+        assert rc != 0
+        assert "--limit must be at least 1" in err
 
     def test_from_file_blank_lines_ignored(self, tmp_path):
         src = tmp_path / "src.txt"

@@ -170,6 +170,10 @@ class TransferHandle:
     def done(self) -> bool:
         return not self._thread.is_alive()
 
+    def join(self, timeout: float | None = None) -> bool:
+        self._thread.join(timeout)
+        return not self._thread.is_alive()
+
     def wait(self, timeout: float | None = None) -> Any:
         self._thread.join(timeout)
         if self._thread.is_alive():
@@ -386,6 +390,9 @@ class AsyncGfalClient:
             except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
 
+        # Copy handles run in background worker threads so recursive-copy
+        # cancellations can emit a final summary and let the process exit
+        # without waiting for every in-flight transfer backend to unwind.
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
@@ -1323,7 +1330,7 @@ def run_sync(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         except BaseException as exc:  # pragma: no cover - loop/thread edge path
             exc_holder["error"] = exc
 
-    thread = threading.Thread(target=_runner, daemon=True)
+    thread = threading.Thread(target=_runner)
     thread.start()
     thread.join()
     if "error" in exc_holder:

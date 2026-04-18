@@ -4,8 +4,22 @@ import threading
 import time
 from types import SimpleNamespace
 
+from rich.text import Text
+
+from gfal.cli.progress import (
+    CountProgress,
+    RichCountProgress,
+    RichProgress,
+    RichSpinner,
+    _final_status_text,
+    _format_binary_rate,
+    _format_binary_size,
+    _should_emit_live_final_message,
+    _status_renderable,
+    has_live_progress,
+    print_live_message,
+)
 from gfal.cli.progress import LegacyProgress as Progress
-from gfal.cli.progress import RichProgress, RichSpinner, print_live_message
 
 
 class TestProgressInit:
@@ -56,6 +70,22 @@ class TestProgressRateStr:
     def test_gigabytes(self):
         result = Progress._rate_str(1024**3)
         assert "G" in result
+
+
+class TestFormatBinaryRate:
+    def test_unknown_for_non_positive_rate(self):
+        assert _format_binary_rate(0) == "?"
+
+    def test_formats_megabytes_per_second(self):
+        assert _format_binary_rate(200 * 1024 * 1024) == "200.0 MB/s"
+
+
+class TestFormatBinarySize:
+    def test_zero_bytes(self):
+        assert _format_binary_size(0) == "0 B"
+
+    def test_formats_gigabytes(self):
+        assert _format_binary_size(3 * 1024 * 1024 * 1024) == "3.0 GB"
 
 
 class TestProgressSizeStr:
@@ -333,6 +363,12 @@ class TestRichProgress:
             def __init__(self):
                 self.calls = []
                 self.tasks = [SimpleNamespace(total=10)]
+                self.printed = []
+                self.console = SimpleNamespace(
+                    print=lambda message, markup=False, highlight=False: (
+                        self.printed.append((message, markup, highlight))
+                    )
+                )
 
             def start(self):
                 self.calls.append(("start",))
@@ -370,11 +406,66 @@ class TestRichProgress:
         progress.start()
         progress.stop(True, status="skipped")
 
+        assert backend.printed == []
         assert (
             "update",
             0,
             {"description": "Copying example.txt [yellow]\\[SKIPPED][/]"},
         ) in backend.calls
+
+    def test_rich_progress_removes_finished_task_when_supported(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = [SimpleNamespace(total=10)]
+                self.console = SimpleNamespace(
+                    print=lambda message, markup=False, highlight=False: (
+                        self.calls.append(("print", message, markup, highlight))
+                    )
+                )
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                self.calls.append(("add_task", description, total))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def remove_task(self, task_id):
+                self.calls.append(("remove_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt")
+        progress.start()
+        progress.stop(True)
+
+        assert ("print", "Copying example.txt [DONE]", False, False) in backend.calls
+        assert ("remove_task", 0) in backend.calls
+        assert backend.calls[-1] == ("stop",)
+        assert backend.calls.index(("remove_task", 0)) < backend.calls.index(
+            ("print", "Copying example.txt [DONE]", False, False)
+        )
 
 
 class TestRichSpinner:
@@ -432,3 +523,172 @@ class TestPrintLiveMessage:
 
         assert printed == [("Skipping existing file dst", False, False)]
         assert refreshed == [True]
+
+    def test_live_message_uses_active_count_progress_console(self, monkeypatch):
+        printed = []
+        refreshed = []
+        started = []
+        stopped = []
+
+        class _FakeConsole:
+            def print(self, message, markup=False, highlight=False):
+                printed.append((message, markup, highlight))
+
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichCountProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=SimpleNamespace(
+                    console=_FakeConsole(),
+                    start=lambda: started.append(True),
+                    stop=lambda: stopped.append(True),
+                    refresh=lambda: refreshed.append(True),
+                ),
+                kind="count",
+                started=True,
+                active=1,
+            ),
+            raising=False,
+        )
+
+        print_live_message("Copying one.txt [DONE]")
+
+        assert len(printed) == 1
+        assert str(printed[0][0]) == "Copying one.txt [DONE]"
+        assert printed[0][1:] == (False, False)
+        assert stopped == [True]
+        assert started == [True]
+        assert refreshed == [True]
+
+
+class TestStatusRenderable:
+    def test_done_status_is_rendered_as_text(self):
+        renderable = _status_renderable("Copying one.txt [DONE]  1.0 MB")
+
+        assert isinstance(renderable, Text)
+        assert str(renderable) == "Copying one.txt [DONE]  1.0 MB"
+
+    def test_plain_message_stays_plain(self):
+        message = "Recursive scan complete: 2 files"
+
+        assert _status_renderable(message) == message
+
+
+class TestHasLiveProgress:
+    def test_false_without_manager(self, monkeypatch):
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        assert has_live_progress() is False
+
+    def test_true_with_active_manager(self, monkeypatch):
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(started=True, active=1),
+            raising=False,
+        )
+        assert has_live_progress() is True
+
+    def test_true_with_active_count_manager(self, monkeypatch):
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichCountProgress,
+            "_shared",
+            SimpleNamespace(started=True, active=1),
+            raising=False,
+        )
+        assert has_live_progress() is True
+
+
+class TestFinalStatusText:
+    def test_done(self):
+        assert _final_status_text("Copying file.txt", True) == "Copying file.txt [DONE]"
+
+    def test_skipped(self):
+        assert (
+            _final_status_text("Copying file.txt", True, "skipped")
+            == "Copying file.txt [SKIPPED]"
+        )
+
+
+class TestShouldEmitLiveFinalMessage:
+    def test_success_is_printed(self):
+        assert _should_emit_live_final_message(True) is True
+
+    def test_skipped_is_printed(self):
+        assert _should_emit_live_final_message(True, "skipped") is True
+
+    def test_failure_is_printed(self):
+        assert _should_emit_live_final_message(False) is True
+
+
+class TestCountProgressFactory:
+    def test_returns_legacy_when_gfal2_compat(self, monkeypatch):
+        monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: True)
+        result = CountProgress("Copying files", 5)
+        assert result.__class__.__name__ == "LegacyCountProgress"
+
+    def test_returns_rich_when_not_gfal2_compat(self, monkeypatch):
+        monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: False)
+        result = CountProgress("Copying files", 5)
+        assert isinstance(result, RichCountProgress)
+
+
+class TestRichCountProgress:
+    def test_update_tracks_completed_bytes(self, monkeypatch):
+        calls = []
+
+        class _FakeBackend:
+            def start(self):
+                calls.append(("start",))
+
+            def add_task(self, description, total=None, **kwargs):
+                calls.append(("add_task", description, total, kwargs))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                calls.append(("stop_task", task_id))
+
+            def stop(self):
+                calls.append(("stop",))
+
+        monkeypatch.setattr(
+            RichCountProgress,
+            "_shared",
+            {
+                True: SimpleNamespace(
+                    lock=threading.Lock(),
+                    progress=_FakeBackend(),
+                    kind="count",
+                    started=False,
+                    active=0,
+                )
+            },
+            raising=False,
+        )
+        progress = RichCountProgress("Copying files", 4, transient=True)
+        progress.start()
+        progress.update(completed=2, bytes_completed=1024)
+
+        assert (
+            "add_task",
+            "Copying files",
+            4,
+            {"bytes_completed": 0, "bytes_completed_human": "0 B"},
+        ) in calls
+        assert (
+            "update",
+            0,
+            {
+                "completed": 2,
+                "bytes_completed": 1024,
+                "bytes_completed_human": "1.0 KB",
+            },
+        ) in calls

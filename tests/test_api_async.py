@@ -251,6 +251,40 @@ async def test_async_start_copy_wait_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_async_start_copy_uses_daemon_thread(monkeypatch):
+    client = AsyncGfalClient()
+
+    def _slow_copy(
+        src_url,
+        dst_url,
+        options,
+        progress_callback,
+        start_callback,
+        warn_callback,
+        transfer_mode_callback,
+        cancel_event,
+    ):
+        del (
+            src_url,
+            dst_url,
+            options,
+            progress_callback,
+            start_callback,
+            warn_callback,
+            transfer_mode_callback,
+            cancel_event,
+        )
+        time.sleep(0.05)
+
+    monkeypatch.setattr(client, "_copy_sync", _slow_copy)
+    handle = client.start_copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
+
+    assert handle._thread.daemon is True
+
+    await handle.wait_async(timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_async_start_copy_cancel_propagates_cancelled_error(monkeypatch):
     client = AsyncGfalClient()
 

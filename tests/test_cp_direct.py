@@ -22,12 +22,14 @@ from gfal.cli.copy import (
     _make_hasher,
     _parse_checksum_arg,
     _tpc_applicable,
+    _TransferDisplay,
     _update_hasher,
 )
 from gfal.core import fs
 from gfal.core.api import AsyncGfalClient as _AsyncGfalClient
 from gfal.core.api import checksum_fs as _checksum_fs
 from gfal.core.api import eos_app_url as _eos_app_url
+from gfal.core.errors import GfalError
 
 
 def _make_cmd():
@@ -53,6 +55,7 @@ def _default_params(**kwargs):
         "recursive": False,
         "preserve_times": True,
         "from_file": None,
+        "limit": None,
         "dry_run": False,
         "abort_on_failure": False,
         "transfer_timeout": 0,
@@ -1062,17 +1065,83 @@ class TestCliUsesLibraryCopy:
         )
         assert progress.calls[4] == ("stop", True, None)
 
-    def test_recursive_top_level_children_get_individual_progress(self, tmp_path):
-        src = tmp_path / "srcdir"
-        dst = tmp_path / "dstdir"
-        src.mkdir()
-        dst.mkdir()
-        (src / "one.txt").write_text("one")
-        (src / "two.txt").write_text("two")
+    def test_do_copy_tty_single_file_uses_intro_and_final_summary(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(src=src.as_uri(), dst=[dst.as_uri()])
+
+        class _FakeProgress:
+            def __init__(self, label):
+                self.label = label
+                self.calls = []
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def update(self, **kwargs):
+                self.calls.append(("update", kwargs))
+
+            def set_description(self, label):
+                self.calls.append(("set_description", label))
+                self.label = label
+
+            def stop(self, success, status=None):
+                self.calls.append(("stop", success, status))
+
+        fake_instances = []
+
+        def _make_progress(label):
+            progress = _FakeProgress(label)
+            fake_instances.append(progress)
+            return progress
+
+        with (
+            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
+            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                FileNotFoundError(),
+                SimpleNamespace(st_size=5),
+            ]
+
+            def _copy_side_effect(*args, **kwargs):
+                kwargs["transfer_mode_callback"]("tpc-pull")
+                kwargs["start_callback"]()
+                kwargs["progress_callback"](3)
+
+            mock_client.copy.side_effect = _copy_side_effect
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert len(fake_instances) == 1
+        progress = fake_instances[0]
+        assert progress.calls[0] == ("start",)
+        assert progress.calls[-1] == ("stop", True, None)
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert "Source      " in messages[0]
+        assert "Destination " in messages[0]
+        assert any("Starting transfers" in message for message in messages)
+        assert any("Copy complete" in message for message in messages)
+        assert any("Copied  : 1 file" in message for message in messages)
+        assert any("Avg rate: " in message for message in messages)
+        assert any("Elapsed :" in message for message in messages)
+
+    def test_do_copy_tty_single_file_skip_still_prints_final_summary(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("hello")
 
         cmd = _make_cmd()
         cmd.params = _default_params(
-            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            compare="size",
         )
 
         class _FakeProgress:
@@ -1086,8 +1155,50 @@ class TestCliUsesLibraryCopy:
             def update(self, **kwargs):
                 self.calls.append(("update", kwargs))
 
+            def set_description(self, label):
+                self.calls.append(("set_description", label))
+                self.label = label
+
             def stop(self, success, status=None):
                 self.calls.append(("stop", success, status))
+
+        with (
+            patch("gfal.cli.copy.GfalClient") as mock_client_cls,
+            patch("gfal.cli.copy.Progress", side_effect=_FakeProgress),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.side_effect = [
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                SimpleNamespace(st_size=5, is_dir=lambda: False),
+                SimpleNamespace(st_size=5),
+            ]
+
+            def _copy_side_effect(*args, **kwargs):
+                kwargs["warn_callback"](
+                    f"Skipping existing file {dst.as_uri()} (matching size)"
+                )
+
+            mock_client.copy.side_effect = _copy_side_effect
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("Copy complete" in message for message in messages)
+        assert any("Skipped : 1 file" in message for message in messages)
+
+    def test_recursive_top_level_children_emit_history_lines(self, tmp_path, capsys):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
 
         class _DoneHandle:
             def done(self):
@@ -1099,23 +1210,24 @@ class TestCliUsesLibraryCopy:
             def cancel(self):
                 return None
 
-        fake_instances = []
         started = []
-
-        def _make_progress(label):
-            progress = _FakeProgress(label)
-            fake_instances.append(progress)
-            return progress
 
         def _start_copy(self, src_url, dst_url, **kwargs):
             started.append((src_url, dst_url))
             kwargs["transfer_mode_callback"]("tpc-pull")
             kwargs["start_callback"]()
-            kwargs["progress_callback"](3)
             return _DoneHandle()
 
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
+
         with (
-            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.Progress") as mock_progress,
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ) as mock_count_progress,
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
             patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
@@ -1126,10 +1238,191 @@ class TestCliUsesLibraryCopy:
             ((src / "one.txt").as_uri(), (dst / "one.txt").as_uri()),
             ((src / "two.txt").as_uri(), (dst / "two.txt").as_uri()),
         ]
-        assert sorted(progress.label for progress in fake_instances) == [
-            "Copying one.txt (TPC pull)",
-            "Copying two.txt (TPC pull)",
-        ]
+        mock_progress.assert_not_called()
+        assert mock_count_progress.call_args_list[0].args == ("Scanning files", 2)
+        assert mock_count_progress.call_args_list[1].args == ("Copying files", 2)
+        assert mock_count_progress.call_args_list[1].kwargs == {"transient": True}
+        fake_scan_progress.start.assert_called_once()
+        fake_copy_progress.start.assert_called_once()
+        fake_scan_progress.stop.assert_called_once_with(True)
+        fake_copy_progress.stop.assert_called_once_with(True)
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("one.txt" in message and "copied" in message for message in messages)
+        assert any("two.txt" in message and "copied" in message for message in messages)
+        copied_messages = [message for message in messages if "copied" in message]
+        assert copied_messages[0].startswith("[1/2]")
+        assert copied_messages[1].startswith("[2/2]")
+        assert messages[0].endswith("\n")
+        assert messages[1].endswith("\n")
+        assert "Source      " in messages[0]
+        assert "Destination " in messages[0]
+        assert any("Scan complete" in message for message in messages)
+        assert any("Starting transfers\n" in message for message in messages)
+        assert any("Copy complete" in message for message in messages)
+
+    def test_recursive_tty_uses_history_lines_not_rich_bars(self, tmp_path, capsys):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            return _DoneHandle()
+
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
+        events = []
+        fake_scan_progress.stop.side_effect = lambda *args, **kwargs: events.append(
+            ("stop", args, kwargs)
+        )
+        fake_copy_progress.stop.side_effect = lambda *args, **kwargs: events.append(
+            ("copy-stop", args, kwargs)
+        )
+
+        with (
+            patch("gfal.cli.copy.Progress") as mock_progress,
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ) as mock_count_progress,
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            mock_live_message.side_effect = lambda message: events.append(
+                ("message", message)
+            )
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        mock_progress.assert_not_called()
+        assert mock_count_progress.call_args_list[1].args == ("Copying files", 2)
+        assert mock_count_progress.call_args_list[1].kwargs == {"transient": True}
+        fake_scan_progress.start.assert_called_once()
+        fake_copy_progress.start.assert_called_once()
+        fake_scan_progress.stop.assert_called_once_with(True)
+        fake_copy_progress.stop.assert_called_once_with(True)
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("one.txt" in message and "copied" in message for message in messages)
+        assert any("two.txt" in message and "copied" in message for message in messages)
+        assert sum("copied" in message for message in messages) == 2
+        copied_messages = [message for message in messages if "copied" in message]
+        assert copied_messages[0].startswith("[1/2]")
+        assert copied_messages[1].startswith("[2/2]")
+        assert any("Scan complete" in message for message in messages)
+        assert "Destination " in messages[0]
+        final_summary_index = next(
+            index
+            for index, event in enumerate(events)
+            if event[0] == "message" and "Copy complete" in str(event[1])
+        )
+        assert str(events[final_summary_index][1]).startswith("\n✓ Copy complete")
+        stop_index = next(
+            index for index, event in enumerate(events) if event[0] == "copy-stop"
+        )
+        assert stop_index < final_summary_index
+
+    def test_recursive_tty_interrupt_still_prints_summary(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _DoneHandle:
+            def __init__(self, done=True):
+                self._done = done
+
+            def done(self):
+                return self._done
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
+        started = []
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            del dst_url
+            started.append(src_url)
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            if len(started) == 1:
+                return _DoneHandle(done=True)
+            cmd._cancel_event.set()
+            return _DoneHandle(done=False)
+
+        with (
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            pytest.raises(GfalError, match="Transfer cancelled"),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("copied" in message for message in messages)
+        assert any("Copy interrupted" in message for message in messages)
+        assert any("Copied  : 1 file" in message for message in messages)
+        assert any("Avg rate: " in message for message in messages)
+        assert any("Elapsed :" in message for message in messages)
+        assert sum("✗ failed" in message for message in messages) == 0
+        fake_copy_progress.stop.assert_called_once_with(False)
+
+    def test_history_status_line_includes_size_rate_and_elapsed(self):
+        display = _TransferDisplay(
+            "https://example.org/src.bin",
+            "https://example.org/dst.bin",
+            src_size=1_048_576,
+            transfer_mode="streamed",
+            history_only=True,
+        )
+        display.progress_started = True
+
+        with patch("gfal.cli.copy.time.monotonic", side_effect=[102.0]):
+            display.transfer_start = 100.0
+            line = display._history_status_line(True)
+
+        assert "Copying src.bin (streamed) [DONE]" in line
+        assert "1.0 MB" in line
+        assert "512.0 KB/s" in line
+        assert "00:00:02" in line
 
     def test_recursive_scan_spinner_marks_failure_when_listing_raises(self):
         cmd = _make_cmd()
@@ -1147,7 +1440,7 @@ class TestCliUsesLibraryCopy:
                 "gfal.cli.copy.fs.url_to_fs",
                 side_effect=[(fake_src_fs, "/src"), (MagicMock(), "/dst")],
             ),
-            patch("gfal.cli.copy.Spinner", return_value=fake_spinner),
+            patch("gfal.cli.copy.Spinner", return_value=fake_spinner) as mock_spinner,
             pytest.raises(RuntimeError, match="listing failed"),
         ):
             cmd._copy_directory_parallel(
@@ -1158,8 +1451,257 @@ class TestCliUsesLibraryCopy:
                 SimpleNamespace(),
             )
 
+        mock_spinner.assert_called_once_with("Scanning files")
         fake_spinner.start.assert_called_once()
         fake_spinner.stop.assert_called_once_with(False)
+
+    def test_recursive_scan_uses_live_count_progress(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+
+        entries = [
+            {"name": str(src / f"file-{index:03d}.txt"), "size": 1, "type": "file"}
+            for index in range(251)
+        ]
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            limit=1,
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_client = MagicMock()
+        fake_client.stat.side_effect = [FileNotFoundError()]
+        fake_client.start_copy.return_value = _DoneHandle()
+        fake_client._async_client = MagicMock()
+
+        fake_src_fs = MagicMock()
+        fake_src_fs.ls.return_value = entries
+        fake_dst_fs = MagicMock()
+        fake_dst_fs.ls.return_value = []
+        fake_spinner = MagicMock()
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
+
+        with (
+            patch(
+                "gfal.cli.copy.fs.url_to_fs",
+                side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
+            ),
+            patch("gfal.cli.copy.Spinner", return_value=fake_spinner),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+        ):
+            cmd._copy_directory_parallel(
+                fake_client,
+                src.as_uri(),
+                dst.as_uri(),
+                {"timeout": 1800},
+                SimpleNamespace(),
+            )
+
+        fake_spinner.start.assert_called_once()
+        fake_spinner.stop.assert_called_once_with(True)
+        fake_scan_progress.start.assert_called_once()
+        completed_updates = [
+            call.kwargs["completed"]
+            for call in fake_scan_progress.update.call_args_list
+            if "completed" in call.kwargs
+        ]
+        assert 1 in completed_updates
+        assert 250 in completed_updates
+        assert completed_updates[-1] == 251
+        fake_scan_progress.stop.assert_any_call(True)
+        fake_copy_progress.start.assert_called_once()
+        assert any(
+            call.kwargs.get("bytes_completed") == 1
+            for call in fake_copy_progress.update.call_args_list
+        )
+
+    def test_recursive_child_size_comes_from_scan_metadata(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            limit=1,
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_client = MagicMock()
+        fake_client.stat.side_effect = [FileNotFoundError()]
+        fake_client._async_client = MagicMock()
+        fake_client.start_copy.return_value = _DoneHandle()
+
+        fake_src_fs = MagicMock()
+        fake_src_fs.ls.return_value = [
+            {"name": str(src / "one.txt"), "size": 3, "type": "file"}
+        ]
+        fake_dst_fs = MagicMock()
+        fake_dst_fs.ls.return_value = []
+
+        copy_progress = MagicMock()
+        with (
+            patch(
+                "gfal.cli.copy.fs.url_to_fs",
+                side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.Spinner"),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[MagicMock(), copy_progress],
+            ),
+        ):
+            cmd._copy_directory_parallel(
+                fake_client,
+                src.as_uri(),
+                dst.as_uri(),
+                {"timeout": 1800},
+                SimpleNamespace(),
+            )
+
+        fake_client._async_client._stat_sync.assert_not_called()
+        assert fake_client.stat.call_count == 1
+        assert any(
+            call.kwargs.get("bytes_completed") == 3
+            for call in copy_progress.update.call_args_list
+        )
+
+    def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "copy-me.txt").write_text("copy me")
+        (src / "skip-me.txt").write_text("skip me")
+        (dst / "skip-me.txt").write_text("already here")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            compare="none",
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        with (
+            patch(
+                "gfal.core.api.GfalClient.start_copy",
+                return_value=_DoneHandle(),
+            ),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert any(
+            call.args[0]
+            == "Recursive scan complete: 2 files, 1 queued to copy, 1 already present and likely skipped"
+            for call in mock_live_message.call_args_list
+        )
+        assert any(
+            call.args[0].startswith("Recursive copy complete: 2 copied, elapsed ")
+            for call in mock_live_message.call_args_list
+        )
+
+    def test_recursive_limit_caps_started_children_and_summary(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        for name in ("one.txt", "two.txt", "three.txt"):
+            (src / name).write_text(name)
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            compare="none",
+            limit=2,
+        )
+
+        started = []
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        def _start_copy(src_url, dst_url, **kwargs):
+            del kwargs
+            started.append((src_url, dst_url))
+            return _DoneHandle()
+
+        with (
+            patch("gfal.core.api.GfalClient.start_copy", side_effect=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert len(started) == 2
+        assert any(
+            call.args[0]
+            == "Recursive scan complete: 3 files, 2 queued to copy, 0 already present and likely skipped (limited to 2)"
+            for call in mock_live_message.call_args_list
+        )
+        assert any(
+            call.args[0].startswith("Recursive copy complete: 2 copied, elapsed ")
+            for call in mock_live_message.call_args_list
+        )
 
     def test_recursive_directory_child_does_not_set_progress_total(self, tmp_path):
         src = tmp_path / "srcdir"
@@ -1359,7 +1901,11 @@ class TestCliUsesLibraryCopy:
 
         progress = fake_instances[0]
         assert ("stop", True, "skipped") in progress.calls
-        mock_live_message.assert_not_called()
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert "Source      " in messages[0]
+        assert any("Starting transfers" in message for message in messages)
+        assert any("Copy complete" in message for message in messages)
+        assert any("Skipped : 1 file" in message for message in messages)
 
     def test_recursive_top_level_children_use_start_copy_not_copy(self, tmp_path):
         src = tmp_path / "srcdir"
