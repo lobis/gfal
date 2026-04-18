@@ -305,6 +305,7 @@ class CommandCopy(base.CommandBase):
     def __init__(self):
         super().__init__()
         self._recursive_interrupt_summary = None
+        self._interrupt_cancel_error_emitted = False
 
     @base.arg(
         "-f", "--force", action="store_true", help="overwrite destination if it exists"
@@ -582,7 +583,17 @@ class CommandCopy(base.CommandBase):
                 else:
                     self._do_copy(src, dst, opts)
             except Exception as e:
-                if not getattr(e, "already_reported", False):
+                cancelled_error = exception_exit_code(getattr(e, "first_error", e)) in {
+                    errno.ECANCELED,
+                    errno.EINTR,
+                }
+                if not (
+                    getattr(e, "already_reported", False)
+                    or (
+                        cancelled_error
+                        and getattr(self, "_interrupt_cancel_error_emitted", False)
+                    )
+                ):
                     self._print_error(e)
                 rc = exception_exit_code(getattr(e, "first_error", e))
                 if self.params.abort_on_failure:
@@ -1090,6 +1101,7 @@ class CommandCopy(base.CommandBase):
 
     def _clear_recursive_interrupt_summary_state(self):
         self._recursive_interrupt_summary = None
+        self._interrupt_cancel_error_emitted = False
 
     def _emit_interrupt_summary_if_pending(self):
         state = self._recursive_interrupt_summary
@@ -1129,6 +1141,14 @@ class CommandCopy(base.CommandBase):
                     elapsed,
                 )
             )
+        return True
+
+    def _emit_interrupt_error_if_pending(self):
+        state = self._recursive_interrupt_summary
+        if state is None or self._interrupt_cancel_error_emitted:
+            return False
+        self._interrupt_cancel_error_emitted = True
+        self._print_error(GfalError("Transfer cancelled", errno.ECANCELED))
         return True
 
     def _render_single_final_summary(
