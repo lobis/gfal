@@ -1140,7 +1140,7 @@ jobs:
         mkdir -p release-upload
 
         cp -a release-artifacts/python/. release-upload/
-        cp -a release-artifacts/conda/noarch/. release-upload/
+        find release-artifacts/conda/noarch/ -name "*.conda" -exec cp {} release-upload/ \;
 
         # As with the Pages repo, publish a single canonical noarch RPM from
         # the x86_64 build for each EL release to avoid duplicate filenames
