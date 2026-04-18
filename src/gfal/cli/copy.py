@@ -302,6 +302,10 @@ class _TransferDisplay:
 
 
 class CommandCopy(base.CommandBase):
+    def __init__(self):
+        super().__init__()
+        self._recursive_interrupt_summary = None
+
     @base.arg(
         "-f", "--force", action="store_true", help="overwrite destination if it exists"
     )
@@ -1044,6 +1048,89 @@ class CommandCopy(base.CommandBase):
         block.append(_short_elapsed_text(elapsed), style="bold")
         return block
 
+    def _set_recursive_interrupt_summary_state(
+        self,
+        *,
+        copied,
+        copied_bytes,
+        skipped,
+        failed,
+        recursive_start,
+        scan_summary,
+        rich_recursive_layout,
+    ):
+        self._recursive_interrupt_summary = {
+            "lock": threading.Lock(),
+            "printed": False,
+            "copied": copied,
+            "copied_bytes": copied_bytes,
+            "skipped": skipped,
+            "failed": failed,
+            "recursive_start": recursive_start,
+            "scan_summary": scan_summary,
+            "rich_recursive_layout": rich_recursive_layout,
+        }
+
+    def _update_recursive_interrupt_summary_state(self, **updates):
+        state = self._recursive_interrupt_summary
+        if state is None:
+            return
+        with state["lock"]:
+            state.update(updates)
+
+    def _mark_recursive_interrupt_summary_printed(self):
+        state = self._recursive_interrupt_summary
+        if state is None:
+            return False
+        with state["lock"]:
+            if state["printed"]:
+                return False
+            state["printed"] = True
+            return True
+
+    def _clear_recursive_interrupt_summary_state(self):
+        self._recursive_interrupt_summary = None
+
+    def _emit_interrupt_summary_if_pending(self):
+        state = self._recursive_interrupt_summary
+        if state is None:
+            return False
+        with state["lock"]:
+            if state["printed"]:
+                return False
+            state["printed"] = True
+            copied = state["copied"]
+            copied_bytes = state["copied_bytes"]
+            skipped = state["skipped"]
+            failed = state["failed"]
+            recursive_start = state["recursive_start"]
+            scan_summary = state["scan_summary"]
+            rich_recursive_layout = state["rich_recursive_layout"]
+
+        elapsed = time.monotonic() - recursive_start
+        if rich_recursive_layout:
+            print_live_message(
+                self._render_recursive_final_summary(
+                    copied,
+                    copied_bytes,
+                    skipped,
+                    failed,
+                    elapsed,
+                    scan_summary,
+                    cancelled=True,
+                )
+            )
+        else:
+            print_live_message(
+                self._recursive_result_summary(
+                    copied,
+                    skipped,
+                    failed,
+                    elapsed,
+                )
+            )
+        return True
+
     def _render_single_final_summary(
         self,
         copied,
@@ -1188,6 +1275,15 @@ class CommandCopy(base.CommandBase):
         finished_count = 0
         aggregate_progress = None
         cancelled = False
+        self._set_recursive_interrupt_summary_state(
+            copied=copied_count,
+            copied_bytes=copied_bytes,
+            skipped=skipped_count,
+            failed=len(failures),
+            recursive_start=recursive_start,
+            scan_summary=child_summary,
+            rich_recursive_layout=rich_recursive_layout,
+        )
         if rich_recursive_layout and child_jobs:
             print_live_message(self._render_recursive_transfer_start())
         if (
@@ -1290,6 +1386,12 @@ class CommandCopy(base.CommandBase):
                             if display_size:
                                 copied_bytes += display_size
                         finished_count += 1
+                        self._update_recursive_interrupt_summary_state(
+                            copied=copied_count,
+                            copied_bytes=copied_bytes,
+                            skipped=skipped_count,
+                            failed=len(failures),
+                        )
                         _update_aggregate_progress()
                     except Exception as exc:
                         display.transfer_index = finished_count + 1
@@ -1301,6 +1403,12 @@ class CommandCopy(base.CommandBase):
                             self._print_error(exc)
                         failures.append(exc)
                         finished_count += 1
+                        self._update_recursive_interrupt_summary_state(
+                            copied=copied_count,
+                            copied_bytes=copied_bytes,
+                            skipped=skipped_count,
+                            failed=len(failures),
+                        )
                         _update_aggregate_progress()
                         if copy_options.abort_on_failure:
                             for _, _, active_handle, active_display in active:
@@ -1330,17 +1438,18 @@ class CommandCopy(base.CommandBase):
                     aggregate_progress.stop(not failures and not cancelled)
             if not self._is_quiet():
                 if rich_recursive_layout:
-                    print_live_message(
-                        self._render_recursive_final_summary(
-                            copied_count,
-                            copied_bytes,
-                            skipped_count,
-                            len(failures),
-                            time.monotonic() - recursive_start,
-                            child_summary,
-                            cancelled=cancelled,
+                    if self._mark_recursive_interrupt_summary_printed():
+                        print_live_message(
+                            self._render_recursive_final_summary(
+                                copied_count,
+                                copied_bytes,
+                                skipped_count,
+                                len(failures),
+                                time.monotonic() - recursive_start,
+                                child_summary,
+                                cancelled=cancelled,
+                            )
                         )
-                    )
                 else:
                     print_live_message(
                         self._recursive_result_summary(
@@ -1350,6 +1459,7 @@ class CommandCopy(base.CommandBase):
                             time.monotonic() - recursive_start,
                         )
                     )
+            self._clear_recursive_interrupt_summary_state()
 
         if failures:
             raise GfalPartialFailureError(

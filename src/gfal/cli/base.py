@@ -797,6 +797,10 @@ class CommandBase:
         self.argv = None
         self._cancel_event = Event()
 
+    def _emit_interrupt_summary_if_pending(self):
+        """Allow commands to render a final interrupt summary during shutdown."""
+        return False
+
     @contextlib.contextmanager
     def spinner(self, message):
         """Displays a rich status spinner for blocking operations.
@@ -1162,18 +1166,28 @@ class CommandBase:
                 while t.is_alive() and time.monotonic() < deadline:
                     t.join(0.1)
             except KeyboardInterrupt:
-                sys.stderr.write("\nInterrupted\n")
+                summary_emitted = False
+                with contextlib.suppress(Exception):
+                    summary_emitted = bool(self._emit_interrupt_summary_if_pending())
+                if not summary_emitted:
+                    sys.stderr.write("\nInterrupted\n")
+                with contextlib.suppress(Exception):
+                    sys.stdout.flush()
                 with contextlib.suppress(Exception):
                     sys.stderr.flush()
                 return errno.EINTR
 
+            summary_emitted = False
+            with contextlib.suppress(Exception):
+                summary_emitted = bool(self._emit_interrupt_summary_if_pending())
             with contextlib.suppress(Exception):
                 sys.stdout.flush()
             with contextlib.suppress(Exception):
                 sys.stderr.flush()
             if t.is_alive():
-                sys.stderr.write("\nInterrupted\n")
-                with contextlib.suppress(Exception):
-                    sys.stderr.flush()
+                if not summary_emitted:
+                    sys.stderr.write("\nInterrupted\n")
+                    with contextlib.suppress(Exception):
+                        sys.stderr.flush()
                 return errno.EINTR
             return self.return_code if self.return_code is not None else errno.EINTR

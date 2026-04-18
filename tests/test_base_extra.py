@@ -788,6 +788,50 @@ class TestCommandBaseExecute:
         assert rc == errno.EINTR
         assert "Interrupted" in captured.err
 
+    def test_execute_keyboard_interrupt_emits_pending_command_summary(
+        self, monkeypatch, capsys
+    ):
+        class _SummaryCmd(self._make_minimal_cmd_with_params().__class__):
+            def _emit_interrupt_summary_if_pending(self_inner):
+                print("SUMMARY")
+                return True
+
+        cmd = _SummaryCmd()
+        cmd.params = self._make_minimal_cmd_with_params().params
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls == 1:
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        times = iter([100.0, 111.0])
+        monkeypatch.setattr("gfal.cli.base.time.monotonic", lambda: next(times))
+        rc = cmd.execute(func)
+        captured = capsys.readouterr()
+        assert rc == errno.EINTR
+        assert "SUMMARY" in captured.out
+        assert "Interrupted" not in captured.err
+
 
 # ---------------------------------------------------------------------------
 # _argspec_to_click_option: choices without explicit type
