@@ -390,7 +390,10 @@ class AsyncGfalClient:
             except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
 
-        thread = threading.Thread(target=_runner)
+        # Copy handles run in background worker threads so recursive-copy
+        # cancellations can emit a final summary and let the process exit
+        # without waiting for every in-flight transfer backend to unwind.
+        thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
 

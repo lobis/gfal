@@ -251,7 +251,7 @@ async def test_async_start_copy_wait_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_async_start_copy_uses_non_daemon_thread(monkeypatch):
+async def test_async_start_copy_uses_daemon_thread(monkeypatch):
     client = AsyncGfalClient()
 
     def _slow_copy(
@@ -279,7 +279,7 @@ async def test_async_start_copy_uses_non_daemon_thread(monkeypatch):
     monkeypatch.setattr(client, "_copy_sync", _slow_copy)
     handle = client.start_copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
 
-    assert handle._thread.daemon is False
+    assert handle._thread.daemon is True
 
     await handle.wait_async(timeout=1)
 
