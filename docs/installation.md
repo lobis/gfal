@@ -50,7 +50,7 @@ Install the repository configuration:
 
 ```bash
 dnf install -y epel-release
-dnf config-manager --set-enabled crb
+if [ "$(rpm -E '%{rhel}')" = "9" ]; then dnf config-manager --set-enabled crb; fi
 curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
 dnf install -y python3-gfal
 ```
@@ -66,8 +66,13 @@ You can also download individual packages from the [GitHub Releases](https://git
 
 **AlmaLinux 9/10**:
 ```bash
-dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-latest-el9.rpm
+dnf install -y epel-release
+dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').noarch.rpm
 ```
+
+If you use direct-download installs, update the version in the filename when a
+new release comes out. If you want the latest version automatically, use the
+repository configuration above instead.
 
 This RPM has the same support profile as the repository package: HTTP/HTTPS by
 default, without bundled XRootD support.

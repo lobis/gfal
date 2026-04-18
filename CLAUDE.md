@@ -183,6 +183,27 @@ If `X509_USER_PROXY` is not set and no `--cert` flag is given, `base.py:execute(
   - > Always keep the `Requires:` and `BuildRequires:` in the `.spec` file in sync with the `dependencies` in `pyproject.toml`.
 - **GitHub Actions**: The `publish.yml` workflow automatically builds and publishes PyPI packages and RPMs to both PyPI and GitHub Releases when a new `v*` tag is pushed.
 
+### AlmaLinux install docs
+
+When updating AlmaLinux installation instructions:
+
+- mention `epel-release` explicitly:
+  ```bash
+  dnf install -y epel-release
+  ```
+- use a simple direct RPM example for AlmaLinux 9 and 10:
+  ```bash
+  dnf install -y epel-release
+  dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').noarch.rpm
+  ```
+- mention that users should update the version in the filename manually for
+  direct-download installs, and use the repo instead if they want automatic
+  latest updates.
+- when documenting `crb`, only enable it on AlmaLinux 9:
+  ```bash
+  if [ "$(rpm -E '%{rhel}')" = "9" ]; then dnf config-manager --set-enabled crb; fi
+  ```
+
 ## Common args (every command)
 
 `-v / --verbose`, `-t / --timeout`, `-E / --cert`, `--key`, `--log-file`
