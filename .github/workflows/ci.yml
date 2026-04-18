@@ -915,10 +915,12 @@ jobs:
         gfal --help
     - name: Verify shell completion files
       run: |
+        rpm -q bash-completion
         test -f /usr/share/bash-completion/completions/gfal
         test -f /usr/share/zsh/site-functions/_gfal
         grep -q '_gfal_completion' /usr/share/bash-completion/completions/gfal
         grep -q '_gfal_completion' /usr/share/zsh/site-functions/_gfal
+        bash -lc 'source /usr/share/bash-completion/bash_completion; _completion_loader gfal >/dev/null 2>&1 || [ "$?" -eq 124 ]; complete -p gfal | grep -q _gfal_completion'
     - name: Install pip and test dependencies
       run: |
         python3 -m ensurepip --upgrade || dnf install -y python3-pip

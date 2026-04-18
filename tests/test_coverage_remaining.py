@@ -315,6 +315,27 @@ class TestXrootdLsEnrich:
             result = xrootd_ls_enrich(fso, "/dir")
         assert result == [{"name": "f"}]
 
+    def test_dirlist_malformed_result_falls_back(self):
+        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
+        mock_module = MagicMock(
+            DirListFlags=MagicMock(STAT=1),
+            StatInfoFlags=mock_flags,
+        )
+        fso = MagicMock()
+        fso._myclient.dirlist.return_value = ()
+        fso.ls.return_value = [{"name": "f"}]
+        fso.timeout = 30
+        with patch.dict(
+            "sys.modules",
+            {
+                "XRootD": MagicMock(),
+                "XRootD.client": MagicMock(),
+                "XRootD.client.flags": mock_module,
+            },
+        ):
+            result = xrootd_ls_enrich(fso, "/dir")
+        assert result == [{"name": "f"}]
+
     def test_dirlist_success(self):
         mock_flags_obj = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
         item = SimpleNamespace(
