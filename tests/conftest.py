@@ -23,8 +23,8 @@ def require_test_prereq(condition: bool, reason: str) -> None:
 # Retry hook: automatically rerun any test tagged @pytest.mark.network
 # ---------------------------------------------------------------------------
 
-_NETWORK_RERUNS = 3
-_NETWORK_RERUNS_DELAY = 5  # seconds between retries
+_NETWORK_RERUNS = 5
+_NETWORK_RERUNS_DELAY = 30  # seconds between retries
 
 
 def pytest_collection_modifyitems(items):
