@@ -120,6 +120,7 @@ class _TransferDisplay:
         self.transfer_index = transfer_index
         self.transfer_total = transfer_total
         self.rich_history = rich_history
+        self._suppress_output = False
         self._lock = threading.Lock()
 
     def _transfer_label(self):
@@ -207,6 +208,8 @@ class _TransferDisplay:
 
     def start(self):
         with self._lock:
+            if self._suppress_output:
+                return
             if self.progress_started:
                 return
             self.progress_started = True
@@ -227,6 +230,8 @@ class _TransferDisplay:
     def update(self, bytes_transferred):
         self.start()
         with self._lock:
+            if self._suppress_output:
+                return
             if self.show_progress and self.progress_bar is not None and self.src_size:
                 self.progress_bar.update(
                     curr_size=bytes_transferred,
@@ -236,6 +241,8 @@ class _TransferDisplay:
 
     def set_mode(self, mode):
         with self._lock:
+            if self._suppress_output:
+                return
             self.transfer_mode = mode
             if self.show_progress and self.progress_bar is not None:
                 label = self._transfer_label()
@@ -246,12 +253,16 @@ class _TransferDisplay:
 
     def set_total_size(self, total_size):
         with self._lock:
+            if self._suppress_output:
+                return
             self.src_size = total_size
             if self.show_progress and self.progress_bar is not None and total_size:
                 self.progress_bar.update(total_size=total_size)
 
     def mark_skipped(self):
         with self._lock:
+            if self._suppress_output:
+                return
             self.final_status = "skipped"
             self.transfer_mode = None
             if self.show_progress and self.progress_bar is not None:
@@ -263,6 +274,8 @@ class _TransferDisplay:
 
     def finish(self, success):
         with self._lock:
+            if self._suppress_output:
+                return
             if not self.progress_started or (
                 not self.show_progress and self.progress_bar is None
             ):
@@ -282,6 +295,10 @@ class _TransferDisplay:
                     elapsed=time.monotonic() - self.transfer_start,
                 )
             self.progress_bar.stop(success, status=self.final_status)
+
+    def suppress_output(self):
+        with self._lock:
+            self._suppress_output = True
 
 
 class CommandCopy(base.CommandBase):
@@ -1136,8 +1153,8 @@ class CommandCopy(base.CommandBase):
             nonlocal cancelled
             cancelled = True
             for _, _, active_handle, active_display in active:
+                active_display.suppress_output()
                 active_handle.cancel()
-                active_display.finish(False)
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -1199,6 +1216,7 @@ class CommandCopy(base.CommandBase):
                     completed_any = True
                     active.remove((child_src_url, child_dst_url, handle, display))
                     try:
+                        display.transfer_index = finished_count + 1
                         handle.wait()
                         display.finish(True)
                         if getattr(display, "final_status", None) == "skipped":
@@ -1211,6 +1229,7 @@ class CommandCopy(base.CommandBase):
                         finished_count += 1
                         _update_aggregate_progress()
                     except Exception as exc:
+                        display.transfer_index = finished_count + 1
                         display.finish(False)
                         if (
                             self._child_error_key(exc)

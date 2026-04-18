@@ -1127,8 +1127,9 @@ class TestCliUsesLibraryCopy:
         messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
         assert any("one.txt" in message and "copied" in message for message in messages)
         assert any("two.txt" in message and "copied" in message for message in messages)
-        assert any("[1/2]" in message for message in messages)
-        assert any("[2/2]" in message for message in messages)
+        copied_messages = [message for message in messages if "copied" in message]
+        assert copied_messages[0].startswith("[1/2]")
+        assert copied_messages[1].startswith("[2/2]")
         assert messages[0].endswith("\n")
         assert messages[1].endswith("\n")
         assert "Source      " in messages[0]
@@ -1203,6 +1204,9 @@ class TestCliUsesLibraryCopy:
         assert any("one.txt" in message and "copied" in message for message in messages)
         assert any("two.txt" in message and "copied" in message for message in messages)
         assert sum("copied" in message for message in messages) == 2
+        copied_messages = [message for message in messages if "copied" in message]
+        assert copied_messages[0].startswith("[1/2]")
+        assert copied_messages[1].startswith("[2/2]")
         assert any("Scan complete" in message for message in messages)
         assert "Destination " in messages[0]
         final_summary_index = next(
@@ -1276,6 +1280,7 @@ class TestCliUsesLibraryCopy:
         assert any("Copied  : 1 file" in message for message in messages)
         assert any("Avg rate: " in message for message in messages)
         assert any("Elapsed :" in message for message in messages)
+        assert sum("✗ failed" in message for message in messages) == 0
         fake_copy_progress.stop.assert_called_once_with(False)
 
     def test_history_status_line_includes_size_rate_and_elapsed(self):
