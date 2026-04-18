@@ -828,7 +828,7 @@ jobs:
           ${{ matrix.os.image }} \
           bash -c "dnf install -y git rpm-build make python3-devel python3-pip && \
                    git config --global --add safe.directory '*' && \
-                   python3 -m pip install build hatchling hatch-vcs && \
+                   python3 -m pip install build hatchling hatch-vcs click 'rich>=13.0.0' 'rich-click>=1.7.0' 'fsspec>=2023.1.0' && \
                    make rpm"
     - name: Store RPMs
       uses: actions/upload-artifact@v7

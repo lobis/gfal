@@ -26,6 +26,13 @@ prepare: dist
 	cp $(DIST_DIR)/$(NAME_DIST)-$${FULL_VERSION}-py3-none-any.whl $(RPMBUILD)/SOURCES/$(NAME_DIST)-$${VERSION}-py3-none-any.whl; \
 	cp $(SPECFILE) $(RPMBUILD)/SPECS/; \
 	cp CHANGELOG $(RPMBUILD)/SOURCES/
+	@# Generate shell completion scripts for RPM packaging
+	@PYTHONPATH=src _GFAL_COMPLETE=bash_source python3 -c \
+		"import sys; sys.argv=['gfal']; from gfal.cli.shell import main; main()" \
+		> $(RPMBUILD)/SOURCES/gfal.bash-completion
+	@PYTHONPATH=src _GFAL_COMPLETE=zsh_source python3 -c \
+		"import sys; sys.argv=['gfal']; from gfal.cli.shell import main; main()" \
+		> $(RPMBUILD)/SOURCES/_gfal.zsh-completion
 
 srpm: prepare
 	@FULL_VERSION=$$(python3 -m hatchling version); \
