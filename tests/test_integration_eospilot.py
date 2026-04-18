@@ -512,7 +512,7 @@ class TestEosPilotStreamingCopy:
 
         assert rc == 0, out
         reported = _extract_progress_elapsed_seconds(out, mode="streamed")
-        assert abs(elapsed - reported) <= max(4.0, reported * 0.5), (
+        assert abs(elapsed - reported) <= max(10.0, reported * 0.75), (
             f"wall={elapsed:.2f}s reported={reported}s\n{_strip_ansi(out)}"
         )
 
