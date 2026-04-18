@@ -726,6 +726,81 @@ copy_mod.GfalClient.start_copy = _start_copy
         assert "Transfer cancelled: Operation canceled" in output
         assert "Interrupted" not in output
 
+    def test_recursive_tty_sigint_with_completed_transfers_shows_summary(
+        self, tmp_path
+    ):
+        """Summary must appear even when some transfers completed before SIGINT."""
+        srcdir = tmp_path / "src_int_done"
+        dstdir = tmp_path / "dst_int_done"
+        srcdir.mkdir()
+        for i in range(5):
+            (srcdir / f"file{i:02d}.txt").write_text(f"content {i}")
+
+        preamble = """
+import errno
+import threading
+import time
+from gfal.core.errors import GfalError
+import gfal.cli.copy as copy_mod
+
+_counter_lock = threading.Lock()
+_counter = [0]
+
+class _Handle:
+    def __init__(self, cancel_event, complete_fast):
+        self._cancel_event = cancel_event
+        self._complete_fast = complete_fast
+        self._done = False
+        def _runner():
+            if complete_fast:
+                time.sleep(0.05)
+            else:
+                while not cancel_event.is_set():
+                    time.sleep(0.02)
+            self._done = True
+        self._thread = threading.Thread(target=_runner, daemon=True)
+        self._thread.start()
+
+    def done(self):
+        return self._done
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        if not self._complete_fast and self._cancel_event.is_set():
+            raise GfalError("Transfer cancelled", errno.ECANCELED)
+        return None
+
+    def cancel(self):
+        self._cancel_event.set()
+
+def _start_copy(self, src_url, dst_url, **kwargs):
+    with _counter_lock:
+        n = _counter[0]
+        _counter[0] += 1
+    kwargs["transfer_mode_callback"]("tpc-pull")
+    kwargs["start_callback"]()
+    return _Handle(kwargs["cancel_event"], complete_fast=(n < 3))
+
+copy_mod.GfalClient.start_copy = _start_copy
+        """
+
+        rc, output = _run_gfal_tty_with_sigint(
+            "cp",
+            "-r",
+            "--parallel",
+            "5",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+            preamble=preamble,
+            interrupt_after=1.0,
+        )
+
+        assert rc != 0
+        assert "Copy interrupted" in output, f"Summary missing from output:\n{output}"
+        assert "Copied  :" in output
+        assert "Avg rate:" in output
+        assert "Elapsed :" in output
+
     # --- -f / --force --------------------------------------------------------
 
     def test_force_overwrite_ignores_compare(self, tmp_path):

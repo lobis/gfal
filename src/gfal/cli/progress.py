@@ -541,10 +541,12 @@ class RichCountProgress:
             else:
                 with contextlib.suppress(Exception):
                     manager.progress.stop_task(self.task_id)
-            manager.progress.refresh()
+            with contextlib.suppress(Exception):
+                manager.progress.refresh()
             manager.active = max(0, manager.active - 1)
             if manager.started and manager.active == 0:
-                manager.progress.stop()
+                with contextlib.suppress(Exception):
+                    manager.progress.stop()
                 manager.started = False
 
 

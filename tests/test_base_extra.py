@@ -753,6 +753,41 @@ class TestCommandBaseExecute:
         assert rc == errno.EINTR
         assert "Interrupted" in captured.err
 
+    def test_execute_keyboard_interrupt_second_signal_aborts_cleanup_wait(
+        self, monkeypatch, capsys
+    ):
+        cmd = self._make_minimal_cmd_with_params()
+
+        def func(self):
+            return 0
+
+        func.is_interactive = False
+
+        class _FakeThread:
+            def __init__(self, target=None, args=None):
+                del target, args
+                self._alive = True
+                self._join_calls = 0
+
+            def start(self):
+                return None
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                del timeout
+                self._join_calls += 1
+                if self._join_calls in (1, 2):
+                    raise KeyboardInterrupt
+                return None
+
+        monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        rc = cmd.execute(func)
+        captured = capsys.readouterr()
+        assert rc == errno.EINTR
+        assert "Interrupted" in captured.err
+
 
 # ---------------------------------------------------------------------------
 # _argspec_to_click_option: choices without explicit type

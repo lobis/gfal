@@ -1153,15 +1153,19 @@ class CommandBase:
             if self.progress_bar is not None:
                 self.progress_bar.stop(False)
 
+            # Give the worker a short grace window to tear down any live
+            # progress UI and render the recursive cancel summary. A second
+            # Ctrl-C during this wait is treated as an explicit request to
+            # abort immediately.
             deadline = time.monotonic() + 10.0
-            while t.is_alive() and time.monotonic() < deadline:
-                try:
+            try:
+                while t.is_alive() and time.monotonic() < deadline:
                     t.join(0.1)
-                except KeyboardInterrupt:
-                    sys.stderr.write("\nInterrupted\n")
-                    with contextlib.suppress(Exception):
-                        sys.stderr.flush()
-                    return errno.EINTR
+            except KeyboardInterrupt:
+                sys.stderr.write("\nInterrupted\n")
+                with contextlib.suppress(Exception):
+                    sys.stderr.flush()
+                return errno.EINTR
 
             with contextlib.suppress(Exception):
                 sys.stdout.flush()

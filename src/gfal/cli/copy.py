@@ -1326,7 +1326,8 @@ class CommandCopy(base.CommandBase):
             raise
         finally:
             if aggregate_progress is not None:
-                aggregate_progress.stop(not failures and not cancelled)
+                with contextlib.suppress(Exception):
+                    aggregate_progress.stop(not failures and not cancelled)
             if not self._is_quiet():
                 if rich_recursive_layout:
                     print_live_message(
