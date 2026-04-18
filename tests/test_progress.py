@@ -4,6 +4,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+from rich.text import Text
+
 from gfal.cli.progress import (
     CountProgress,
     RichCountProgress,
@@ -11,6 +13,7 @@ from gfal.cli.progress import (
     RichSpinner,
     _final_status_text,
     _should_emit_live_final_message,
+    _status_renderable,
     has_live_progress,
     print_live_message,
 )
@@ -460,9 +463,6 @@ class TestRichSpinner:
             def stop(self):
                 calls.append(("stop",))
 
-            def update(self, *, status):
-                calls.append(("update", status))
-
         class _FakeConsole:
             def status(self, label):
                 calls.append(("status", label))
@@ -474,13 +474,11 @@ class TestRichSpinner:
 
         spinner = RichSpinner("Scanning example")
         spinner.start()
-        spinner.set_label("Scanning example (5 files)")
         spinner.stop()
 
         assert calls == [
             ("status", "Scanning example"),
             ("start",),
-            ("update", "Scanning example (5 files)"),
             ("stop",),
         ]
 
@@ -541,10 +539,25 @@ class TestPrintLiveMessage:
 
         print_live_message("Copying one.txt [DONE]")
 
-        assert printed == [("Copying one.txt [DONE]", False, False)]
+        assert len(printed) == 1
+        assert str(printed[0][0]) == "Copying one.txt [DONE]"
+        assert printed[0][1:] == (False, False)
         assert stopped == [True]
         assert started == [True]
         assert refreshed == [True]
+
+
+class TestStatusRenderable:
+    def test_done_status_is_rendered_as_text(self):
+        renderable = _status_renderable("Copying one.txt [DONE]  1.0 MB")
+
+        assert isinstance(renderable, Text)
+        assert str(renderable) == "Copying one.txt [DONE]  1.0 MB"
+
+    def test_plain_message_stays_plain(self):
+        message = "Recursive scan complete: 2 files"
+
+        assert _status_renderable(message) == message
 
 
 class TestHasLiveProgress:

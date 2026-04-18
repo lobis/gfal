@@ -1095,11 +1095,15 @@ class TestCliUsesLibraryCopy:
             kwargs["start_callback"]()
             return _DoneHandle()
 
-        fake_count_progress = MagicMock()
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
-            patch("gfal.cli.copy.CountProgress", return_value=fake_count_progress),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
             patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
@@ -1112,9 +1116,11 @@ class TestCliUsesLibraryCopy:
             ((src / "two.txt").as_uri(), (dst / "two.txt").as_uri()),
         ]
         mock_progress.assert_not_called()
-        fake_count_progress.start.assert_called_once()
-        assert fake_count_progress.update.call_count == 2
-        fake_count_progress.stop.assert_called_once_with(True)
+        fake_scan_progress.start.assert_called_once()
+        fake_copy_progress.start.assert_called_once()
+        assert fake_copy_progress.update.call_count == 2
+        fake_scan_progress.stop.assert_called_once_with(True)
+        fake_copy_progress.stop.assert_called_once_with(True)
         messages = [call.args[0] for call in mock_live_message.call_args_list]
         assert any(
             "Copying one.txt (TPC pull) [DONE]" in message for message in messages
@@ -1155,15 +1161,19 @@ class TestCliUsesLibraryCopy:
             kwargs["start_callback"]()
             return _DoneHandle()
 
-        fake_count_progress = MagicMock()
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
         events = []
-        fake_count_progress.stop.side_effect = lambda *args, **kwargs: events.append(
+        fake_copy_progress.stop.side_effect = lambda *args, **kwargs: events.append(
             ("stop", args, kwargs)
         )
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
-            patch("gfal.cli.copy.CountProgress", return_value=fake_count_progress),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
@@ -1175,9 +1185,11 @@ class TestCliUsesLibraryCopy:
             cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
 
         mock_progress.assert_not_called()
-        fake_count_progress.start.assert_called_once()
-        assert fake_count_progress.update.call_count == 2
-        fake_count_progress.stop.assert_called_once_with(True)
+        fake_scan_progress.start.assert_called_once()
+        fake_copy_progress.start.assert_called_once()
+        assert fake_copy_progress.update.call_count == 2
+        fake_scan_progress.stop.assert_called_once_with(True)
+        fake_copy_progress.stop.assert_called_once_with(True)
         messages = [call.args[0] for call in mock_live_message.call_args_list]
         assert any(
             "Copying one.txt (TPC pull) [DONE]" in message for message in messages
@@ -1247,7 +1259,7 @@ class TestCliUsesLibraryCopy:
         fake_spinner.start.assert_called_once()
         fake_spinner.stop.assert_called_once_with(False)
 
-    def test_recursive_scan_spinner_updates_live_file_count(self, tmp_path):
+    def test_recursive_scan_uses_live_count_progress(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
         src.mkdir()
@@ -1287,6 +1299,8 @@ class TestCliUsesLibraryCopy:
         fake_dst_fs = MagicMock()
         fake_dst_fs.ls.return_value = []
         fake_spinner = MagicMock()
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
 
         with (
             patch(
@@ -1294,6 +1308,11 @@ class TestCliUsesLibraryCopy:
                 side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
             ),
             patch("gfal.cli.copy.Spinner", return_value=fake_spinner),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
         ):
             cmd._copy_directory_parallel(
                 fake_client,
@@ -1303,10 +1322,19 @@ class TestCliUsesLibraryCopy:
                 SimpleNamespace(),
             )
 
-        labels = [call.args[0] for call in fake_spinner.set_label.call_args_list]
-        assert any(label.endswith("(1 files)") for label in labels)
-        assert any(label.endswith("(250 files)") for label in labels)
-        assert labels[-1].endswith("(251 files)")
+        fake_spinner.start.assert_called_once()
+        fake_spinner.stop.assert_called_once_with(True)
+        fake_scan_progress.start.assert_called_once()
+        completed_updates = [
+            call.kwargs["completed"]
+            for call in fake_scan_progress.update.call_args_list
+            if "completed" in call.kwargs
+        ]
+        assert 1 in completed_updates
+        assert 250 in completed_updates
+        assert completed_updates[-1] == 251
+        fake_scan_progress.stop.assert_any_call(True)
+        fake_copy_progress.start.assert_called_once()
 
     def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
         src = tmp_path / "srcdir"

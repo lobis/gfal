@@ -8,6 +8,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+from rich.text import Text
+
 try:
     import fcntl
     import termios
@@ -37,10 +39,10 @@ def Progress(label, tui_callback=None):
     return RichProgress(label)
 
 
-def CountProgress(label, total):
+def CountProgress(label, total, transient=True):
     if is_gfal2_compat():
-        return LegacyCountProgress(label, total)
-    return RichCountProgress(label, total)
+        return LegacyCountProgress(label, total, transient=transient)
+    return RichCountProgress(label, total, transient=transient)
 
 
 def Spinner(label):
@@ -65,6 +67,7 @@ def _active_live_manager():
 
 
 def print_live_message(message):
+    renderable = _status_renderable(message)
     manager = _active_live_manager()
     if manager is not None:
         with manager.lock:
@@ -72,16 +75,43 @@ def print_live_message(message):
                 with contextlib.suppress(Exception):
                     manager.progress.stop()
                 manager.started = False
-                manager.progress.console.print(message, markup=False, highlight=False)
+                manager.progress.console.print(
+                    renderable, markup=False, highlight=False
+                )
                 with contextlib.suppress(Exception):
                     manager.progress.start()
                 manager.started = True
             else:
-                manager.progress.console.print(message, markup=False, highlight=False)
+                manager.progress.console.print(
+                    renderable, markup=False, highlight=False
+                )
             manager.progress.refresh()
         return
 
-    print(message)
+    if isinstance(renderable, str):
+        print(renderable)
+        return
+    get_console(stderr=False).print(renderable, markup=False, highlight=False)
+
+
+def _status_renderable(message):
+    if not isinstance(message, str):
+        return message
+
+    styles = {
+        "[DONE]": "green",
+        "[FAILED]": "red",
+        "[SKIPPED]": "yellow",
+    }
+    for marker, style in styles.items():
+        if marker not in message:
+            continue
+        prefix, suffix = message.split(marker, 1)
+        renderable = Text(prefix)
+        renderable.append(marker, style=style)
+        renderable.append(suffix)
+        return renderable
+    return message
 
 
 def _final_status_text(label, success, status=None):
@@ -343,29 +373,23 @@ class RichSpinner:
         with contextlib.suppress(Exception):
             self._status.stop()
 
-    def set_label(self, label):
-        self.label = label
-        if not self._started_flag:
-            return
-        with contextlib.suppress(Exception):
-            self._status.update(status=label)
-
 
 class RichCountProgress:
-    _shared = None
+    _shared = {}
     _shared_init_lock = threading.Lock()
 
-    def __init__(self, label, total):
+    def __init__(self, label, total, transient=True):
         self.label = label
         self.total = total
+        self.transient = transient
         self._started_flag = False
         self.task_id = None
 
-    @classmethod
-    def _manager(cls):
-        if cls._shared is None:
-            with cls._shared_init_lock:
-                if cls._shared is None:
+    def _manager(self):
+        key = bool(self.transient)
+        if key not in self._shared:
+            with self._shared_init_lock:
+                if key not in self._shared:
                     from rich.progress import (
                         BarColumn,
                         SpinnerColumn,
@@ -374,7 +398,7 @@ class RichCountProgress:
                     )
                     from rich.progress import Progress as _RichProgress
 
-                    cls._shared = SimpleNamespace(
+                    self._shared[key] = SimpleNamespace(
                         lock=threading.Lock(),
                         progress=_RichProgress(
                             SpinnerColumn(),
@@ -384,7 +408,7 @@ class RichCountProgress:
                             TimeElapsedColumn(),
                             console=get_console(stderr=False),
                             expand=True,
-                            transient=True,
+                            transient=key,
                             refresh_per_second=10,
                             redirect_stdout=False,
                             redirect_stderr=False,
@@ -393,7 +417,7 @@ class RichCountProgress:
                         started=False,
                         active=0,
                     )
-        return cls._shared
+        return self._shared[key]
 
     def start(self):
         manager = self._manager()
@@ -577,14 +601,11 @@ class LegacySpinner:
     def stop(self, success=True, status=None):
         self._progress.stop(success, status=status)
 
-    def set_label(self, label):
-        self.label = label
-        self._progress.label = label
-
 
 class LegacyCountProgress:
-    def __init__(self, label, total):
+    def __init__(self, label, total, transient=True):
         del total
+        del transient
         self._spinner = LegacySpinner(label)
 
     def start(self):

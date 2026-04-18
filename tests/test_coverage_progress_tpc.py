@@ -103,6 +103,12 @@ class TestProgressFactory:
         result = CountProgress("label", 3)
         assert isinstance(result, RichCountProgress)
 
+    def test_count_progress_preserves_transient_override(self, monkeypatch):
+        monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: False)
+        result = CountProgress("label", 3, transient=False)
+        assert isinstance(result, RichCountProgress)
+        assert result.transient is False
+
 
 # ---------------------------------------------------------------------------
 # progress.py — Spinner() factory
@@ -308,12 +314,12 @@ class TestRichProgressExtraBranches:
         monkeypatch.setattr(
             "gfal.cli.progress.get_console", lambda stderr=False: object()
         )
-        monkeypatch.setattr(RichCountProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(RichCountProgress, "_shared", {}, raising=False)
         monkeypatch.setattr(
             RichCountProgress, "_shared_init_lock", threading.Lock(), raising=False
         )
 
-        RichCountProgress._manager()
+        RichCountProgress("label", 3)._manager()
 
         assert created_kwargs["transient"] is True
         assert created_kwargs["redirect_stdout"] is False
