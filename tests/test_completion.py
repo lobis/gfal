@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import pytest
+
 from helpers import _subprocess_env
 
 
@@ -106,10 +108,10 @@ class TestClickShellCompletion:
                 env=_subprocess_env(),
             )
         except FileNotFoundError:
-            return
+            pytest.skip("zsh not installed")
 
         if version_check.returncode != 0:
-            return
+            pytest.skip("zsh --version failed")
 
         gfal_dir = str(Path(sys.executable).parent)
         zsh_script = """
