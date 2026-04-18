@@ -65,20 +65,28 @@ def _unique_pilot_path(stem: str) -> str:
 
 
 def _copy_preserves_mtime_in_docker(command: str) -> tuple[int, bool, str]:
+    uid = uuid4().hex[:12]
+    src_path = f"/tmp/gfal-copy-src-{uid}"
+    dst_path = f"/tmp/gfal-copy-dst-{uid}"
+    # Replace placeholder paths in the command with unique paths
+    resolved_command = command.replace(
+        "file:///tmp/gfal-copy-src", f"file://{src_path}"
+    ).replace("file:///tmp/gfal-copy-dst", f"file://{dst_path}")
     script = f"""
 set -e
 rm -rf /var/tmp/gfal-src
-rm -f /tmp/gfal-copy-src /tmp/gfal-copy-dst
-printf 'mtime test\\n' >/tmp/gfal-copy-src
-touch -t 200001010000 /tmp/gfal-copy-src
-{command}
+rm -f {src_path} {dst_path}
+printf 'mtime test\\n' >{src_path}
+touch -t 200001010000 {src_path}
+{resolved_command}
 python3 - <<'PY'
 from pathlib import Path
 
-src = Path('/tmp/gfal-copy-src')
-dst = Path('/tmp/gfal-copy-dst')
+src = Path('{src_path}')
+dst = Path('{dst_path}')
 print(int(src.stat().st_mtime) == int(dst.stat().st_mtime))
 PY
+rm -f {src_path} {dst_path}
 """
     rc, out, err = _docker_run_command(script)
     preserved = (
@@ -88,17 +96,27 @@ PY
 
 
 def _copy_existing_dst_error_in_docker(command: str) -> tuple[int, str]:
+    uid = uuid4().hex[:12]
+    src_path = f"/tmp/gfal-copy-src-{uid}"
+    dst_path = f"/tmp/gfal-copy-dst-{uid}"
+    out_file = f"/tmp/copy-{uid}.out"
+    err_file = f"/tmp/copy-{uid}.err"
+    # Replace placeholder paths in the command with unique paths
+    resolved_command = command.replace(
+        "file:///tmp/gfal-copy-src", f"file://{src_path}"
+    ).replace("file:///tmp/gfal-copy-dst", f"file://{dst_path}")
     script = f"""
 set -e
-rm -f /tmp/gfal-copy-src /tmp/gfal-copy-dst
-printf 'src\\n' >/tmp/gfal-copy-src
-printf 'dst\\n' >/tmp/gfal-copy-dst
+rm -f {src_path} {dst_path}
+printf 'src\\n' >{src_path}
+printf 'dst\\n' >{dst_path}
 set +e
-{command} >/tmp/copy.out 2>/tmp/copy.err
+{resolved_command} >{out_file} 2>{err_file}
 rc=$?
 set -e
 printf '%s\\n' "$rc"
-cat /tmp/copy.err
+cat {err_file}
+rm -f {src_path} {dst_path} {out_file} {err_file}
 """
     rc, out, err = _docker_run_command(script)
     assert rc == 0, err or out

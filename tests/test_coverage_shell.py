@@ -11,6 +11,7 @@ import sys
 import types
 
 import click
+import pytest
 
 # ---------------------------------------------------------------------------
 # _ensure_xrootd_dylib_path
@@ -73,6 +74,9 @@ class TestEnsureXrootdDylibPath:
 
         _ensure_xrootd_dylib_path()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="os.execve not reliable on Windows"
+    )
     def test_darwin_execve_called_with_empty_current(self, monkeypatch, tmp_path):
         """darwin + pyxrootd + not in path + argv[0] is a file → os.execve called."""
         monkeypatch.setattr(sys, "platform", "darwin")
@@ -103,6 +107,9 @@ class TestEnsureXrootdDylibPath:
         _, _, new_env = execve_calls[0]
         assert new_env["DYLD_LIBRARY_PATH"] == "/fake/lib/pyxrootd"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="os.execve not reliable on Windows"
+    )
     def test_darwin_execve_called_with_existing_dyld(self, monkeypatch, tmp_path):
         """Existing DYLD_LIBRARY_PATH is preserved and prepended to."""
         monkeypatch.setattr(sys, "platform", "darwin")
@@ -132,6 +139,9 @@ class TestEnsureXrootdDylibPath:
         _, _, new_env = execve_calls[0]
         assert new_env["DYLD_LIBRARY_PATH"] == "/fake/lib/pyxrootd:/some/other/path"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="os.execve not reliable on Windows"
+    )
     def test_darwin_execve_args_correct(self, monkeypatch, tmp_path):
         """os.execve receives sys.executable and [sys.executable] + sys.argv."""
         monkeypatch.setattr(sys, "platform", "darwin")
