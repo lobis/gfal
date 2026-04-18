@@ -17,7 +17,7 @@ from helpers import run_gfal
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
-def _run_gfal_tty(*args):
+def _run_gfal_tty(*args, preamble=""):
     """Run ``gfal`` attached to a PTY so Rich progress output is emitted."""
     if sys.platform == "win32":
         import pytest
@@ -26,9 +26,14 @@ def _run_gfal_tty(*args):
 
     import pty
 
-    script = (
-        "import sys; sys.argv=['gfal'] + sys.argv[1:];"
-        "from gfal.cli.shell import main; main()"
+    script = "\n".join(
+        [
+            "import sys",
+            textwrap.dedent(preamble).strip(),
+            "sys.argv=['gfal'] + sys.argv[1:]",
+            "from gfal.cli.shell import main",
+            "main()",
+        ]
     )
     env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
 
@@ -671,10 +676,14 @@ class TestCopyOverwrite:
 
         preamble = """
 import errno
+import os
+import signal
 import threading
 import time
 from gfal.core.errors import GfalError
 import gfal.cli.copy as copy_mod
+
+_sigint_started = [False]
 
 class _Handle:
     def __init__(self, cancel_event):
@@ -702,12 +711,20 @@ class _Handle:
 def _start_copy(self, src_url, dst_url, **kwargs):
     kwargs["transfer_mode_callback"]("tpc-pull")
     kwargs["start_callback"]()
+    if not _sigint_started[0]:
+        _sigint_started[0] = True
+
+        def _send_sigint():
+            time.sleep(0.2)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        threading.Thread(target=_send_sigint, daemon=True).start()
     return _Handle(kwargs["cancel_event"])
 
 copy_mod.GfalClient.start_copy = _start_copy
         """
 
-        rc, output = _run_gfal_tty_with_sigint(
+        rc, output = _run_gfal_tty(
             "cp",
             "-r",
             "--parallel",
@@ -715,7 +732,6 @@ copy_mod.GfalClient.start_copy = _start_copy
             srcdir.as_uri(),
             dstdir.as_uri(),
             preamble=preamble,
-            interrupt_after=0.5,
         )
 
         assert rc != 0
@@ -738,6 +754,8 @@ copy_mod.GfalClient.start_copy = _start_copy
 
         preamble = """
 import errno
+import os
+import signal
 import threading
 import time
 from gfal.core.errors import GfalError
@@ -745,6 +763,7 @@ import gfal.cli.copy as copy_mod
 
 _counter_lock = threading.Lock()
 _counter = [0]
+_sigint_started = [False]
 
 class _Handle:
     def __init__(self, cancel_event, complete_fast):
@@ -779,12 +798,20 @@ def _start_copy(self, src_url, dst_url, **kwargs):
         _counter[0] += 1
     kwargs["transfer_mode_callback"]("tpc-pull")
     kwargs["start_callback"]()
+    if n == 3 and not _sigint_started[0]:
+        _sigint_started[0] = True
+
+        def _send_sigint():
+            time.sleep(0.2)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        threading.Thread(target=_send_sigint, daemon=True).start()
     return _Handle(kwargs["cancel_event"], complete_fast=(n < 3))
 
 copy_mod.GfalClient.start_copy = _start_copy
         """
 
-        rc, output = _run_gfal_tty_with_sigint(
+        rc, output = _run_gfal_tty(
             "cp",
             "-r",
             "--parallel",
@@ -792,7 +819,6 @@ copy_mod.GfalClient.start_copy = _start_copy
             srcdir.as_uri(),
             dstdir.as_uri(),
             preamble=preamble,
-            interrupt_after=1.0,
         )
 
         assert rc != 0
