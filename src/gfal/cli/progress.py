@@ -37,19 +37,36 @@ def Progress(label, tui_callback=None):
     return RichProgress(label)
 
 
+def CountProgress(label, total):
+    if is_gfal2_compat():
+        return LegacyCountProgress(label, total)
+    return RichCountProgress(label, total)
+
+
 def Spinner(label):
     if is_gfal2_compat():
         return LegacySpinner(label)
     return RichSpinner(label)
 
 
-def print_live_message(message):
+def _active_live_manager():
     if is_gfal2_compat():
-        print(message)
-        return
+        return None
 
-    manager = getattr(RichProgress, "_shared", None)
-    if manager is not None and getattr(manager, "started", False):
+    for progress_cls in (RichProgress, RichCountProgress):
+        manager = getattr(progress_cls, "_shared", None)
+        if (
+            manager is not None
+            and getattr(manager, "started", False)
+            and getattr(manager, "active", 0) > 0
+        ):
+            return manager
+    return None
+
+
+def print_live_message(message):
+    manager = _active_live_manager()
+    if manager is not None:
         with manager.lock:
             manager.progress.console.print(message, markup=False, highlight=False)
             manager.progress.refresh()
@@ -70,15 +87,7 @@ def _should_emit_live_final_message(success, status=None):
 
 def has_live_progress():
     """Return True when Rich progress is currently managing live output."""
-    if is_gfal2_compat():
-        return False
-
-    manager = getattr(RichProgress, "_shared", None)
-    return bool(
-        manager is not None
-        and getattr(manager, "started", False)
-        and getattr(manager, "active", 0) > 0
-    )
+    return _active_live_manager() is not None
 
 
 class TuiProgress(Callback):
@@ -325,6 +334,96 @@ class RichSpinner:
             self._status.stop()
 
 
+class RichCountProgress:
+    _shared = None
+    _shared_init_lock = threading.Lock()
+
+    def __init__(self, label, total):
+        self.label = label
+        self.total = total
+        self._started_flag = False
+        self.task_id = None
+
+    @classmethod
+    def _manager(cls):
+        if cls._shared is None:
+            with cls._shared_init_lock:
+                if cls._shared is None:
+                    from rich.progress import (
+                        BarColumn,
+                        SpinnerColumn,
+                        TextColumn,
+                        TimeElapsedColumn,
+                    )
+                    from rich.progress import Progress as _RichProgress
+
+                    cls._shared = SimpleNamespace(
+                        lock=threading.Lock(),
+                        progress=_RichProgress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TextColumn("{task.completed}/{task.total} files"),
+                            TimeElapsedColumn(),
+                            console=get_console(stderr=False),
+                            expand=True,
+                            transient=True,
+                            refresh_per_second=10,
+                            redirect_stdout=False,
+                            redirect_stderr=False,
+                        ),
+                        started=False,
+                        active=0,
+                    )
+        return cls._shared
+
+    def start(self):
+        manager = self._manager()
+        with manager.lock:
+            if self._started_flag:
+                return
+            if not manager.started:
+                manager.progress.start()
+                manager.started = True
+            self.task_id = manager.progress.add_task(self.label, total=self.total)
+            manager.active += 1
+            self._started_flag = True
+            manager.progress.refresh()
+
+    def update(self, completed=None, total=None):
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            kwargs = {}
+            if completed is not None:
+                kwargs["completed"] = completed
+            if total is not None:
+                kwargs["total"] = total
+            manager.progress.update(self.task_id, **kwargs)
+            manager.progress.refresh()
+
+    def stop(self, success=True, status=None):
+        del success, status
+        manager = self._manager()
+        with manager.lock:
+            if not self._started_flag:
+                return
+            self._started_flag = False
+            remove_task = getattr(manager.progress, "remove_task", None)
+            if remove_task is not None:
+                with contextlib.suppress(Exception):
+                    remove_task(self.task_id)
+            else:
+                with contextlib.suppress(Exception):
+                    manager.progress.stop_task(self.task_id)
+            manager.progress.refresh()
+            manager.active = max(0, manager.active - 1)
+            if manager.started and manager.active == 0:
+                manager.progress.stop()
+                manager.started = False
+
+
 class LegacyProgress:
     def __init__(self, label):
         self.label = label
@@ -459,3 +558,18 @@ class LegacySpinner:
 
     def stop(self, success=True, status=None):
         self._progress.stop(success, status=status)
+
+
+class LegacyCountProgress:
+    def __init__(self, label, total):
+        del total
+        self._spinner = LegacySpinner(label)
+
+    def start(self):
+        self._spinner.start()
+
+    def update(self, completed=None, total=None):
+        del completed, total
+
+    def stop(self, success=True, status=None):
+        self._spinner.stop(success=success, status=status)

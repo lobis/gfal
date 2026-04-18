@@ -4,8 +4,9 @@ import threading
 import time
 from types import SimpleNamespace
 
-from gfal.cli.progress import LegacyProgress as Progress
 from gfal.cli.progress import (
+    CountProgress,
+    RichCountProgress,
     RichProgress,
     RichSpinner,
     _final_status_text,
@@ -13,6 +14,7 @@ from gfal.cli.progress import (
     has_live_progress,
     print_live_message,
 )
+from gfal.cli.progress import LegacyProgress as Progress
 
 
 class TestProgressInit:
@@ -503,6 +505,35 @@ class TestPrintLiveMessage:
         assert printed == [("Skipping existing file dst", False, False)]
         assert refreshed == [True]
 
+    def test_live_message_uses_active_count_progress_console(self, monkeypatch):
+        printed = []
+        refreshed = []
+
+        class _FakeConsole:
+            def print(self, message, markup=False, highlight=False):
+                printed.append((message, markup, highlight))
+
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichCountProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=SimpleNamespace(
+                    console=_FakeConsole(),
+                    refresh=lambda: refreshed.append(True),
+                ),
+                started=True,
+                active=1,
+            ),
+            raising=False,
+        )
+
+        print_live_message("Copying one.txt [DONE]")
+
+        assert printed == [("Copying one.txt [DONE]", False, False)]
+        assert refreshed == [True]
+
 
 class TestHasLiveProgress:
     def test_false_without_manager(self, monkeypatch):
@@ -512,6 +543,16 @@ class TestHasLiveProgress:
     def test_true_with_active_manager(self, monkeypatch):
         monkeypatch.setattr(
             RichProgress,
+            "_shared",
+            SimpleNamespace(started=True, active=1),
+            raising=False,
+        )
+        assert has_live_progress() is True
+
+    def test_true_with_active_count_manager(self, monkeypatch):
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichCountProgress,
             "_shared",
             SimpleNamespace(started=True, active=1),
             raising=False,
@@ -539,3 +580,15 @@ class TestShouldEmitLiveFinalMessage:
 
     def test_failure_is_printed(self):
         assert _should_emit_live_final_message(False) is True
+
+
+class TestCountProgressFactory:
+    def test_returns_legacy_when_gfal2_compat(self, monkeypatch):
+        monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: True)
+        result = CountProgress("Copying files", 5)
+        assert result.__class__.__name__ == "LegacyCountProgress"
+
+    def test_returns_rich_when_not_gfal2_compat(self, monkeypatch):
+        monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: False)
+        result = CountProgress("Copying files", 5)
+        assert isinstance(result, RichCountProgress)

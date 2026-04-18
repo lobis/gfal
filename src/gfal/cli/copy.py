@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
 from gfal.cli.progress import (
+    CountProgress,
     Progress,
     Spinner,
     _final_status_text,
@@ -152,7 +153,7 @@ class _TransferDisplay:
             ):
                 return
             if self.show_progress and self.history_only:
-                print_live_message(
+                print(
                     _final_status_text(
                         self._transfer_label(),
                         success,
@@ -812,6 +813,16 @@ class CommandCopy(base.CommandBase):
         pending = deque(child_jobs)
         copied_count = 0
         skipped_count = 0
+        finished_count = 0
+        aggregate_progress = None
+        if (
+            child_jobs
+            and sys.stdout.isatty()
+            and not self.params.verbose
+            and not self._is_quiet()
+        ):
+            aggregate_progress = CountProgress("Copying files", len(child_jobs))
+            aggregate_progress.start()
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -877,15 +888,23 @@ class CommandCopy(base.CommandBase):
                         skipped_count += 1
                     else:
                         copied_count += 1
+                    finished_count += 1
+                    if aggregate_progress is not None:
+                        aggregate_progress.update(completed=finished_count)
                 except Exception as exc:
                     display.finish(False)
                     if self._child_error_key(exc) not in self._reported_child_errors:
                         self._print_error(exc)
                     failures.append(exc)
+                    finished_count += 1
+                    if aggregate_progress is not None:
+                        aggregate_progress.update(completed=finished_count)
                     if copy_options.abort_on_failure:
                         for _, _, active_handle, active_display in active:
                             active_handle.cancel()
                             active_display.finish(False)
+                        if aggregate_progress is not None:
+                            aggregate_progress.stop(False)
                         raise exc
 
             if not completed_any:
@@ -907,6 +926,8 @@ class CommandCopy(base.CommandBase):
                     len(failures),
                 )
             )
+        if aggregate_progress is not None:
+            aggregate_progress.stop(not failures)
 
         if failures:
             raise GfalPartialFailureError(
