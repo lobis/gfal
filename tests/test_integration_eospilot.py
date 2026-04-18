@@ -511,11 +511,14 @@ class TestEosPilotStreamingCopy:
                 dst,
                 timeout=120,
             )
-            reported = _extract_progress_elapsed_seconds(out, mode="streamed")
         except AssertionError as exc:
             pytest.xfail(f"Known flaky EOS streamed timing run: {exc}")
 
         assert rc == 0, out
+        try:
+            reported = _extract_progress_elapsed_seconds(out, mode="streamed")
+        except AssertionError as exc:
+            pytest.xfail(f"Known flaky EOS streamed timing run: {exc}")
         assert abs(elapsed - reported) <= max(15.0, reported), (
             f"wall={elapsed:.2f}s reported={reported}s\n{_strip_ansi(out)}"
         )
