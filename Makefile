@@ -4,9 +4,11 @@ SPECFILE = $(NAME).spec
 DIST_DIR = dist
 RPMBUILD = $(shell pwd)/rpmbuild
 
-.PHONY: all clean dist srpm rpm prepare
+.PHONY: all clean dist srpm rpm prepare badges
 
-all: dist
+badges:
+	python3 scripts/update_badge_counts.py
+
 
 clean:
 	rm -rf $(DIST_DIR)
