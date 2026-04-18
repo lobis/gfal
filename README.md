@@ -7,14 +7,62 @@
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable Python-only rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available in the environment.
+A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available.
 
-The Textual terminal UI now lives in the separate
-[`gfal-tui`](https://github.com/lobis/gfal-tui) repository/package.
+`gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
-## Python library API
+## Installation
 
-`gfal` is available as both an async-first library API and a synchronous facade:
+```bash
+pip install gfal
+```
+
+This installs the CLI and the Python library with local-file and HTTP/HTTPS support. For XRootD (`root://`) support, you additionally need XRootD bindings:
+
+```bash
+# Conda (recommended)
+conda install -c conda-forge xrootd
+
+# Or install the full bundle from the lobis channel
+conda install -c lobis -c conda-forge gfal
+```
+
+See the [installation docs](https://lobis.github.io/gfal/installation/) for RPM packages, native repositories, and CERN CA certificate setup.
+
+## Python library
+
+`import gfal` gives you an **async-first** client and a **synchronous** wrapper — same methods, same API:
+
+### Synchronous
+
+```python
+import gfal
+
+client = gfal.GfalClient()
+
+# Stat
+info = client.stat("/tmp/data.txt")
+print(f"size={info.size}, is_file={info.is_file()}")
+
+# List a directory
+for entry in client.ls("/tmp/mydir"):
+    print(f"{entry.size:>10}  {entry.info['name']}")
+
+# Copy with checksum verification
+client.copy(
+    "https://example.com/data.root",
+    "file:///tmp/data.root",
+    options=gfal.CopyOptions(
+        overwrite=True,
+        checksum=gfal.ChecksumPolicy("ADLER32"),
+    ),
+)
+
+# Checksum
+print(client.checksum("/tmp/data.root", "MD5"))
+```
+
+### Asynchronous
 
 ```python
 import asyncio
@@ -23,147 +71,141 @@ import gfal
 
 async def main():
     client = gfal.AsyncGfalClient()
-    stat_result = await client.stat("file:///tmp/input.txt")
+
+    info = await client.stat("/tmp/data.txt")
+    print(f"size={info.size}")
+
+    entries = await client.ls("/tmp/mydir")
+    for entry in entries:
+        print(entry.info["name"])
+
     await client.copy(
-        "file:///tmp/input.txt",
-        "file:///tmp/output.txt",
-        options=gfal.CopyOptions(
-            overwrite=True,
-            checksum=gfal.ChecksumPolicy("ADLER32"),
-        ),
+        "root://server//eos/data/file.root",
+        "file:///tmp/file.root",
     )
-    return stat_result.size
 
 
 asyncio.run(main())
 ```
 
+### Key features
+
+| Method | Description |
+|--------|-------------|
+| `stat(url)` | POSIX-style metadata (`StatResult`) |
+| `exists(url)` | Check existence |
+| `ls(url)` | List directory (returns `StatResult` list or names) |
+| `copy(src, dst)` | Copy files/directories with optional checksum, TPC, dry-run |
+| `start_copy(src, dst)` | Background copy returning a `TransferHandle` |
+| `checksum(url, algo)` | Compute `ADLER32`, `MD5`, `SHA256`, etc. |
+| `open(url, mode)` | Open remote file for reading/writing |
+| `mkdir(url)` | Create directories (with `parents=True` for `-p`) |
+| `rm(url)` | Remove files/directories |
+| `rename(src, dst)` | Rename within same filesystem |
+| `chmod(url, mode)` | Change permissions |
+| `getxattr` / `setxattr` / `listxattr` / `xattrs` | Extended attributes |
+
+### Error handling
+
+All operations raise typed exceptions inheriting from `GfalError` (`OSError`):
+
 ```python
-import gfal
-
-client = gfal.GfalClient()
-client.copy("file:///tmp/input.txt", "file:///tmp/output.txt")
+try:
+    client.stat("file:///nonexistent")
+except gfal.GfalFileNotFoundError:
+    print("File not found")
+except gfal.GfalPermissionError:
+    print("Permission denied")
+except gfal.GfalError as e:
+    print(f"Error (errno={e.errno}): {e}")
 ```
 
-## Installation
+Available exceptions: `GfalFileNotFoundError`, `GfalPermissionError`, `GfalFileExistsError`, `GfalNotADirectoryError`, `GfalIsADirectoryError`, `GfalTimeoutError`.
 
-### From PyPI
+For the full Python API reference, see the [Python API documentation](https://lobis.github.io/gfal/python-api/).
+
+## CLI quick start
+
+After installation, the `gfal` command is available on your `PATH`:
 
 ```bash
-pip install gfal
+# Stat a remote file (HTTPS)
+gfal stat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
+
+# List a directory (XRootD)
+gfal ls -l root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-photons/
+
+# Compute a checksum
+gfal sum https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C MD5
+
+# Download a file
+gfal cp https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C file:///tmp/single_cluster_r5.C
+
+# Peek at the contents
+gfal cat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C | head -n 5
 ```
 
-This installs the base package with local-file and HTTP/HTTPS support.
+Local paths work as bare paths or `file://` URIs. See [EOS public examples](docs/eospublic-examples.md) for more.
 
-### From PyPI with XRootD support
+## CLI reference
 
-```bash
-pip install gfal
-```
+### Commands
 
-This installs the Python dependencies, including `fsspec-xrootd`. For `root://`
-support you also need XRootD bindings available in the environment. In conda
-environments, install them from conda-forge:
-
-```bash
-conda install -c conda-forge xrootd
-```
-
-### From Conda with XRootD support
-
-```bash
-conda install -c lobis -c conda-forge gfal
-```
-
-The conda package includes XRootD support out of the box by depending on both
-`xrootd` and `fsspec-xrootd`.
-
-### From Native Repository (Recommended for Updates)
-
-Enable the repository to receive automatic updates via `dnf update`.
-
-#### YUM (AlmaLinux / RHEL)
-
-```bash
-dnf install -y epel-release
-dnf config-manager --set-enabled crb
-curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.repo
-dnf install -y python3-gfal
-```
-
-The RPM build is currently **HTTP/HTTPS-only**. XRootD support is not bundled in
-the EPEL package because `fsspec-xrootd` is not available there yet.
-
-After installation the `gfal` command is available on your `PATH`. Run `gfal --help` to see all subcommands:
-
-| Subcommand | Description |
-|-----------|-------------|
+| Command | Description |
+|---------|-------------|
 | `gfal ls` | List directory contents |
-| `gfal cp` | Copy files |
+| `gfal cp` | Copy files or directories |
 | `gfal rm` | Remove files or directories |
-| `gfal mkdir` | Create directories |
 | `gfal stat` | Display file status |
+| `gfal mkdir` | Create directories |
 | `gfal cat` | Print file contents to stdout |
 | `gfal save` | Write stdin to a remote file |
 | `gfal rename` | Rename / move a file |
 | `gfal chmod` | Change file permissions |
 | `gfal sum` | Compute file checksums |
 | `gfal xattr` | Get or set extended attributes |
+| `gfal completion` | Generate shell completions (bash, zsh, fish) |
 
-## Quick start
+### Common options (all commands)
 
-All commands accept any URL that fsspec understands. Local paths must be given as `file://` URIs.
-If you installed only `pip install gfal`, start with the `https://` examples below.
-The `root://` examples require XRootD bindings in the environment, for example
-via `conda install -c conda-forge xrootd` or `conda install -c lobis -c conda-forge gfal`.
-
-```bash
-# Stat a real EOS public file (HTTPS)
-gfal stat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
-
-# List a real EOS public directory (XRootD)
-gfal ls root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-photons/
-
-# Compute a checksum for the same file
-gfal sum https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C MD5
-
-# Copy the file to /tmp
-gfal cp https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C file:///tmp/single_cluster_r5.C
-
-# Peek at the first few lines
-gfal cat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C | head -n 5
-```
-
-For more copy-pasteable public CERN examples, see [docs/eospublic-examples.md](docs/eospublic-examples.md).
-
-## Command reference
+| Option | Description |
+|--------|-------------|
+| `-v` / `--verbose` | Verbose output (stackable: `-vv`, `-vvv`) |
+| `-t N` / `--timeout N` | Global timeout in seconds (default: 1800) |
+| `-E CERT` / `--cert CERT` | Path to client certificate (PEM) |
+| `--key KEY` | Path to client key (PEM) |
+| `--no-verify` | Disable TLS certificate verification |
+| `--log-file FILE` | Write log output to a file |
 
 ### `gfal ls`
 
-```
+```bash
 gfal ls [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `-l` | Long listing (permissions, size, date) |
-| `-a` / `--all` | Show hidden files (names starting with `.`) |
+| `-a` / `--all` | Show hidden files |
 | `-d` / `--directory` | List the entry itself, not its contents |
-| `-H` / `--human-readable` | Human-readable sizes with `-l` (e.g. `1.2M`) |
+| `-H` / `--human-readable` | Human-readable sizes (e.g. `1.2M`) |
 | `-r` / `--reverse` | Reverse sort order |
-| `--time-style` | Timestamp format: `locale` (default), `iso`, `long-iso`, `full-iso` |
+| `--sort` | Sort by: `name` (default), `size`, `time`, `extension`, `version`, `none` |
+| `-S` | Sort by size (shorthand for `--sort=size`) |
+| `--time-style` | Timestamp format: `locale`, `iso`, `long-iso`, `full-iso` |
 | `--full-time` | Equivalent to `--time-style=full-iso` |
 | `--color` | Colorise output: `auto` (default), `always`, `never` |
+| `--xattr ATTR` | Show an extended attribute column |
 
 ```bash
 gfal ls -lH root://server//eos/data/
-gfal ls -la file:///tmp/mydir/
-gfal ls -l --time-style=full-iso https://example.com/files/
+gfal ls -la /tmp/mydir/
+gfal ls -l --sort=size --reverse root://server//eos/data/
 ```
 
 ### `gfal cp`
 
-```
+```bash
 gfal cp [OPTIONS] SRC [SRC ...] DST
 ```
 
@@ -171,15 +213,21 @@ gfal cp [OPTIONS] SRC [SRC ...] DST
 |--------|-------------|
 | `-f` / `--force` | Overwrite destination if it exists |
 | `-r` / `-R` / `--recursive` | Copy directories recursively |
-| `-p` / `--parent` | Create parent directories at destination as needed |
-| `-K ALG` / `--checksum ALG` | Verify checksum after copy (`ADLER32`, `MD5`, `SHA256`, …) |
+| `-p` / `--parent` | Create parent directories at destination |
+| `-K ALG` / `--checksum ALG` | Verify checksum (`ADLER32`, `MD5`, `SHA256`, …); use `ALG:value` to supply expected hash |
 | `--checksum-mode` | `both` (default), `source`, `target` |
+| `--compare` | Skip if destination matches: `size`, `size_mtime`, `checksum`, `none` |
+| `--parallel N` | Concurrent transfers during recursive copy |
+| `--preserve-times` | Preserve modification timestamps (default) |
+| `--no-preserve-times` | Don't preserve timestamps |
 | `--dry-run` | Show what would be copied without copying |
 | `--from-file FILE` | Read source URIs from a file (one per line) |
 | `--abort-on-failure` | Stop after the first failed transfer |
-| `--transfer-timeout N` | Per-file timeout in seconds (0 = no timeout) |
+| `-T N` / `--transfer-timeout N` | Per-file timeout in seconds |
 | `--tpc` | Attempt third-party copy, fall back to streaming |
 | `--tpc-only` | Require third-party copy (fail if unsupported) |
+| `--tpc-mode` | TPC direction: `pull` (default) or `push` |
+| `--scitag N` | WLCG SciTag flow identifier (65–65535) |
 
 ```bash
 # Simple copy
@@ -188,35 +236,41 @@ gfal cp file:///tmp/src.txt https://server/dst.txt
 # Force overwrite with ADLER32 verification
 gfal cp -f -K ADLER32 root://server//path/file.root file:///tmp/file.root
 
-# Recursive copy, create parents
-gfal cp -r -p root://server//eos/srcdir/ file:///tmp/dstdir/
+# Recursive copy, create parents, with parallel transfers
+gfal cp -r -p --parallel 4 root://server//eos/srcdir/ file:///tmp/dstdir/
 
-# Third-party copy between two XRootD servers
+# Skip if destination already has same size
+gfal cp --compare size root://server//eos/data/ file:///tmp/data/
+
+# Third-party copy between two servers
 gfal cp --tpc root://src-server//path/file root://dst-server//path/file
+
+# Dry-run preview
+gfal cp -r --dry-run root://server//eos/data/ file:///tmp/backup/
 ```
 
 ### `gfal rm`
 
-```
+```bash
 gfal rm [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `-r` / `-R` / `--recursive` | Remove directories and their contents |
-| `--dry-run` | Show what would be deleted without deleting |
+| `--dry-run` | Show what would be deleted |
 | `--from-file FILE` | Read URIs to delete from a file |
 | `--just-delete` | Skip the stat check and delete directly |
 
 ```bash
 gfal rm file:///tmp/old.txt
 gfal rm -r root://server//eos/old_dir/
-gfal rm --dry-run root://server//eos/dir/     # preview only
+gfal rm --dry-run root://server//eos/dir/
 ```
 
 ### `gfal stat`
 
-```
+```bash
 gfal stat URI [URI ...]
 ```
 
@@ -233,13 +287,13 @@ Change: 2025-06-01 12:34:56.000000
 
 ### `gfal mkdir`
 
-```
+```bash
 gfal mkdir [OPTIONS] URI [URI ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `-p` / `--parents` | Create intermediate parent directories; no error if already exists |
+| `-p` / `--parents` | Create intermediate directories; no error if exists |
 | `-m MODE` | Permissions in octal (default: `755`) |
 
 ```bash
@@ -249,11 +303,11 @@ gfal mkdir -p root://server//eos/user/j/jdoe/a/b/c
 
 ### `gfal sum`
 
-```
+```bash
 gfal sum URI ALGORITHM
 ```
 
-Supported algorithms: `ADLER32`, `CRC32`, `CRC32C`, `MD5`, `SHA1`, `SHA256`, `SHA512`.
+Supported: `ADLER32`, `CRC32`, `CRC32C`, `MD5`, `SHA1`, `SHA256`, `SHA512`.
 
 ```bash
 gfal sum file:///tmp/file.root ADLER32
@@ -262,7 +316,7 @@ gfal sum file:///tmp/file.root ADLER32
 
 ### `gfal cat`
 
-```
+```bash
 gfal cat URI [URI ...]
 ```
 
@@ -270,48 +324,65 @@ Prints file contents to stdout. Multiple files are concatenated.
 
 ### `gfal save`
 
-```
-gfal save URI
-```
-
-Reads from stdin and writes to the given URI.
-
 ```bash
 echo "hello" | gfal save root://server//eos/user/j/jdoe/hello.txt
 ```
 
+Reads from stdin and writes to the given URI.
+
 ### `gfal rename`
 
-```
+```bash
 gfal rename SOURCE DESTINATION
 ```
 
 ### `gfal chmod`
 
-```
+```bash
 gfal chmod MODE URI [URI ...]
 ```
 
 MODE is an octal permission string, e.g. `0644` or `755`.
 
-## Common options
+### `gfal xattr`
 
-Every command accepts these global flags:
+```bash
+# Get an attribute
+gfal xattr root://server//eos/data/file.root xroot.checksum
 
-| Option | Description |
-|--------|-------------|
-| `-v` / `--verbose` | Enable verbose output |
-| `-t N` / `--timeout N` | Global timeout in seconds |
-| `-E CERT` / `--cert CERT` | Path to client certificate (PEM) |
-| `--key KEY` | Path to client key (PEM) |
-| `--no-verify` | Disable TLS certificate verification |
-| `--log-file FILE` | Write log output to a file |
+# Set an attribute
+gfal xattr root://server//eos/data/file.root user.tag=important
+```
+
+### Shell completion
+
+Generate shell completion scripts:
+
+```bash
+# Bash
+gfal completion bash >> ~/.bashrc
+
+# Zsh
+gfal completion zsh >> ~/.zshrc
+
+# Fish
+gfal completion fish > ~/.config/fish/completions/gfal.fish
+```
 
 ## Authentication
 
 **X.509 proxy (XRootD / HTTPS):** If `X509_USER_PROXY` is set or a proxy exists at `/tmp/x509up_u<uid>`, it is used automatically. Override with `-E`/`--key`.
 
 **HTTPS client certificates:** Pass `--cert` and `--key` for mutual TLS authentication.
+
+## Supported protocols
+
+| Scheme | Description | Requirements |
+|--------|-------------|--------------|
+| `file://` or bare path | Local filesystem | Built-in |
+| `http://` / `https://` | HTTP/WebDAV | Built-in |
+| `dav://` / `davs://` | WebDAV (converted to HTTP) | Built-in |
+| `root://` | XRootD | `xrootd` + `fsspec-xrootd` |
 
 ## Development
 
