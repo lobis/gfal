@@ -58,6 +58,19 @@ def print_live_message(message):
     print(message)
 
 
+def has_live_progress():
+    """Return True when Rich progress is currently managing live output."""
+    if is_gfal2_compat():
+        return False
+
+    manager = getattr(RichProgress, "_shared", None)
+    return bool(
+        manager is not None
+        and getattr(manager, "started", False)
+        and getattr(manager, "active", 0) > 0
+    )
+
+
 class TuiProgress(Callback):
     """Callback that bridges fsspec's callback API to the TUI progress modal.
 

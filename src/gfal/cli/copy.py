@@ -14,7 +14,7 @@ from urllib.parse import urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
-from gfal.cli.progress import Progress, Spinner, print_live_message
+from gfal.cli.progress import Progress, Spinner, has_live_progress, print_live_message
 from gfal.core import api as core_api
 from gfal.core import fs
 from gfal.core.api import (
@@ -491,9 +491,12 @@ class CommandCopy(base.CommandBase):
     def _warn_copy_message(self, message, dst_url):
         if self._is_quiet():
             return
+        live_progress = has_live_progress()
         if message.startswith("Skipping existing file ") or message.startswith(
             "Skipping directory "
         ):
+            if live_progress:
+                return
             print_live_message(message)
             return
         normalized = fs.normalize_url(dst_url)
@@ -502,7 +505,11 @@ class CommandCopy(base.CommandBase):
             if scheme in self._preserve_times_warned:
                 return
             self._preserve_times_warned.add(scheme)
-        sys.stderr.write(f"{self.prog}: warning: {message}\n")
+        warning = f"{self.prog}: warning: {message}"
+        if live_progress:
+            print_live_message(warning)
+            return
+        sys.stderr.write(f"{warning}\n")
 
     def _child_error_callback(self, _child_src_url, _child_dst_url, error):
         self._reported_child_errors.add(self._child_error_key(error))

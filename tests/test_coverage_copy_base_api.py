@@ -207,7 +207,10 @@ class TestWarnCopyMessage:
         cmd = _make_cmd()
         cmd.params = _default_params(quiet=False)
         cmd._preserve_times_warned = set()
-        with patch("gfal.cli.copy.print_live_message") as mock_plm:
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=False),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
             cmd._warn_copy_message("Skipping existing file /foo", "file:///dst")
         mock_plm.assert_called_once()
 
@@ -215,9 +218,34 @@ class TestWarnCopyMessage:
         cmd = _make_cmd()
         cmd.params = _default_params(quiet=False)
         cmd._preserve_times_warned = set()
-        with patch("gfal.cli.copy.print_live_message") as mock_plm:
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=False),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
             cmd._warn_copy_message("Skipping directory /bar", "file:///dst")
         mock_plm.assert_called_once()
+
+    def test_skip_message_suppressed_when_live_progress_active(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(quiet=False)
+        cmd._preserve_times_warned = set()
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
+            cmd._warn_copy_message("Skipping existing file /foo", "file:///dst")
+        mock_plm.assert_not_called()
+
+    def test_non_skip_warning_uses_live_message_when_progress_active(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(quiet=False)
+        cmd._preserve_times_warned = set()
+        with (
+            patch("gfal.cli.copy.has_live_progress", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_plm,
+        ):
+            cmd._warn_copy_message("some warning", "file:///dst")
+        mock_plm.assert_called_once_with("gfal-cp: warning: some warning")
 
     def test_preserve_times_dedup_per_scheme(self, capsys):
         """Lines 499-505: preserve-times warning deduped by scheme."""

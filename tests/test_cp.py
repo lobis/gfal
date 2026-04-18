@@ -3,9 +3,71 @@
 import errno
 import hashlib
 import os
+import re
+import subprocess
+import sys
 import zlib
 
+import pytest
+
 from helpers import run_gfal
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _run_gfal_tty(*args):
+    """Run ``gfal`` attached to a PTY so Rich progress output is emitted."""
+    if sys.platform == "win32":
+        import pytest
+
+        pytest.skip("PTY-based progress test needs POSIX")
+
+    import pty
+
+    script = (
+        "import sys; sys.argv=['gfal'] + sys.argv[1:];"
+        "from gfal.cli.shell import main; main()"
+    )
+    env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
+
+    master_fd, slave_fd = pty.openpty()
+    proc = None
+    chunks = []
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, *[str(arg) for arg in args]],
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+        )
+        os.close(slave_fd)
+        slave_fd = None
+
+        while True:
+            try:
+                chunk = os.read(master_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if proc.poll() is not None:
+                continue
+
+        rc = proc.wait(timeout=5)
+    finally:
+        if slave_fd is not None:
+            os.close(slave_fd)
+        os.close(master_fd)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    return rc, _ANSI_ESCAPE_RE.sub("", output)
+
 
 # ---------------------------------------------------------------------------
 # Basic copy
@@ -446,6 +508,53 @@ class TestCopyOverwrite:
         assert rc == 0
         assert "Skipping existing file" in out
         assert dst.read_bytes() == b"old content"
+
+    @pytest.mark.parametrize(
+        ("compare_mode", "src_bytes", "dst_bytes", "same_mtime", "skip_hint"),
+        [
+            ("none", b"new content", b"old content", False, "[SKIPPED]"),
+            ("size", b"AAAA", b"BBBB", False, "[SKIPPED]"),
+            ("size_mtime", b"AAAA", b"BBBB", True, "[SKIPPED]"),
+            ("checksum", b"same content", b"same content", False, "[SKIPPED]"),
+        ],
+    )
+    def test_progress_output_hides_skip_messages_for_compare_modes(
+        self,
+        tmp_path,
+        compare_mode,
+        src_bytes,
+        dst_bytes,
+        same_mtime,
+        skip_hint,
+    ):
+        """TTY progress rows should absorb skip messaging without extra warning lines."""
+        srcdir = tmp_path / f"src_{compare_mode}"
+        dstdir = tmp_path / f"dst_{compare_mode}"
+        srcdir.mkdir()
+        dstdir.mkdir()
+        src = srcdir / "item.bin"
+        dst = dstdir / "item.bin"
+        src.write_bytes(src_bytes)
+        dst.write_bytes(dst_bytes)
+        if same_mtime:
+            t = 1_000_000_000
+            os.utime(src, (t, t))
+            os.utime(dst, (t, t))
+
+        rc, output = _run_gfal_tty(
+            "cp",
+            "-r",
+            "--parallel",
+            "2",
+            "--compare",
+            compare_mode,
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+        )
+
+        assert rc == 0
+        assert "Skipping existing file" not in output
+        assert skip_hint in output
 
     # --- -f / --force --------------------------------------------------------
 

@@ -5,7 +5,12 @@ import time
 from types import SimpleNamespace
 
 from gfal.cli.progress import LegacyProgress as Progress
-from gfal.cli.progress import RichProgress, RichSpinner, print_live_message
+from gfal.cli.progress import (
+    RichProgress,
+    RichSpinner,
+    has_live_progress,
+    print_live_message,
+)
 
 
 class TestProgressInit:
@@ -432,3 +437,18 @@ class TestPrintLiveMessage:
 
         assert printed == [("Skipping existing file dst", False, False)]
         assert refreshed == [True]
+
+
+class TestHasLiveProgress:
+    def test_false_without_manager(self, monkeypatch):
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        assert has_live_progress() is False
+
+    def test_true_with_active_manager(self, monkeypatch):
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(started=True, active=1),
+            raising=False,
+        )
+        assert has_live_progress() is True
