@@ -13,6 +13,7 @@ from gfal.cli.progress import (
     RichSpinner,
     _final_status_text,
     _format_binary_rate,
+    _format_binary_size,
     _should_emit_live_final_message,
     _status_renderable,
     has_live_progress,
@@ -77,6 +78,14 @@ class TestFormatBinaryRate:
 
     def test_formats_megabytes_per_second(self):
         assert _format_binary_rate(200 * 1024 * 1024) == "200.0 MB/s"
+
+
+class TestFormatBinarySize:
+    def test_zero_bytes(self):
+        assert _format_binary_size(0) == "0 B"
+
+    def test_formats_gigabytes(self):
+        assert _format_binary_size(3 * 1024 * 1024 * 1024) == "3.0 GB"
 
 
 class TestProgressSizeStr:
@@ -670,5 +679,18 @@ class TestRichCountProgress:
         progress.start()
         progress.update(completed=2, bytes_completed=1024)
 
-        assert ("add_task", "Copying files", 4, {"bytes_completed": 0}) in calls
-        assert ("update", 0, {"completed": 2, "bytes_completed": 1024}) in calls
+        assert (
+            "add_task",
+            "Copying files",
+            4,
+            {"bytes_completed": 0, "bytes_completed_human": "0 B"},
+        ) in calls
+        assert (
+            "update",
+            0,
+            {
+                "completed": 2,
+                "bytes_completed": 1024,
+                "bytes_completed_human": "1.0 KB",
+            },
+        ) in calls

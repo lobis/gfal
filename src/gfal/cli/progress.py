@@ -39,6 +39,21 @@ def _format_binary_rate(rate):
     return f"{value:.1f} {unit}"
 
 
+def _format_binary_size(size):
+    if size is None or size <= 0:
+        return "0 B"
+    value = float(size)
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    unit = units[0]
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
 def _format_hms(total_seconds):
     total_seconds = max(0, int(total_seconds))
     hours, remainder = divmod(total_seconds, 3600)
@@ -424,6 +439,15 @@ class RichCountProgress:
                     from rich.progress import Progress as _RichProgress
                     from rich.text import Text
 
+                    class _CountBytesColumn(ProgressColumn):
+                        def render(self, task):
+                            return Text(
+                                _format_binary_size(
+                                    task.fields.get("bytes_completed", 0)
+                                ),
+                                style="progress.download",
+                            )
+
                     class _CountTransferRateColumn(ProgressColumn):
                         def render(self, task):
                             bytes_completed = task.fields.get("bytes_completed", 0)
@@ -442,6 +466,8 @@ class RichCountProgress:
                             TextColumn("[progress.description]{task.description}"),
                             BarColumn(),
                             TextColumn("{task.completed}/{task.total} files"),
+                            TextColumn("{task.fields[bytes_completed_human]}"),
+                            _CountBytesColumn(),
                             _CountTransferRateColumn(),
                             TimeElapsedColumn(),
                             console=get_console(stderr=False),
@@ -471,11 +497,13 @@ class RichCountProgress:
                     self.label,
                     total=self.total,
                     bytes_completed=0,
+                    bytes_completed_human="0 B",
                 )
             if self.task_id is None:
                 self.task_id = manager.progress.add_task(
                     self.label,
                     total=self.total,
+                    bytes_completed_human="0 B",
                 )
             manager.active += 1
             self._started_flag = True
@@ -493,6 +521,7 @@ class RichCountProgress:
                 kwargs["total"] = total
             if bytes_completed is not None:
                 kwargs["bytes_completed"] = bytes_completed
+                kwargs["bytes_completed_human"] = _format_binary_size(bytes_completed)
             manager.progress.update(self.task_id, **kwargs)
             manager.progress.refresh()
 

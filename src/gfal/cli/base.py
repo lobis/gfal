@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -1120,7 +1121,7 @@ class CommandBase:
             self._executor(func)
             return self.return_code
 
-        t = Thread(target=self._executor, args=[func], daemon=True)
+        t = Thread(target=self._executor, args=[func])
         t.start()
 
         try:
@@ -1148,7 +1149,9 @@ class CommandBase:
             self._cancel_event.set()
             if self.progress_bar is not None:
                 self.progress_bar.stop(False)
-            t.join(2)
-            sys.stderr.write("\nInterrupted\n")
             signal.signal(signal.SIGINT, signal.SIG_IGN)
+            deadline = time.monotonic() + 10.0
+            while t.is_alive() and time.monotonic() < deadline:
+                t.join(0.1)
+            sys.stderr.write("\nInterrupted\n")
             return errno.EINTR

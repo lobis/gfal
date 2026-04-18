@@ -1158,7 +1158,7 @@ class CommandCopy(base.CommandBase):
             if display.show_progress:
                 display.start()
             with contextlib.suppress(Exception):
-                child_st = client.stat(child_src_url)
+                child_st = client._async_client._stat_sync(child_src_url)
                 if not child_st.is_dir():
                     display.set_total_size(child_st.st_size)
 

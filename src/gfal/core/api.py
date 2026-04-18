@@ -386,7 +386,7 @@ class AsyncGfalClient:
             except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
 
-        thread = threading.Thread(target=_runner, daemon=True)
+        thread = threading.Thread(target=_runner)
         thread.start()
         return TransferHandle(thread, cancel_event, result_holder, exc_holder)
 
