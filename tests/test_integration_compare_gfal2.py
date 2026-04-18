@@ -182,7 +182,7 @@ class TestLegacyGfal2Runtime:
         assert rc_new == 17, (
             f"expected 17 (EEXIST, no compare set), got {rc_new}: {err_new}"
         )
-        assert "exists and overwrite is not set" in err_new
+        assert "exists and overwrite is not set" in " ".join(err_new.split())
 
         _xfail_if_legacy_unusable()
         rc_old, err_old = _copy_existing_dst_error_in_docker(
@@ -191,7 +191,7 @@ class TestLegacyGfal2Runtime:
         )
         # Legacy also returns EEXIST
         assert rc_old == 17
-        assert "exists and overwrite is not set" in err_old
+        assert "exists and overwrite is not set" in " ".join(err_old.split())
 
 
 @requires_docker
