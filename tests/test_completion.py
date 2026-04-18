@@ -82,6 +82,24 @@ class TestCompletionCommand:
 class TestClickShellCompletion:
     """Click's ``_GFAL_COMPLETE`` env-var mechanism returns completion data."""
 
+    @staticmethod
+    def _require_usable_bash():
+        """Skip if ``bash`` is missing or unusable on this platform."""
+        try:
+            version_check = subprocess.run(
+                ["bash", "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=_subprocess_env(),
+            )
+        except FileNotFoundError:
+            pytest.skip("bash not installed")
+
+        if version_check.returncode != 0:
+            pytest.skip("bash is not usable in this environment")
+
     def test_bash_source_script_is_generated(self):
         """``_GFAL_COMPLETE=bash_source gfal`` emits a bash completion function."""
         rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "bash_source"})
@@ -147,6 +165,7 @@ class TestClickShellCompletion:
 
     def test_bash_completes_subcommands_without_trailing_space(self):
         """Typing ``gfal<TAB>`` still offers subcommands instead of files."""
+        self._require_usable_bash()
         gfal_dir = str(Path(sys.executable).parent)
         bash_script = """
             export PATH="$1:$PATH"
