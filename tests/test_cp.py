@@ -959,6 +959,25 @@ class TestCopyFromFile:
         assert (dstdir / "s1.txt").read_bytes() == b"one"
         assert (dstdir / "s2.txt").read_bytes() == b"two"
 
+    def test_from_file_limit(self, tmp_path):
+        src1 = tmp_path / "s1.txt"
+        src2 = tmp_path / "s2.txt"
+        src1.write_bytes(b"one")
+        src2.write_bytes(b"two")
+        dstdir = tmp_path / "dstdir"
+        dstdir.mkdir()
+
+        sources_file = tmp_path / "sources.txt"
+        sources_file.write_text(f"{src1.as_uri()}\n{src2.as_uri()}\n")
+
+        rc, out, err = run_gfal(
+            "cp", "--from-file", str(sources_file), "--limit", "1", dstdir.as_uri()
+        )
+
+        assert rc == 0
+        assert (dstdir / "s1.txt").read_bytes() == b"one"
+        assert not (dstdir / "s2.txt").exists()
+
     def test_from_file_cannot_combine_with_src(self, tmp_path):
         src = tmp_path / "src.txt"
         src.write_text("x")
@@ -971,6 +990,16 @@ class TestCopyFromFile:
         )
 
         assert rc != 0
+
+    def test_limit_must_be_positive(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_text("x")
+
+        rc, out, err = run_gfal("cp", "--limit", "0", src.as_uri(), dst.as_uri())
+
+        assert rc != 0
+        assert "--limit must be at least 1" in err
 
     def test_from_file_blank_lines_ignored(self, tmp_path):
         src = tmp_path / "src.txt"

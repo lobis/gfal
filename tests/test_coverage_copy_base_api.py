@@ -49,6 +49,7 @@ def _default_params(**kwargs):
         "recursive": False,
         "preserve_times": True,
         "from_file": None,
+        "limit": None,
         "dry_run": False,
         "abort_on_failure": False,
         "transfer_timeout": 0,
@@ -406,6 +407,32 @@ class TestRecursivePrioritization:
             message
             == "Recursive scan complete: 5 files, 2 missing files queued first, 3 existing files deferred for checksum comparison"
         )
+
+    def test_apply_job_limit_truncates_jobs_and_marks_summary(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(limit=2)
+
+        jobs, summary = cmd._apply_job_limit(
+            [
+                ("src://one", "dst://one"),
+                ("src://two", "dst://two"),
+                ("src://three", "dst://three"),
+            ],
+            {
+                "total": 3,
+                "queued_first": 3,
+                "likely_skipped": 0,
+                "deferred_existing": 0,
+                "compare_mode": "none",
+            },
+        )
+
+        assert jobs == [
+            ("src://one", "dst://one"),
+            ("src://two", "dst://two"),
+        ]
+        assert summary["limited_to"] == 2
+        assert summary["queued_first"] == 2
 
 
 # ===================================================================

@@ -194,7 +194,7 @@ class RichProgress:
                             _PinnedElapsedColumn(),
                             console=get_console(stderr=False),
                             expand=True,
-                            transient=False,
+                            transient=True,
                             refresh_per_second=20,
                         ),
                         started=False,

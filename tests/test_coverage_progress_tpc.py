@@ -236,6 +236,46 @@ class TestTuiProgress:
 
 
 class TestRichProgressExtraBranches:
+    def test_manager_configures_transient_rich_progress(self, monkeypatch):
+        import types
+
+        created_kwargs = {}
+
+        def _column(*args, **kwargs):
+            del args, kwargs
+            return object()
+
+        class _FakeBackend:
+            def __init__(self, *args, **kwargs):
+                del args
+                created_kwargs.update(kwargs)
+
+        fake_progress_module = types.ModuleType("rich.progress")
+        fake_progress_module.BarColumn = _column
+        fake_progress_module.DownloadColumn = _column
+        fake_progress_module.SpinnerColumn = _column
+        fake_progress_module.TextColumn = _column
+        fake_progress_module.TimeElapsedColumn = object
+        fake_progress_module.TransferSpeedColumn = _column
+        fake_progress_module.Progress = _FakeBackend
+
+        fake_text_module = types.ModuleType("rich.text")
+        fake_text_module.Text = _column
+
+        monkeypatch.setitem(sys.modules, "rich.progress", fake_progress_module)
+        monkeypatch.setitem(sys.modules, "rich.text", fake_text_module)
+        monkeypatch.setattr(
+            "gfal.cli.progress.get_console", lambda stderr=False: object()
+        )
+        monkeypatch.setattr(RichProgress, "_shared", None, raising=False)
+        monkeypatch.setattr(
+            RichProgress, "_shared_init_lock", threading.Lock(), raising=False
+        )
+
+        RichProgress._manager()
+
+        assert created_kwargs["transient"] is True
+
     def _make_backend(self, task_total=None):
         class _FakeRichBackend:
             def __init__(self):

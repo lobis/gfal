@@ -53,6 +53,7 @@ def _default_params(**kwargs):
         "recursive": False,
         "preserve_times": True,
         "from_file": None,
+        "limit": None,
         "dry_run": False,
         "abort_on_failure": False,
         "transfer_timeout": 0,
@@ -1202,6 +1203,55 @@ class TestCliUsesLibraryCopy:
         assert any(
             call.args[0]
             == "Recursive scan complete: 2 files, 1 queued to copy, 1 already present and likely skipped"
+            for call in mock_live_message.call_args_list
+        )
+
+    def test_recursive_limit_caps_started_children_and_summary(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        for name in ("one.txt", "two.txt", "three.txt"):
+            (src / name).write_text(name)
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            compare="none",
+            limit=2,
+        )
+
+        started = []
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        def _start_copy(src_url, dst_url, **kwargs):
+            del kwargs
+            started.append((src_url, dst_url))
+            return _DoneHandle()
+
+        with (
+            patch("gfal.core.api.GfalClient.start_copy", side_effect=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert len(started) == 2
+        assert any(
+            call.args[0]
+            == "Recursive scan complete: 3 files, 2 queued to copy, 0 already present and likely skipped (limited to 2)"
             for call in mock_live_message.call_args_list
         )
 

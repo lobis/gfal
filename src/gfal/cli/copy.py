@@ -200,6 +200,14 @@ class CommandCopy(base.CommandBase):
         f"(default: {_DEFAULT_RECURSIVE_PARALLELISM})",
     )
     @base.arg(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="limit the number of queued copy jobs. Useful for testing "
+        "recursive copies or source lists without processing the full set.",
+    )
+    @base.arg(
         "--preserve-times",
         action="store_true",
         default=True,
@@ -343,6 +351,9 @@ class CommandCopy(base.CommandBase):
         if self.params.parallel < 1:
             sys.stderr.write(f"{self.prog}: --parallel must be at least 1\n")
             return 1
+        if self.params.limit is not None and self.params.limit < 1:
+            sys.stderr.write(f"{self.prog}: --limit must be at least 1\n")
+            return 1
 
         # --copy-mode overrides --tpc/--tpc-only/--tpc-mode for backwards compatibility
         if self.params.copy_mode is not None:
@@ -406,6 +417,9 @@ class CommandCopy(base.CommandBase):
         else:
             sys.stderr.write("Missing source\n")
             return 1
+
+        if self.params.limit is not None:
+            jobs = jobs[: self.params.limit]
 
         rc = 0
         for src, dst in jobs:
@@ -697,6 +711,16 @@ class CommandCopy(base.CommandBase):
             )
         return f"Recursive scan complete: {total} files queued"
 
+    def _apply_job_limit(self, jobs, summary):
+        if self.params.limit is None or len(jobs) <= self.params.limit:
+            return jobs, summary
+
+        limited = jobs[: self.params.limit]
+        updated = dict(summary)
+        updated["queued_first"] = min(summary["queued_first"], len(limited))
+        updated["limited_to"] = len(limited)
+        return limited, updated
+
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
         self._reported_child_errors = set()
@@ -742,8 +766,12 @@ class CommandCopy(base.CommandBase):
             dst_entries,
             copy_options.compare,
         )
+        child_jobs, child_summary = self._apply_job_limit(child_jobs, child_summary)
         if not self._is_quiet():
-            print_live_message(self._recursive_scan_summary(child_summary))
+            summary = self._recursive_scan_summary(child_summary)
+            if child_summary.get("limited_to") is not None:
+                summary = f"{summary} (limited to {child_summary['limited_to']})"
+            print_live_message(summary)
 
         max_parallel = min(
             self._recursive_parallelism(src_url, dst_url), len(child_jobs)
