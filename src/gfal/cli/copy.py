@@ -90,6 +90,42 @@ class _TransferDisplay:
         mode = mode_labels.get(self.transfer_mode, self.transfer_mode)
         return f"Copying {Path(self.src_url).name} ({mode})"
 
+    @staticmethod
+    def _size_text(size):
+        if size is None:
+            return None
+        value = float(size)
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        unit = units[0]
+        for unit in units:
+            if value < 1024.0 or unit == units[-1]:
+                break
+            value /= 1024.0
+        if unit == "B":
+            return f"{int(size)} B"
+        return f"{value:.1f} {unit}"
+
+    @classmethod
+    def _rate_text(cls, size, elapsed):
+        if size is None or elapsed <= 0:
+            return None
+        return f"{cls._size_text(size / elapsed)}/s"
+
+    def _history_status_line(self, success):
+        line = _final_status_text(
+            self._transfer_label(),
+            success,
+            self.final_status,
+        )
+        elapsed = max(0.0, time.monotonic() - self.transfer_start)
+        size_text = self._size_text(self.src_size)
+        rate_text = self._rate_text(self.src_size, elapsed)
+        elapsed_text = time.strftime("%H:%M:%S", time.gmtime(elapsed))
+        details = [part for part in (size_text, rate_text, elapsed_text) if part]
+        if details:
+            return f"{line}  {'  '.join(details)}"
+        return line
+
     def start(self):
         with self._lock:
             if self.progress_started:
@@ -153,13 +189,7 @@ class _TransferDisplay:
             ):
                 return
             if self.show_progress and self.history_only:
-                print(
-                    _final_status_text(
-                        self._transfer_label(),
-                        success,
-                        self.final_status,
-                    )
-                )
+                print_live_message(self._history_status_line(success))
                 return
             if self.progress_bar is None:
                 return
@@ -918,6 +948,8 @@ class CommandCopy(base.CommandBase):
             lambda msg: self._warn_copy_message(msg, dst_url),
         )
 
+        if aggregate_progress is not None:
+            aggregate_progress.stop(not failures)
         if not self._is_quiet():
             print_live_message(
                 self._recursive_result_summary(
@@ -926,8 +958,6 @@ class CommandCopy(base.CommandBase):
                     len(failures),
                 )
             )
-        if aggregate_progress is not None:
-            aggregate_progress.stop(not failures)
 
         if failures:
             raise GfalPartialFailureError(

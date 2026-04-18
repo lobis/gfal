@@ -22,6 +22,7 @@ from gfal.cli.copy import (
     _make_hasher,
     _parse_checksum_arg,
     _tpc_applicable,
+    _TransferDisplay,
     _update_hasher,
 )
 from gfal.core import fs
@@ -1114,10 +1115,13 @@ class TestCliUsesLibraryCopy:
         fake_count_progress.start.assert_called_once()
         assert fake_count_progress.update.call_count == 2
         fake_count_progress.stop.assert_called_once_with(True)
-        captured = capsys.readouterr()
-        assert "Copying one.txt (TPC pull) [DONE]" in captured.out
-        assert "Copying two.txt (TPC pull) [DONE]" in captured.out
         messages = [call.args[0] for call in mock_live_message.call_args_list]
+        assert any(
+            "Copying one.txt (TPC pull) [DONE]" in message for message in messages
+        )
+        assert any(
+            "Copying two.txt (TPC pull) [DONE]" in message for message in messages
+        )
         assert any(
             message.startswith("Recursive scan complete:") for message in messages
         )
@@ -1152,6 +1156,10 @@ class TestCliUsesLibraryCopy:
             return _DoneHandle()
 
         fake_count_progress = MagicMock()
+        events = []
+        fake_count_progress.stop.side_effect = lambda *args, **kwargs: events.append(
+            ("stop", args, kwargs)
+        )
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
@@ -1161,19 +1169,53 @@ class TestCliUsesLibraryCopy:
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
             patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
         ):
+            mock_live_message.side_effect = lambda message: events.append(
+                ("message", message)
+            )
             cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
 
         mock_progress.assert_not_called()
         fake_count_progress.start.assert_called_once()
         assert fake_count_progress.update.call_count == 2
         fake_count_progress.stop.assert_called_once_with(True)
-        captured = capsys.readouterr()
-        assert "Copying one.txt (TPC pull) [DONE]" in captured.out
-        assert "Copying two.txt (TPC pull) [DONE]" in captured.out
         messages = [call.args[0] for call in mock_live_message.call_args_list]
+        assert any(
+            "Copying one.txt (TPC pull) [DONE]" in message for message in messages
+        )
+        assert any(
+            "Copying two.txt (TPC pull) [DONE]" in message for message in messages
+        )
         assert any(
             message.startswith("Recursive scan complete:") for message in messages
         )
+        final_summary_index = next(
+            index
+            for index, event in enumerate(events)
+            if event == ("message", "Recursive copy complete: 2 copied")
+        )
+        stop_index = next(
+            index for index, event in enumerate(events) if event[0] == "stop"
+        )
+        assert stop_index < final_summary_index
+
+    def test_history_status_line_includes_size_rate_and_elapsed(self):
+        display = _TransferDisplay(
+            "https://example.org/src.bin",
+            "https://example.org/dst.bin",
+            src_size=1_048_576,
+            transfer_mode="streamed",
+            history_only=True,
+        )
+        display.progress_started = True
+
+        with patch("gfal.cli.copy.time.monotonic", side_effect=[102.0]):
+            display.transfer_start = 100.0
+            line = display._history_status_line(True)
+
+        assert "Copying src.bin (streamed) [DONE]" in line
+        assert "1.0 MB" in line
+        assert "512.0 KB/s" in line
+        assert "00:00:02" in line
 
     def test_recursive_scan_spinner_marks_failure_when_listing_raises(self):
         cmd = _make_cmd()

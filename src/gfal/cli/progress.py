@@ -68,7 +68,16 @@ def print_live_message(message):
     manager = _active_live_manager()
     if manager is not None:
         with manager.lock:
-            manager.progress.console.print(message, markup=False, highlight=False)
+            if getattr(manager, "kind", None) == "count" and manager.started:
+                with contextlib.suppress(Exception):
+                    manager.progress.stop()
+                manager.started = False
+                manager.progress.console.print(message, markup=False, highlight=False)
+                with contextlib.suppress(Exception):
+                    manager.progress.start()
+                manager.started = True
+            else:
+                manager.progress.console.print(message, markup=False, highlight=False)
             manager.progress.refresh()
         return
 
@@ -207,6 +216,7 @@ class RichProgress:
                             transient=False,
                             refresh_per_second=20,
                         ),
+                        kind="progress",
                         started=False,
                         active=0,
                     )
@@ -372,6 +382,7 @@ class RichCountProgress:
                             redirect_stdout=False,
                             redirect_stderr=False,
                         ),
+                        kind="count",
                         started=False,
                         active=0,
                     )

@@ -508,6 +508,8 @@ class TestPrintLiveMessage:
     def test_live_message_uses_active_count_progress_console(self, monkeypatch):
         printed = []
         refreshed = []
+        started = []
+        stopped = []
 
         class _FakeConsole:
             def print(self, message, markup=False, highlight=False):
@@ -521,8 +523,11 @@ class TestPrintLiveMessage:
                 lock=threading.Lock(),
                 progress=SimpleNamespace(
                     console=_FakeConsole(),
+                    start=lambda: started.append(True),
+                    stop=lambda: stopped.append(True),
                     refresh=lambda: refreshed.append(True),
                 ),
+                kind="count",
                 started=True,
                 active=1,
             ),
@@ -532,6 +537,8 @@ class TestPrintLiveMessage:
         print_live_message("Copying one.txt [DONE]")
 
         assert printed == [("Copying one.txt [DONE]", False, False)]
+        assert stopped == [True]
+        assert started == [True]
         assert refreshed == [True]
 
 
