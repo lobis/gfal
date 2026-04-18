@@ -14,7 +14,13 @@ from urllib.parse import urlparse, urlunparse
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
-from gfal.cli.progress import Progress, Spinner, has_live_progress, print_live_message
+from gfal.cli.progress import (
+    Progress,
+    Spinner,
+    _final_status_text,
+    has_live_progress,
+    print_live_message,
+)
 from gfal.core import api as core_api
 from gfal.core import fs
 from gfal.core.api import (
@@ -55,6 +61,7 @@ class _TransferDisplay:
         verbose=False,
         src_size=None,
         transfer_mode=None,
+        history_only=False,
     ):
         self.src_url = src_url
         self.dst_url = dst_url
@@ -62,6 +69,7 @@ class _TransferDisplay:
         self.verbose = verbose
         self.src_size = src_size
         self.show_progress = sys.stdout.isatty() and not verbose and not quiet
+        self.history_only = history_only
         self.progress_bar = None
         self.progress_started = False
         self.transfer_start = time.monotonic()
@@ -87,6 +95,8 @@ class _TransferDisplay:
                 return
             self.progress_started = True
             if self.show_progress:
+                if self.history_only:
+                    return
                 self.progress_bar = Progress(self._transfer_label())
                 if self.src_size is not None:
                     self.progress_bar.update(total_size=self.src_size)
@@ -137,11 +147,20 @@ class _TransferDisplay:
 
     def finish(self, success):
         with self._lock:
-            if (
-                not self.progress_started
-                or not self.show_progress
-                or self.progress_bar is None
+            if not self.progress_started or (
+                not self.show_progress and self.progress_bar is None
             ):
+                return
+            if self.show_progress and self.history_only:
+                print_live_message(
+                    _final_status_text(
+                        self._transfer_label(),
+                        success,
+                        self.final_status,
+                    )
+                )
+                return
+            if self.progress_bar is None:
                 return
             if success and self.src_size and self.final_status != "skipped":
                 self.progress_bar.update(
@@ -805,6 +824,7 @@ class CommandCopy(base.CommandBase):
                 transfer_mode=self._predicted_transfer_mode(
                     child_src_url, child_dst_url
                 ),
+                history_only=True,
             )
             if display.show_progress:
                 display.start()

@@ -1063,7 +1063,7 @@ class TestCliUsesLibraryCopy:
         )
         assert progress.calls[4] == ("stop", True, None)
 
-    def test_recursive_top_level_children_get_individual_progress(self, tmp_path):
+    def test_recursive_top_level_children_emit_history_lines(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
         src.mkdir()
@@ -1076,20 +1076,6 @@ class TestCliUsesLibraryCopy:
             src=src.as_uri(), dst=[dst.as_uri()], recursive=True
         )
 
-        class _FakeProgress:
-            def __init__(self, label):
-                self.label = label
-                self.calls = []
-
-            def start(self):
-                self.calls.append(("start",))
-
-            def update(self, **kwargs):
-                self.calls.append(("update", kwargs))
-
-            def stop(self, success, status=None):
-                self.calls.append(("stop", success, status))
-
         class _DoneHandle:
             def done(self):
                 return True
@@ -1100,23 +1086,17 @@ class TestCliUsesLibraryCopy:
             def cancel(self):
                 return None
 
-        fake_instances = []
         started = []
-
-        def _make_progress(label):
-            progress = _FakeProgress(label)
-            fake_instances.append(progress)
-            return progress
 
         def _start_copy(self, src_url, dst_url, **kwargs):
             started.append((src_url, dst_url))
             kwargs["transfer_mode_callback"]("tpc-pull")
             kwargs["start_callback"]()
-            kwargs["progress_callback"](3)
             return _DoneHandle()
 
         with (
-            patch("gfal.cli.copy.Progress", side_effect=_make_progress),
+            patch("gfal.cli.copy.Progress") as mock_progress,
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
             patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
@@ -1127,10 +1107,53 @@ class TestCliUsesLibraryCopy:
             ((src / "one.txt").as_uri(), (dst / "one.txt").as_uri()),
             ((src / "two.txt").as_uri(), (dst / "two.txt").as_uri()),
         ]
-        assert sorted(progress.label for progress in fake_instances) == [
-            "Copying one.txt (TPC pull)",
-            "Copying two.txt (TPC pull)",
-        ]
+        mock_progress.assert_not_called()
+        messages = [call.args[0] for call in mock_live_message.call_args_list]
+        assert "Copying one.txt (TPC pull) [DONE]" in messages
+        assert "Copying two.txt (TPC pull) [DONE]" in messages
+
+    def test_recursive_tty_uses_history_lines_not_rich_bars(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            return _DoneHandle()
+
+        with (
+            patch("gfal.cli.copy.Progress") as mock_progress,
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        mock_progress.assert_not_called()
+        messages = [call.args[0] for call in mock_live_message.call_args_list]
+        assert "Copying one.txt (TPC pull) [DONE]" in messages
+        assert "Copying two.txt (TPC pull) [DONE]" in messages
 
     def test_recursive_scan_spinner_marks_failure_when_listing_raises(self):
         cmd = _make_cmd()

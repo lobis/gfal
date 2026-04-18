@@ -556,6 +556,19 @@ class TestCopyOverwrite:
         assert "Skipping existing file" not in output
         assert skip_hint in output
 
+    def test_recursive_tty_outputs_one_done_line_per_file(self, tmp_path):
+        srcdir = tmp_path / "src_hist"
+        dstdir = tmp_path / "dst_hist"
+        srcdir.mkdir()
+        (srcdir / "one.txt").write_text("one")
+        (srcdir / "two.txt").write_text("two")
+
+        rc, output = _run_gfal_tty("cp", "-r", srcdir.as_uri(), dstdir.as_uri())
+
+        assert rc == 0
+        assert output.count("Copying one.txt (streamed) [DONE]") == 1
+        assert output.count("Copying two.txt (streamed) [DONE]") == 1
+
     # --- -f / --force --------------------------------------------------------
 
     def test_force_overwrite_ignores_compare(self, tmp_path):
