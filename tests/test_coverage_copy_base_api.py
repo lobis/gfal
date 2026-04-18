@@ -365,6 +365,48 @@ class TestRecursivePrioritization:
             ("src://match.bin", "dst://match.bin"),
         ]
 
+    def test_classify_recursive_jobs_reports_skip_summary_for_compare_none(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("present.bin", "src://present.bin", "dst://present.bin", {"size": 1}),
+            ("missing.bin", "src://missing.bin", "dst://missing.bin", {"size": 1}),
+        ]
+        dst_entries = [{"name": "/dst/present.bin", "size": 1}]
+
+        jobs, summary = cmd._classify_recursive_child_jobs(
+            src_entries, dst_entries, "none"
+        )
+
+        assert jobs == [
+            ("src://missing.bin", "dst://missing.bin"),
+            ("src://present.bin", "dst://present.bin"),
+        ]
+        assert summary == {
+            "total": 2,
+            "queued_first": 1,
+            "likely_skipped": 1,
+            "deferred_existing": 1,
+            "compare_mode": "none",
+        }
+
+    def test_recursive_scan_summary_formats_checksum_deferred_work(self):
+        cmd = _make_cmd()
+
+        message = cmd._recursive_scan_summary(
+            {
+                "total": 5,
+                "queued_first": 2,
+                "likely_skipped": 0,
+                "deferred_existing": 3,
+                "compare_mode": "checksum",
+            }
+        )
+
+        assert (
+            message
+            == "Recursive scan complete: 5 files, 2 missing files queued first, 3 existing files deferred for checksum comparison"
+        )
+
 
 # ===================================================================
 # copy.py: _predicted_transfer_mode

@@ -8,6 +8,7 @@ from gfal.cli.progress import LegacyProgress as Progress
 from gfal.cli.progress import (
     RichProgress,
     RichSpinner,
+    _final_status_text,
     has_live_progress,
     print_live_message,
 )
@@ -338,6 +339,12 @@ class TestRichProgress:
             def __init__(self):
                 self.calls = []
                 self.tasks = [SimpleNamespace(total=10)]
+                self.printed = []
+                self.console = SimpleNamespace(
+                    print=lambda message, markup=False, highlight=False: (
+                        self.printed.append((message, markup, highlight))
+                    )
+                )
 
             def start(self):
                 self.calls.append(("start",))
@@ -375,11 +382,65 @@ class TestRichProgress:
         progress.start()
         progress.stop(True, status="skipped")
 
+        assert backend.printed == [
+            ("Copying example.txt [SKIPPED]", False, False),
+        ]
         assert (
             "update",
             0,
             {"description": "Copying example.txt [yellow]\\[SKIPPED][/]"},
         ) in backend.calls
+
+    def test_rich_progress_removes_finished_task_when_supported(self, monkeypatch):
+        class _FakeRichBackend:
+            def __init__(self):
+                self.calls = []
+                self.tasks = [SimpleNamespace(total=10)]
+                self.console = SimpleNamespace(
+                    print=lambda message, markup=False, highlight=False: (
+                        self.calls.append(("print", message, markup, highlight))
+                    )
+                )
+
+            def start(self):
+                self.calls.append(("start",))
+
+            def add_task(self, description, total=None):
+                self.calls.append(("add_task", description, total))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                self.calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+            def remove_task(self, task_id):
+                self.calls.append(("remove_task", task_id))
+
+            def stop(self):
+                self.calls.append(("stop",))
+
+        backend = _FakeRichBackend()
+        monkeypatch.setattr(
+            RichProgress,
+            "_shared",
+            SimpleNamespace(
+                lock=threading.Lock(),
+                progress=backend,
+                started=False,
+                active=0,
+            ),
+            raising=False,
+        )
+
+        progress = RichProgress("Copying example.txt")
+        progress.start()
+        progress.stop(True)
+
+        assert ("print", "Copying example.txt [DONE]", False, False) in backend.calls
+        assert ("remove_task", 0) in backend.calls
+        assert backend.calls[-1] == ("stop",)
 
 
 class TestRichSpinner:
@@ -452,3 +513,14 @@ class TestHasLiveProgress:
             raising=False,
         )
         assert has_live_progress() is True
+
+
+class TestFinalStatusText:
+    def test_done(self):
+        assert _final_status_text("Copying file.txt", True) == "Copying file.txt [DONE]"
+
+    def test_skipped(self):
+        assert (
+            _final_status_text("Copying file.txt", True, "skipped")
+            == "Copying file.txt [SKIPPED]"
+        )

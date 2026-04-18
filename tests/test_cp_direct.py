@@ -1161,6 +1161,50 @@ class TestCliUsesLibraryCopy:
         fake_spinner.start.assert_called_once()
         fake_spinner.stop.assert_called_once_with(False)
 
+    def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "copy-me.txt").write_text("copy me")
+        (src / "skip-me.txt").write_text("skip me")
+        (dst / "skip-me.txt").write_text("already here")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            compare="none",
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        with (
+            patch(
+                "gfal.core.api.GfalClient.start_copy",
+                return_value=_DoneHandle(),
+            ),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert any(
+            call.args[0]
+            == "Recursive scan complete: 2 files, 1 queued to copy, 1 already present and likely skipped"
+            for call in mock_live_message.call_args_list
+        )
+
     def test_recursive_directory_child_does_not_set_progress_total(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"

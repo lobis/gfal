@@ -572,18 +572,45 @@ class CommandCopy(base.CommandBase):
         dst_entries,
         compare_mode,
     ):
+        jobs, _summary = self._classify_recursive_child_jobs(
+            src_entries,
+            dst_entries,
+            compare_mode,
+        )
+        return jobs
+
+    def _classify_recursive_child_jobs(
+        self,
+        src_entries,
+        dst_entries,
+        compare_mode,
+    ):
         if not src_entries:
-            return []
+            return [], {
+                "total": 0,
+                "queued_first": 0,
+                "likely_skipped": 0,
+                "deferred_existing": 0,
+                "compare_mode": compare_mode,
+            }
 
         if not dst_entries:
-            return [
+            jobs = [
                 (child_src_url, child_dst_url)
                 for _name, child_src_url, child_dst_url, _src_info in src_entries
             ]
+            return jobs, {
+                "total": len(src_entries),
+                "queued_first": len(jobs),
+                "likely_skipped": 0,
+                "deferred_existing": 0,
+                "compare_mode": compare_mode,
+            }
 
         dst_by_name = {self._entry_name(entry): entry for entry in dst_entries}
         preferred = []
         deferred = []
+        likely_skipped = 0
 
         for name, child_src_url, child_dst_url, src_info in src_entries:
             dst_info = dst_by_name.get(name)
@@ -593,19 +620,21 @@ class CommandCopy(base.CommandBase):
 
             if compare_mode == "none":
                 deferred.append((child_src_url, child_dst_url))
+                likely_skipped += 1
                 continue
 
             if compare_mode == "size":
                 src_size = src_info.get("size") if isinstance(src_info, dict) else None
                 dst_size = dst_info.get("size") if isinstance(dst_info, dict) else None
-                target = (
-                    deferred
-                    if src_size is not None
+                if (
+                    src_size is not None
                     and dst_size is not None
                     and src_size == dst_size
-                    else preferred
-                )
-                target.append((child_src_url, child_dst_url))
+                ):
+                    deferred.append((child_src_url, child_dst_url))
+                    likely_skipped += 1
+                else:
+                    preferred.append((child_src_url, child_dst_url))
                 continue
 
             if compare_mode == "size_mtime":
@@ -621,9 +650,11 @@ class CommandCopy(base.CommandBase):
                     and dst_mtime is not None
                     and abs(src_mtime - dst_mtime) < 1.0
                 )
-                (deferred if matches else preferred).append(
-                    (child_src_url, child_dst_url)
-                )
+                if matches:
+                    deferred.append((child_src_url, child_dst_url))
+                    likely_skipped += 1
+                else:
+                    preferred.append((child_src_url, child_dst_url))
                 continue
 
             if compare_mode == "checksum":
@@ -632,7 +663,39 @@ class CommandCopy(base.CommandBase):
 
             preferred.append((child_src_url, child_dst_url))
 
-        return preferred + deferred
+        jobs = preferred + deferred
+        return jobs, {
+            "total": len(src_entries),
+            "queued_first": len(preferred),
+            "likely_skipped": likely_skipped,
+            "deferred_existing": len(deferred),
+            "compare_mode": compare_mode,
+        }
+
+    @staticmethod
+    def _recursive_scan_summary(summary):
+        total = summary["total"]
+        queued_first = summary["queued_first"]
+        likely_skipped = summary["likely_skipped"]
+        deferred_existing = summary["deferred_existing"]
+        compare_mode = summary["compare_mode"]
+
+        if compare_mode == "none":
+            return (
+                f"Recursive scan complete: {total} files, {queued_first} queued to copy, "
+                f"{likely_skipped} already present and likely skipped"
+            )
+        if compare_mode in {"size", "size_mtime"}:
+            return (
+                f"Recursive scan complete: {total} files, {queued_first} queued first, "
+                f"{likely_skipped} likely already up to date"
+            )
+        if compare_mode == "checksum":
+            return (
+                f"Recursive scan complete: {total} files, {queued_first} missing files "
+                f"queued first, {deferred_existing} existing files deferred for checksum comparison"
+            )
+        return f"Recursive scan complete: {total} files queued"
 
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
@@ -671,7 +734,7 @@ class CommandCopy(base.CommandBase):
             child_entries.append(
                 (_url_path_join(src_url, name), _url_path_join(dst_url, name), entry)
             )
-        child_jobs = self._prioritize_recursive_child_jobs(
+        child_jobs, child_summary = self._classify_recursive_child_jobs(
             [
                 (self._entry_name(entry), child_src_url, child_dst_url, entry)
                 for child_src_url, child_dst_url, entry in child_entries
@@ -679,6 +742,8 @@ class CommandCopy(base.CommandBase):
             dst_entries,
             copy_options.compare,
         )
+        if not self._is_quiet():
+            print_live_message(self._recursive_scan_summary(child_summary))
 
         max_parallel = min(
             self._recursive_parallelism(src_url, dst_url), len(child_jobs)

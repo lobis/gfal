@@ -58,6 +58,11 @@ def print_live_message(message):
     print(message)
 
 
+def _final_status_text(label, success, status=None):
+    outcome = "SKIPPED" if status == "skipped" else "DONE" if success else "FAILED"
+    return f"{label} [{outcome}]"
+
+
 def has_live_progress():
     """Return True when Rich progress is currently managing live output."""
     if is_gfal2_compat():
@@ -253,21 +258,34 @@ class RichProgress:
                         self.task_id,
                         final_elapsed=elapsed_text,
                     )
-                with contextlib.suppress(Exception):
-                    manager.progress.stop_task(self.task_id)
-                if status == "skipped":
-                    manager.progress.update(
-                        self.task_id,
-                        description=f"{self.label} [yellow]\\[SKIPPED][/]",
-                    )
-                elif success:
-                    manager.progress.update(
-                        self.task_id, description=f"{self.label} [green]\\[DONE][/]"
-                    )
-                else:
-                    manager.progress.update(
-                        self.task_id, description=f"{self.label} [red]\\[FAILED][/]"
-                    )
+                final_message = _final_status_text(self.label, success, status)
+                console = getattr(manager.progress, "console", None)
+                if console is not None:
+                    with contextlib.suppress(Exception):
+                        console.print(final_message, markup=False, highlight=False)
+                removed = False
+                remove_task = getattr(manager.progress, "remove_task", None)
+                if remove_task is not None:
+                    with contextlib.suppress(Exception):
+                        remove_task(self.task_id)
+                        removed = True
+                if not removed:
+                    with contextlib.suppress(Exception):
+                        manager.progress.stop_task(self.task_id)
+                    if status == "skipped":
+                        manager.progress.update(
+                            self.task_id,
+                            description=f"{self.label} [yellow]\\[SKIPPED][/]",
+                        )
+                    elif success:
+                        manager.progress.update(
+                            self.task_id, description=f"{self.label} [green]\\[DONE][/]"
+                        )
+                    else:
+                        manager.progress.update(
+                            self.task_id,
+                            description=f"{self.label} [red]\\[FAILED][/]",
+                        )
             manager.progress.refresh()
             self._started_at = None
             manager.active = max(0, manager.active - 1)
