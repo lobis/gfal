@@ -12,6 +12,7 @@ from gfal.cli.progress import (
     RichProgress,
     RichSpinner,
     _final_status_text,
+    _format_binary_rate,
     _should_emit_live_final_message,
     _status_renderable,
     has_live_progress,
@@ -68,6 +69,14 @@ class TestProgressRateStr:
     def test_gigabytes(self):
         result = Progress._rate_str(1024**3)
         assert "G" in result
+
+
+class TestFormatBinaryRate:
+    def test_unknown_for_non_positive_rate(self):
+        assert _format_binary_rate(0) == "?"
+
+    def test_formats_megabytes_per_second(self):
+        assert _format_binary_rate(200 * 1024 * 1024) == "200.0 MB/s"
 
 
 class TestProgressSizeStr:
@@ -617,3 +626,49 @@ class TestCountProgressFactory:
         monkeypatch.setattr("gfal.cli.progress.is_gfal2_compat", lambda: False)
         result = CountProgress("Copying files", 5)
         assert isinstance(result, RichCountProgress)
+
+
+class TestRichCountProgress:
+    def test_update_tracks_completed_bytes(self, monkeypatch):
+        calls = []
+
+        class _FakeBackend:
+            def start(self):
+                calls.append(("start",))
+
+            def add_task(self, description, total=None, **kwargs):
+                calls.append(("add_task", description, total, kwargs))
+                return 0
+
+            def update(self, task_id, **kwargs):
+                calls.append(("update", task_id, kwargs))
+
+            def refresh(self):
+                calls.append(("refresh",))
+
+            def stop_task(self, task_id):
+                calls.append(("stop_task", task_id))
+
+            def stop(self):
+                calls.append(("stop",))
+
+        monkeypatch.setattr(
+            RichCountProgress,
+            "_shared",
+            {
+                True: SimpleNamespace(
+                    lock=threading.Lock(),
+                    progress=_FakeBackend(),
+                    kind="count",
+                    started=False,
+                    active=0,
+                )
+            },
+            raising=False,
+        )
+        progress = RichCountProgress("Copying files", 4, transient=True)
+        progress.start()
+        progress.update(completed=2, bytes_completed=1024)
+
+        assert ("add_task", "Copying files", 4, {"bytes_completed": 0}) in calls
+        assert ("update", 0, {"completed": 2, "bytes_completed": 1024}) in calls

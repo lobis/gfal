@@ -305,6 +305,7 @@ class TestRichProgressExtraBranches:
 
         fake_progress_module = types.ModuleType("rich.progress")
         fake_progress_module.BarColumn = _column
+        fake_progress_module.ProgressColumn = object
         fake_progress_module.SpinnerColumn = _column
         fake_progress_module.TextColumn = _column
         fake_progress_module.TimeElapsedColumn = object

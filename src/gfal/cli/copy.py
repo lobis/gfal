@@ -62,6 +62,17 @@ def _short_elapsed_text(seconds):
     return f"{max(0.0, seconds):.1f}s"
 
 
+def _average_rate_text(bytes_transferred, elapsed):
+    if bytes_transferred <= 0 or elapsed <= 0:
+        return "?"
+    return f"{_TransferDisplay._size_text(bytes_transferred / elapsed)}/s"
+
+
+def _file_count_text(count):
+    noun = "file" if count == 1 else "files"
+    return f"{_format_count(count)} {noun}"
+
+
 def _truncate_middle(value, max_width):
     if len(value) <= max_width:
         return value
@@ -946,6 +957,8 @@ class CommandCopy(base.CommandBase):
         failed,
         elapsed,
         scan_summary,
+        *,
+        cancelled=False,
     ):
         matched = self._estimated_recursive_scan_matches(scan_summary)
         compare_mode = scan_summary["compare_mode"]
@@ -958,11 +971,14 @@ class CommandCopy(base.CommandBase):
 
         block = Text()
         block.append("\n")
-        block.append("✓ Copy complete", style="bold green")
+        if cancelled:
+            block.append("⚠ Copy interrupted", style="bold yellow")
+        else:
+            block.append("✓ Copy complete", style="bold green")
         block.append("\n")
         block.append("  Copied")
         block.append("  : ", style="dim")
-        block.append(f"{_format_count(copied)} files", style="green")
+        block.append(_file_count_text(copied), style="green")
         if copied_bytes:
             block.append("   ", style="dim")
             block.append(_TransferDisplay._size_text(copied_bytes), style="green")
@@ -987,7 +1003,11 @@ class CommandCopy(base.CommandBase):
         block.append("\n")
         block.append("  Failed")
         block.append("  : ", style="dim")
-        block.append(_format_count(failed), style="red" if failed else "")
+        block.append(_file_count_text(failed), style="red" if failed else "")
+        block.append("\n")
+        block.append("  Avg rate")
+        block.append(": ", style="dim")
+        block.append(_average_rate_text(copied_bytes, elapsed), style="bold")
         block.append("\n")
         block.append("  Elapsed")
         block.append(" : ", style="dim")
@@ -1089,6 +1109,7 @@ class CommandCopy(base.CommandBase):
         skipped_count = 0
         finished_count = 0
         aggregate_progress = None
+        cancelled = False
         if rich_recursive_layout and child_jobs:
             print_live_message(self._render_recursive_transfer_start())
         if (
@@ -1103,6 +1124,20 @@ class CommandCopy(base.CommandBase):
                 transient=rich_recursive_layout,
             )
             aggregate_progress.start()
+
+        def _update_aggregate_progress():
+            if aggregate_progress is not None:
+                aggregate_progress.update(
+                    completed=finished_count,
+                    bytes_completed=copied_bytes,
+                )
+
+        def _cancel_active_transfers():
+            nonlocal cancelled
+            cancelled = True
+            for _, _, active_handle, active_display in active:
+                active_handle.cancel()
+                active_display.finish(False)
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -1148,85 +1183,90 @@ class CommandCopy(base.CommandBase):
             )
             active.append((child_src_url, child_dst_url, handle, display))
 
-        while pending or active:
-            if self._cancel_event.is_set():
-                for _, _, active_handle, active_display in active:
-                    active_handle.cancel()
-                    active_display.finish(False)
-                raise GfalError("Transfer cancelled", errno.ECANCELED)
-            while pending and len(active) < max_parallel:
-                child_src_url, child_dst_url = pending.popleft()
-                _start_child(child_src_url, child_dst_url)
+        try:
+            while pending or active:
+                if self._cancel_event.is_set():
+                    _cancel_active_transfers()
+                    raise GfalError("Transfer cancelled", errno.ECANCELED)
+                while pending and len(active) < max_parallel:
+                    child_src_url, child_dst_url = pending.popleft()
+                    _start_child(child_src_url, child_dst_url)
 
-            completed_any = False
-            for child_src_url, child_dst_url, handle, display in list(active):
-                if not handle.done():
-                    continue
-                completed_any = True
-                active.remove((child_src_url, child_dst_url, handle, display))
-                try:
-                    handle.wait()
-                    display.finish(True)
-                    if getattr(display, "final_status", None) == "skipped":
-                        skipped_count += 1
-                    else:
-                        copied_count += 1
-                        display_size = getattr(display, "src_size", None)
-                        if display_size:
-                            copied_bytes += display_size
-                    finished_count += 1
-                    if aggregate_progress is not None:
-                        aggregate_progress.update(completed=finished_count)
-                except Exception as exc:
-                    display.finish(False)
-                    if self._child_error_key(exc) not in self._reported_child_errors:
-                        self._print_error(exc)
-                    failures.append(exc)
-                    finished_count += 1
-                    if aggregate_progress is not None:
-                        aggregate_progress.update(completed=finished_count)
-                    if copy_options.abort_on_failure:
-                        for _, _, active_handle, active_display in active:
-                            active_handle.cancel()
-                            active_display.finish(False)
-                        if aggregate_progress is not None:
-                            aggregate_progress.stop(False)
-                        raise exc
+                completed_any = False
+                for child_src_url, child_dst_url, handle, display in list(active):
+                    if not handle.done():
+                        continue
+                    completed_any = True
+                    active.remove((child_src_url, child_dst_url, handle, display))
+                    try:
+                        handle.wait()
+                        display.finish(True)
+                        if getattr(display, "final_status", None) == "skipped":
+                            skipped_count += 1
+                        else:
+                            copied_count += 1
+                            display_size = getattr(display, "src_size", None)
+                            if display_size:
+                                copied_bytes += display_size
+                        finished_count += 1
+                        _update_aggregate_progress()
+                    except Exception as exc:
+                        display.finish(False)
+                        if (
+                            self._child_error_key(exc)
+                            not in self._reported_child_errors
+                        ):
+                            self._print_error(exc)
+                        failures.append(exc)
+                        finished_count += 1
+                        _update_aggregate_progress()
+                        if copy_options.abort_on_failure:
+                            for _, _, active_handle, active_display in active:
+                                active_handle.cancel()
+                                active_display.finish(False)
+                            if aggregate_progress is not None:
+                                aggregate_progress.stop(False)
+                            raise exc
 
-            if not completed_any:
-                time.sleep(0.05)
+                if not completed_any:
+                    time.sleep(0.05)
 
-        client._async_client._preserve_times(
-            src_st,
-            dst_url,
-            dst_path,
-            copy_options,
-            lambda msg: self._warn_copy_message(msg, dst_url),
-        )
-
-        if aggregate_progress is not None:
-            aggregate_progress.stop(not failures)
-        if not self._is_quiet():
-            if rich_recursive_layout:
-                print_live_message(
-                    self._render_recursive_final_summary(
-                        copied_count,
-                        copied_bytes,
-                        skipped_count,
-                        len(failures),
-                        time.monotonic() - recursive_start,
-                        child_summary,
+            client._async_client._preserve_times(
+                src_st,
+                dst_url,
+                dst_path,
+                copy_options,
+                lambda msg: self._warn_copy_message(msg, dst_url),
+            )
+        except Exception as exc:
+            if exception_exit_code(exc) == errno.ECANCELED:
+                cancelled = True
+            raise
+        finally:
+            if aggregate_progress is not None:
+                aggregate_progress.stop(not failures and not cancelled)
+            if not self._is_quiet():
+                if rich_recursive_layout:
+                    print_live_message(
+                        self._render_recursive_final_summary(
+                            copied_count,
+                            copied_bytes,
+                            skipped_count,
+                            len(failures),
+                            time.monotonic() - recursive_start,
+                            child_summary,
+                            cancelled=cancelled,
+                        )
                     )
-                )
-            else:
-                print_live_message(
-                    self._recursive_result_summary(
-                        copied_count,
-                        skipped_count,
-                        len(failures),
-                        time.monotonic() - recursive_start,
+                else:
+                    print_live_message(
+                        self._recursive_result_summary(
+                            copied_count,
+                            skipped_count,
+                            len(failures),
+                            time.monotonic() - recursive_start,
+                        )
                     )
-                )
 
         if failures:
             raise GfalPartialFailureError(

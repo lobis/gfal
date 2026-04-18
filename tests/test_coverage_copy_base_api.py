@@ -513,7 +513,8 @@ class TestRecursivePrioritization:
             "Skipped : 219 files matched by size during scan; 2 skipped during transfer"
             in output
         )
-        assert "Failed  : 1" in output
+        assert "Failed  : 1 file" in output
+        assert "Avg rate: 149.9 MB/s" in output
         assert "Elapsed : 28.0s" in output
 
 

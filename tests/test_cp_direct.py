@@ -29,6 +29,7 @@ from gfal.core import fs
 from gfal.core.api import AsyncGfalClient as _AsyncGfalClient
 from gfal.core.api import checksum_fs as _checksum_fs
 from gfal.core.api import eos_app_url as _eos_app_url
+from gfal.core.errors import GfalError
 
 
 def _make_cmd():
@@ -1214,6 +1215,68 @@ class TestCliUsesLibraryCopy:
             index for index, event in enumerate(events) if event[0] == "copy-stop"
         )
         assert stop_index < final_summary_index
+
+    def test_recursive_tty_interrupt_still_prints_summary(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(), dst=[dst.as_uri()], recursive=True
+        )
+
+        class _DoneHandle:
+            def __init__(self, done=True):
+                self._done = done
+
+            def done(self):
+                return self._done
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_scan_progress = MagicMock()
+        fake_copy_progress = MagicMock()
+        started = []
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            del dst_url
+            started.append(src_url)
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            if len(started) == 1:
+                return _DoneHandle(done=True)
+            cmd._cancel_event.set()
+            return _DoneHandle(done=False)
+
+        with (
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[fake_scan_progress, fake_copy_progress],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.print_live_message") as mock_live_message,
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            pytest.raises(GfalError, match="Transfer cancelled"),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("copied" in message for message in messages)
+        assert any("Copy interrupted" in message for message in messages)
+        assert any("Copied  : 1 file" in message for message in messages)
+        assert any("Avg rate: " in message for message in messages)
+        assert any("Elapsed :" in message for message in messages)
+        fake_copy_progress.stop.assert_called_once_with(False)
 
     def test_history_status_line_includes_size_rate_and_elapsed(self):
         display = _TransferDisplay(

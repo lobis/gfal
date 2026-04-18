@@ -24,6 +24,21 @@ from fsspec.callbacks import Callback
 from gfal.cli.base import get_console, is_gfal2_compat
 
 
+def _format_binary_rate(rate):
+    if rate is None or rate <= 0:
+        return "?"
+    value = float(rate)
+    units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s", "PB/s"]
+    unit = units[0]
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B/s":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
 def _format_hms(total_seconds):
     total_seconds = max(0, int(total_seconds))
     hours, remainder = divmod(total_seconds, 3600)
@@ -401,11 +416,24 @@ class RichCountProgress:
                 if key not in self._shared:
                     from rich.progress import (
                         BarColumn,
+                        ProgressColumn,
                         SpinnerColumn,
                         TextColumn,
                         TimeElapsedColumn,
                     )
                     from rich.progress import Progress as _RichProgress
+                    from rich.text import Text
+
+                    class _CountTransferRateColumn(ProgressColumn):
+                        def render(self, task):
+                            bytes_completed = task.fields.get("bytes_completed", 0)
+                            elapsed = task.elapsed or 0.0
+                            if bytes_completed <= 0 or elapsed <= 0:
+                                return Text("?", style="dim")
+                            return Text(
+                                _format_binary_rate(bytes_completed / elapsed),
+                                style="progress.data.speed",
+                            )
 
                     self._shared[key] = SimpleNamespace(
                         lock=threading.Lock(),
@@ -414,6 +442,7 @@ class RichCountProgress:
                             TextColumn("[progress.description]{task.description}"),
                             BarColumn(),
                             TextColumn("{task.completed}/{task.total} files"),
+                            _CountTransferRateColumn(),
                             TimeElapsedColumn(),
                             console=get_console(stderr=False),
                             expand=True,
@@ -436,12 +465,23 @@ class RichCountProgress:
             if not manager.started:
                 manager.progress.start()
                 manager.started = True
-            self.task_id = manager.progress.add_task(self.label, total=self.total)
+            self.task_id = None
+            with contextlib.suppress(TypeError):
+                self.task_id = manager.progress.add_task(
+                    self.label,
+                    total=self.total,
+                    bytes_completed=0,
+                )
+            if self.task_id is None:
+                self.task_id = manager.progress.add_task(
+                    self.label,
+                    total=self.total,
+                )
             manager.active += 1
             self._started_flag = True
             manager.progress.refresh()
 
-    def update(self, completed=None, total=None):
+    def update(self, completed=None, total=None, bytes_completed=None):
         manager = self._manager()
         with manager.lock:
             if not self._started_flag:
@@ -451,6 +491,8 @@ class RichCountProgress:
                 kwargs["completed"] = completed
             if total is not None:
                 kwargs["total"] = total
+            if bytes_completed is not None:
+                kwargs["bytes_completed"] = bytes_completed
             manager.progress.update(self.task_id, **kwargs)
             manager.progress.refresh()
 
@@ -620,8 +662,8 @@ class LegacyCountProgress:
     def start(self):
         self._spinner.start()
 
-    def update(self, completed=None, total=None):
-        del completed, total
+    def update(self, completed=None, total=None, bytes_completed=None):
+        del completed, total, bytes_completed
 
     def stop(self, success=True, status=None):
         self._spinner.stop(success=success, status=status)
