@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -1154,12 +1155,10 @@ class CommandBase:
                 self.progress_bar.stop(False)
             original_handler = signal.getsignal(signal.SIGINT)
             try:
-                while t.is_alive():
-                    try:
-                        t.join(0.1)
-                    except KeyboardInterrupt:
-                        sys.stderr.write("\nInterrupted\n")
-                        return errno.EINTR
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+                deadline = time.monotonic() + 10.0
+                while t.is_alive() and time.monotonic() < deadline:
+                    t.join(0.1)
             finally:
                 with contextlib.suppress(Exception):
                     signal.signal(signal.SIGINT, original_handler)
@@ -1167,4 +1166,9 @@ class CommandBase:
                 sys.stdout.flush()
             with contextlib.suppress(Exception):
                 sys.stderr.flush()
+            if t.is_alive():
+                sys.stderr.write("\nInterrupted\n")
+                with contextlib.suppress(Exception):
+                    sys.stderr.flush()
+                return errno.EINTR
             return self.return_code if self.return_code is not None else errno.EINTR

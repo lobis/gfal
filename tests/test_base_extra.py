@@ -716,7 +716,7 @@ class TestCommandBaseExecute:
         rc = cmd.execute(func)
         assert rc == errno.ECANCELED
 
-    def test_execute_second_keyboard_interrupt_forces_immediate_interrupt(
+    def test_execute_keyboard_interrupt_times_out_when_worker_does_not_finish(
         self, monkeypatch, capsys
     ):
         cmd = self._make_minimal_cmd_with_params()
@@ -741,9 +741,13 @@ class TestCommandBaseExecute:
             def join(self, timeout=None):
                 del timeout
                 self._join_calls += 1
-                raise KeyboardInterrupt
+                if self._join_calls == 1:
+                    raise KeyboardInterrupt
+                return None
 
         monkeypatch.setattr("gfal.cli.base.Thread", _FakeThread)
+        times = iter([100.0, 111.0])
+        monkeypatch.setattr("gfal.cli.base.time.monotonic", lambda: next(times))
         rc = cmd.execute(func)
         captured = capsys.readouterr()
         assert rc == errno.EINTR
