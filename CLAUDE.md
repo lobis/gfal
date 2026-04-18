@@ -225,6 +225,57 @@ All actual I/O still goes through fsspec (local, HTTP/WebDAV, XRootD). The
 variable name is confusing — it means "format output like gfal2-util", **not**
 "use the gfal2 library".
 
+## Progress bar notes
+
+`progress.py` has two distinct Rich modes:
+
+- `Progress(...)` for per-file byte progress
+- `CountProgress(...)` for recursive aggregate progress (`N/M files`)
+
+For recursive TTY copies, the robust approach is:
+
+- keep **one aggregate** live Rich bar for the overall recursive job
+- print **one persistent final line per completed child file**
+- stop the aggregate bar **before** printing the final recursive summary
+
+Trying to keep a separate live Rich bar for every recursive child transfer led
+to duplicated or stale rows on real CERN terminals, especially with short-lived
+TPC child copies.
+
+When emitting per-file history lines while an aggregate `CountProgress` is
+active, use `print_live_message(...)` rather than raw `print(...)`. For the
+count-progress case, `print_live_message(...)` temporarily stops the live
+manager, prints the message on a clean line, then resumes the live display.
+This avoids output like:
+
+```text
+<live bar> Copying foo.root [DONE]
+```
+
+Per-file recursive completion lines should include:
+
+- final status (`[DONE]` / `[FAILED]` / `[SKIPPED]`)
+- total size
+- average transfer rate
+- elapsed wall time
+
+Most importantly: mocked terminal tests are not enough for this area. If you
+change recursive Rich progress behavior, verify it on a **real `lxplus` TTY**
+with a bounded command such as:
+
+```bash
+gfal cp -r https://eospublic.cern.ch//eos/opendata/atlas/rucio/data16_13TeV \
+  https://eospilot.cern.ch//eos/pilot/test/lobisapa/tmp/deleteme \
+  --compare size --limit 4
+```
+
+The unit tests should still cover the structure:
+
+- aggregate `CountProgress` is used for recursive TTY copies
+- per-file history lines are emitted exactly once
+- live-message printing is routed through the active Rich manager
+- the aggregate progress is stopped before the final recursive summary
+
 ## After every code change — mandatory checklist
 
 Before considering any task done, **both** of the following must pass:

@@ -785,6 +785,7 @@ class CommandCopy(base.CommandBase):
         self._reported_child_errors = set()
         src_fs, src_path = fs.url_to_fs(src_url, opts)
         _dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+        scan_label = f"Scanning {src_url}  =>  {dst_url}"
 
         try:
             client.stat(dst_url)
@@ -795,7 +796,7 @@ class CommandCopy(base.CommandBase):
 
         scan_spinner = None
         if not self._is_quiet():
-            scan_spinner = Spinner(f"Scanning {src_url}  =>  {dst_url}")
+            scan_spinner = Spinner(scan_label)
             scan_spinner.start()
         try:
             entries = src_fs.ls(src_path, detail=True)
@@ -810,13 +811,21 @@ class CommandCopy(base.CommandBase):
             if scan_spinner is not None:
                 scan_spinner.stop(True)
         child_entries = []
+        scanned_count = 0
         for entry in entries:
             name = self._entry_name(entry)
             if name in (".", ".."):
                 continue
+            scanned_count += 1
+            if scan_spinner is not None and (
+                scanned_count == 1 or scanned_count % 250 == 0
+            ):
+                scan_spinner.set_label(f"{scan_label}  ({scanned_count} files)")
             child_entries.append(
                 (_url_path_join(src_url, name), _url_path_join(dst_url, name), entry)
             )
+        if scan_spinner is not None and scanned_count:
+            scan_spinner.set_label(f"{scan_label}  ({scanned_count} files)")
         child_jobs, child_summary = self._classify_recursive_child_jobs(
             [
                 (self._entry_name(entry), child_src_url, child_dst_url, entry)

@@ -460,6 +460,9 @@ class TestRichSpinner:
             def stop(self):
                 calls.append(("stop",))
 
+            def update(self, *, status):
+                calls.append(("update", status))
+
         class _FakeConsole:
             def status(self, label):
                 calls.append(("status", label))
@@ -471,11 +474,13 @@ class TestRichSpinner:
 
         spinner = RichSpinner("Scanning example")
         spinner.start()
+        spinner.set_label("Scanning example (5 files)")
         spinner.stop()
 
         assert calls == [
             ("status", "Scanning example"),
             ("start",),
+            ("update", "Scanning example (5 files)"),
             ("stop",),
         ]
 

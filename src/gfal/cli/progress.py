@@ -343,6 +343,13 @@ class RichSpinner:
         with contextlib.suppress(Exception):
             self._status.stop()
 
+    def set_label(self, label):
+        self.label = label
+        if not self._started_flag:
+            return
+        with contextlib.suppress(Exception):
+            self._status.update(status=label)
+
 
 class RichCountProgress:
     _shared = None
@@ -569,6 +576,10 @@ class LegacySpinner:
 
     def stop(self, success=True, status=None):
         self._progress.stop(success, status=status)
+
+    def set_label(self, label):
+        self.label = label
+        self._progress.label = label
 
 
 class LegacyCountProgress:

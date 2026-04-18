@@ -1247,6 +1247,67 @@ class TestCliUsesLibraryCopy:
         fake_spinner.start.assert_called_once()
         fake_spinner.stop.assert_called_once_with(False)
 
+    def test_recursive_scan_spinner_updates_live_file_count(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+
+        entries = [str(src / f"file-{index:03d}.txt") for index in range(251)]
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            limit=1,
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_client = MagicMock()
+        fake_client.stat.side_effect = [
+            FileNotFoundError(),
+            SimpleNamespace(is_dir=lambda: False, st_size=1),
+        ]
+        fake_client.start_copy.return_value = _DoneHandle()
+        fake_client._async_client = MagicMock()
+
+        fake_src_fs = MagicMock()
+        fake_src_fs.ls.return_value = entries
+        fake_dst_fs = MagicMock()
+        fake_dst_fs.ls.return_value = []
+        fake_spinner = MagicMock()
+
+        with (
+            patch(
+                "gfal.cli.copy.fs.url_to_fs",
+                side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
+            ),
+            patch("gfal.cli.copy.Spinner", return_value=fake_spinner),
+        ):
+            cmd._copy_directory_parallel(
+                fake_client,
+                src.as_uri(),
+                dst.as_uri(),
+                {"timeout": 1800},
+                SimpleNamespace(),
+            )
+
+        labels = [call.args[0] for call in fake_spinner.set_label.call_args_list]
+        assert any(label.endswith("(1 files)") for label in labels)
+        assert any(label.endswith("(250 files)") for label in labels)
+        assert labels[-1].endswith("(251 files)")
+
     def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
