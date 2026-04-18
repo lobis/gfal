@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from rich.text import Text
+
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
 from gfal.cli.progress import (
@@ -44,6 +46,31 @@ _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
 
 _DEFAULT_RECURSIVE_PARALLELISM = 1
+_TRANSFER_MODE_LABELS = {
+    "streamed": "streamed",
+    "tpc-pull": "TPC pull",
+    "tpc-push": "TPC push",
+    "tpc-xrootd": "TPC xrootd",
+}
+
+
+def _format_count(value):
+    return f"{value:,}"
+
+
+def _short_elapsed_text(seconds):
+    return f"{max(0.0, seconds):.1f}s"
+
+
+def _truncate_middle(value, max_width):
+    if len(value) <= max_width:
+        return value
+    if max_width <= 3:
+        return value[:max_width]
+    keep = max_width - 3
+    left = keep // 2
+    right = keep - left
+    return f"{value[:left]}...{value[-right:]}"
 
 
 def _url_path_join(base_url, name):
@@ -63,6 +90,9 @@ class _TransferDisplay:
         src_size=None,
         transfer_mode=None,
         history_only=False,
+        transfer_index=None,
+        transfer_total=None,
+        rich_history=False,
     ):
         self.src_url = src_url
         self.dst_url = dst_url
@@ -76,18 +106,15 @@ class _TransferDisplay:
         self.transfer_start = time.monotonic()
         self.transfer_mode = transfer_mode
         self.final_status = None
+        self.transfer_index = transfer_index
+        self.transfer_total = transfer_total
+        self.rich_history = rich_history
         self._lock = threading.Lock()
 
     def _transfer_label(self):
-        mode_labels = {
-            "streamed": "streamed",
-            "tpc-pull": "TPC pull",
-            "tpc-push": "TPC push",
-            "tpc-xrootd": "TPC xrootd",
-        }
         if self.transfer_mode is None:
             return f"Copying {Path(self.src_url).name}"
-        mode = mode_labels.get(self.transfer_mode, self.transfer_mode)
+        mode = _TRANSFER_MODE_LABELS.get(self.transfer_mode, self.transfer_mode)
         return f"Copying {Path(self.src_url).name} ({mode})"
 
     @staticmethod
@@ -125,6 +152,47 @@ class _TransferDisplay:
         if details:
             return f"{line}  {'  '.join(details)}"
         return line
+
+    def _history_status_renderable(self, success):
+        elapsed = max(0.0, time.monotonic() - self.transfer_start)
+        size_text = self._size_text(self.src_size) or "-"
+        rate_text = self._rate_text(self.src_size, elapsed) if success else None
+        mode_text = (
+            _TRANSFER_MODE_LABELS.get(self.transfer_mode, self.transfer_mode) or "-"
+        )
+        name_text = _truncate_middle(Path(self.src_url).name, 48)
+        total = self.transfer_total or 0
+        index = self.transfer_index or 0
+        index_text = f"[{index}/{total}]" if total else "[?/?]"
+        status_text = (
+            "✓ copied"
+            if success and self.final_status != "skipped"
+            else ("↷ skipped" if self.final_status == "skipped" else "✗ failed")
+        )
+        status_style = (
+            "green"
+            if success and self.final_status != "skipped"
+            else "yellow"
+            if self.final_status == "skipped"
+            else "red"
+        )
+        row = Text()
+        row.append(f"{index_text:<7}", style="bold blue")
+        row.append("  ")
+        row.append(f"{name_text:<48}")
+        row.append("  ")
+        row.append(f"{size_text:>8}")
+        row.append("  ")
+        row.append(f"{str(mode_text):<10}", style="cyan")
+        row.append("  ")
+        row.append(f"{status_text:<9}", style=status_style)
+        row.append("  ")
+        row.append(
+            f"{(rate_text or '-'):>12}", style="dim" if rate_text is None else ""
+        )
+        row.append("  ")
+        row.append(f"{_short_elapsed_text(elapsed):>6}")
+        return row
 
     def start(self):
         with self._lock:
@@ -189,7 +257,10 @@ class _TransferDisplay:
             ):
                 return
             if self.show_progress and self.history_only:
-                print_live_message(self._history_status_line(success))
+                if self.rich_history:
+                    print_live_message(self._history_status_renderable(success))
+                else:
+                    print_live_message(self._history_status_line(success))
                 return
             if self.progress_bar is None:
                 return
@@ -763,12 +834,15 @@ class CommandCopy(base.CommandBase):
 
     def _apply_job_limit(self, jobs, summary):
         if self.params.limit is None or len(jobs) <= self.params.limit:
-            return jobs, summary
+            updated = dict(summary)
+            updated["selected"] = len(jobs)
+            return jobs, updated
 
         limited = jobs[: self.params.limit]
         updated = dict(summary)
         updated["queued_first"] = min(summary["queued_first"], len(limited))
         updated["limited_to"] = len(limited)
+        updated["selected"] = len(limited)
         return limited, updated
 
     @staticmethod
@@ -783,12 +857,149 @@ class CommandCopy(base.CommandBase):
             parts.append(f"elapsed {elapsed_text}")
         return ", ".join(parts)
 
+    def _use_recursive_rich_layout(self):
+        return (
+            sys.stdout.isatty()
+            and not self.params.verbose
+            and not self._is_quiet()
+            and not base.is_gfal2_compat()
+        )
+
+    @staticmethod
+    def _estimated_recursive_scan_matches(summary):
+        compare_mode = summary["compare_mode"]
+        if compare_mode in {"size", "size_mtime", "none"}:
+            return summary["likely_skipped"]
+        return 0
+
+    def _render_recursive_intro(self, src_url, dst_url):
+        intro = Text()
+        intro.append("Source      ", style="bold")
+        intro.append(src_url, style="cyan")
+        intro.append("\n")
+        intro.append("Destination ", style="bold")
+        intro.append(dst_url, style="cyan")
+        return intro
+
+    def _render_recursive_scan_summary(self, summary):
+        compare_mode = summary["compare_mode"]
+        total = summary["total"]
+        selected = summary.get("selected", total)
+        likely_skipped = summary["likely_skipped"]
+        eligible = (
+            total - likely_skipped
+            if compare_mode in {"size", "size_mtime", "none"}
+            else summary["queued_first"]
+        )
+        match_label = {
+            "size": "Already up to date (size match)",
+            "size_mtime": "Already up to date (size/mtime match)",
+            "none": "Already present at destination",
+        }.get(compare_mode)
+
+        block = Text()
+        block.append("● Scan complete", style="bold blue")
+        block.append("\n")
+        block.append("  Files discovered")
+        block.append(" : ", style="dim")
+        block.append(_format_count(total), style="bold")
+        block.append("\n")
+        block.append("  Eligible to copy")
+        block.append(" : ", style="dim")
+        block.append(_format_count(eligible), style="green")
+        if match_label is not None:
+            block.append("\n")
+            block.append(f"  {match_label}")
+            block.append(" : ", style="dim")
+            block.append(_format_count(likely_skipped), style="yellow")
+            block.append(" (scan estimate)", style="dim")
+        if summary.get("limited_to") is not None:
+            block.append("\n")
+            block.append("  Copy limit applied")
+            block.append(" : ", style="dim")
+            block.append(f"{_format_count(selected)} files", style="bold yellow")
+        else:
+            block.append("\n")
+            block.append("  Selected to transfer")
+            block.append(" : ", style="dim")
+            block.append(f"{_format_count(selected)} files", style="green")
+        if compare_mode == "checksum" and summary["deferred_existing"]:
+            block.append("\n")
+            block.append("  Existing files requiring checksum")
+            block.append(" : ", style="dim")
+            block.append(_format_count(summary["deferred_existing"]), style="yellow")
+        return block
+
+    @staticmethod
+    def _render_recursive_transfer_start():
+        return Text("▶ Starting transfers", style="bold blue")
+
+    def _render_recursive_final_summary(
+        self,
+        copied,
+        copied_bytes,
+        skipped,
+        failed,
+        elapsed,
+        scan_summary,
+    ):
+        matched = self._estimated_recursive_scan_matches(scan_summary)
+        compare_mode = scan_summary["compare_mode"]
+        skip_note = {
+            "size": "files matched by size during scan",
+            "size_mtime": "files matched by size/mtime during scan",
+            "none": "files already present at destination during scan",
+        }.get(compare_mode)
+        skipped_total = matched + skipped
+
+        block = Text()
+        block.append("✓ Copy complete", style="bold green")
+        block.append("\n")
+        block.append("  Copied")
+        block.append("  : ", style="dim")
+        block.append(f"{_format_count(copied)} files", style="green")
+        if copied_bytes:
+            block.append("   ", style="dim")
+            block.append(_TransferDisplay._size_text(copied_bytes), style="green")
+        block.append("\n")
+        block.append("  Skipped")
+        block.append(" : ", style="dim")
+        if skip_note is not None and skipped_total:
+            block.append(f"{_format_count(matched)} {skip_note}", style="yellow")
+            if skipped:
+                block.append("; ", style="dim")
+                block.append(
+                    f"{_format_count(skipped)} skipped during transfer",
+                    style="yellow",
+                )
+        elif skipped_total:
+            block.append(
+                f"{_format_count(skipped_total)} skipped during transfer",
+                style="yellow",
+            )
+        else:
+            block.append("0", style="yellow")
+        block.append("\n")
+        block.append("  Failed")
+        block.append("  : ", style="dim")
+        block.append(_format_count(failed), style="red" if failed else "")
+        block.append("\n")
+        block.append("  Elapsed")
+        block.append(" : ", style="dim")
+        block.append(_short_elapsed_text(elapsed), style="bold")
+        return block
+
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         recursive_start = time.monotonic()
         copy_options = self._build_copy_options()
         self._reported_child_errors = set()
         src_fs, src_path = fs.url_to_fs(src_url, opts)
         _dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+        rich_recursive_layout = self._use_recursive_rich_layout()
+
+        if rich_recursive_layout:
+            print_live_message(self._render_recursive_intro(src_url, dst_url))
+
         try:
             client.stat(dst_url)
         except Exception as exc:
@@ -851,10 +1062,13 @@ class CommandCopy(base.CommandBase):
         )
         child_jobs, child_summary = self._apply_job_limit(child_jobs, child_summary)
         if not self._is_quiet():
-            summary = self._recursive_scan_summary(child_summary)
-            if child_summary.get("limited_to") is not None:
-                summary = f"{summary} (limited to {child_summary['limited_to']})"
-            print_live_message(summary)
+            if rich_recursive_layout:
+                print_live_message(self._render_recursive_scan_summary(child_summary))
+            else:
+                summary = self._recursive_scan_summary(child_summary)
+                if child_summary.get("limited_to") is not None:
+                    summary = f"{summary} (limited to {child_summary['limited_to']})"
+                print_live_message(summary)
 
         max_parallel = min(
             self._recursive_parallelism(src_url, dst_url), len(child_jobs)
@@ -866,11 +1080,15 @@ class CommandCopy(base.CommandBase):
         failures = []
         pending = deque(child_jobs)
         copied_count = 0
+        copied_bytes = 0
         skipped_count = 0
         finished_count = 0
         aggregate_progress = None
+        if rich_recursive_layout and child_jobs:
+            print_live_message(self._render_recursive_transfer_start())
         if (
             child_jobs
+            and not rich_recursive_layout
             and sys.stdout.isatty()
             and not self.params.verbose
             and not self._is_quiet()
@@ -890,6 +1108,9 @@ class CommandCopy(base.CommandBase):
                     child_src_url, child_dst_url
                 ),
                 history_only=True,
+                transfer_index=finished_count + len(active) + 1,
+                transfer_total=len(child_jobs),
+                rich_history=rich_recursive_layout,
             )
             if display.show_progress:
                 display.start()
@@ -942,6 +1163,9 @@ class CommandCopy(base.CommandBase):
                         skipped_count += 1
                     else:
                         copied_count += 1
+                        display_size = getattr(display, "src_size", None)
+                        if display_size:
+                            copied_bytes += display_size
                     finished_count += 1
                     if aggregate_progress is not None:
                         aggregate_progress.update(completed=finished_count)
@@ -975,14 +1199,26 @@ class CommandCopy(base.CommandBase):
         if aggregate_progress is not None:
             aggregate_progress.stop(not failures)
         if not self._is_quiet():
-            print_live_message(
-                self._recursive_result_summary(
-                    copied_count,
-                    skipped_count,
-                    len(failures),
-                    time.monotonic() - recursive_start,
+            if rich_recursive_layout:
+                print_live_message(
+                    self._render_recursive_final_summary(
+                        copied_count,
+                        copied_bytes,
+                        skipped_count,
+                        len(failures),
+                        time.monotonic() - recursive_start,
+                        child_summary,
+                    )
                 )
-            )
+            else:
+                print_live_message(
+                    self._recursive_result_summary(
+                        copied_count,
+                        skipped_count,
+                        len(failures),
+                        time.monotonic() - recursive_start,
+                    )
+                )
 
         if failures:
             raise GfalPartialFailureError(

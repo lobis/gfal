@@ -1096,14 +1096,10 @@ class TestCliUsesLibraryCopy:
             return _DoneHandle()
 
         fake_scan_progress = MagicMock()
-        fake_copy_progress = MagicMock()
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
-            patch(
-                "gfal.cli.copy.CountProgress",
-                side_effect=[fake_scan_progress, fake_copy_progress],
-            ),
+            patch("gfal.cli.copy.CountProgress", return_value=fake_scan_progress),
             patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
@@ -1117,20 +1113,15 @@ class TestCliUsesLibraryCopy:
         ]
         mock_progress.assert_not_called()
         fake_scan_progress.start.assert_called_once()
-        fake_copy_progress.start.assert_called_once()
-        assert fake_copy_progress.update.call_count == 2
         fake_scan_progress.stop.assert_called_once_with(True)
-        fake_copy_progress.stop.assert_called_once_with(True)
-        messages = [call.args[0] for call in mock_live_message.call_args_list]
-        assert any(
-            "Copying one.txt (TPC pull) [DONE]" in message for message in messages
-        )
-        assert any(
-            "Copying two.txt (TPC pull) [DONE]" in message for message in messages
-        )
-        assert any(
-            message.startswith("Recursive scan complete:") for message in messages
-        )
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("one.txt" in message and "copied" in message for message in messages)
+        assert any("two.txt" in message and "copied" in message for message in messages)
+        assert any("[1/2]" in message for message in messages)
+        assert any("[2/2]" in message for message in messages)
+        assert any("Scan complete" in message for message in messages)
+        assert any("Starting transfers" in message for message in messages)
+        assert any("Copy complete" in message for message in messages)
 
     def test_recursive_tty_uses_history_lines_not_rich_bars(self, tmp_path, capsys):
         src = tmp_path / "srcdir"
@@ -1162,18 +1153,14 @@ class TestCliUsesLibraryCopy:
             return _DoneHandle()
 
         fake_scan_progress = MagicMock()
-        fake_copy_progress = MagicMock()
         events = []
-        fake_copy_progress.stop.side_effect = lambda *args, **kwargs: events.append(
+        fake_scan_progress.stop.side_effect = lambda *args, **kwargs: events.append(
             ("stop", args, kwargs)
         )
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
-            patch(
-                "gfal.cli.copy.CountProgress",
-                side_effect=[fake_scan_progress, fake_copy_progress],
-            ),
+            patch("gfal.cli.copy.CountProgress", return_value=fake_scan_progress),
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
             patch("gfal.cli.copy.print_live_message") as mock_live_message,
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
@@ -1186,25 +1173,17 @@ class TestCliUsesLibraryCopy:
 
         mock_progress.assert_not_called()
         fake_scan_progress.start.assert_called_once()
-        fake_copy_progress.start.assert_called_once()
-        assert fake_copy_progress.update.call_count == 2
         fake_scan_progress.stop.assert_called_once_with(True)
-        fake_copy_progress.stop.assert_called_once_with(True)
-        messages = [call.args[0] for call in mock_live_message.call_args_list]
-        assert any(
-            "Copying one.txt (TPC pull) [DONE]" in message for message in messages
-        )
-        assert any(
-            "Copying two.txt (TPC pull) [DONE]" in message for message in messages
-        )
-        assert any(
-            message.startswith("Recursive scan complete:") for message in messages
-        )
+        messages = [str(call.args[0]) for call in mock_live_message.call_args_list]
+        assert any("one.txt" in message and "copied" in message for message in messages)
+        assert any("two.txt" in message and "copied" in message for message in messages)
+        assert any("[1/2]" in message for message in messages)
+        assert any("[2/2]" in message for message in messages)
+        assert any("Scan complete" in message for message in messages)
         final_summary_index = next(
             index
             for index, event in enumerate(events)
-            if event[0] == "message"
-            and event[1].startswith("Recursive copy complete: 2 copied, elapsed ")
+            if event[0] == "message" and "Copy complete" in str(event[1])
         )
         stop_index = next(
             index for index, event in enumerate(events) if event[0] == "stop"
@@ -1301,7 +1280,6 @@ class TestCliUsesLibraryCopy:
         fake_dst_fs.ls.return_value = []
         fake_spinner = MagicMock()
         fake_scan_progress = MagicMock()
-        fake_copy_progress = MagicMock()
 
         with (
             patch(
@@ -1309,10 +1287,7 @@ class TestCliUsesLibraryCopy:
                 side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
             ),
             patch("gfal.cli.copy.Spinner", return_value=fake_spinner),
-            patch(
-                "gfal.cli.copy.CountProgress",
-                side_effect=[fake_scan_progress, fake_copy_progress],
-            ),
+            patch("gfal.cli.copy.CountProgress", return_value=fake_scan_progress),
             patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
         ):
             cmd._copy_directory_parallel(
@@ -1335,7 +1310,6 @@ class TestCliUsesLibraryCopy:
         assert 250 in completed_updates
         assert completed_updates[-1] == 251
         fake_scan_progress.stop.assert_any_call(True)
-        fake_copy_progress.start.assert_called_once()
 
     def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
         src = tmp_path / "srcdir"

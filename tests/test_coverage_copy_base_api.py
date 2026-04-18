@@ -451,6 +451,57 @@ class TestRecursivePrioritization:
             == "Recursive copy complete: 2 copied, 1 skipped, 3 failed, elapsed 00:01:05"
         )
 
+    def test_render_recursive_scan_summary_shows_limit_and_scan_estimate(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_scan_summary(
+            {
+                "total": 45572,
+                "queued_first": 45353,
+                "likely_skipped": 219,
+                "deferred_existing": 0,
+                "compare_mode": "size",
+                "selected": 4,
+                "limited_to": 4,
+            }
+        )
+
+        output = str(renderable)
+        assert "Scan complete" in output
+        assert "Files discovered : 45,572" in output
+        assert "Eligible to copy : 45,353" in output
+        assert "Already up to date (size match) : 219 (scan estimate)" in output
+        assert "Copy limit applied : 4 files" in output
+
+    def test_render_recursive_final_summary_promotes_skips(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_final_summary(
+            copied=4,
+            copied_bytes=4400000000,
+            skipped=2,
+            failed=1,
+            elapsed=28.0,
+            scan_summary={
+                "total": 45572,
+                "queued_first": 45353,
+                "likely_skipped": 219,
+                "deferred_existing": 0,
+                "compare_mode": "size",
+                "selected": 4,
+            },
+        )
+
+        output = str(renderable)
+        assert "Copy complete" in output
+        assert "Copied  : 4 files" in output
+        assert (
+            "Skipped : 219 files matched by size during scan; 2 skipped during transfer"
+            in output
+        )
+        assert "Failed  : 1" in output
+        assert "Elapsed : 28.0s" in output
+
 
 # ===================================================================
 # copy.py: _predicted_transfer_mode

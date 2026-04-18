@@ -56,13 +56,22 @@ def _active_live_manager():
         return None
 
     for progress_cls in (RichProgress, RichCountProgress):
-        manager = getattr(progress_cls, "_shared", None)
+        shared = getattr(progress_cls, "_shared", None)
+        if isinstance(shared, dict):
+            for manager in shared.values():
+                if (
+                    manager is not None
+                    and getattr(manager, "started", False)
+                    and getattr(manager, "active", 0) > 0
+                ):
+                    return manager
+            continue
         if (
-            manager is not None
-            and getattr(manager, "started", False)
-            and getattr(manager, "active", 0) > 0
+            shared is not None
+            and getattr(shared, "started", False)
+            and getattr(shared, "active", 0) > 0
         ):
-            return manager
+            return shared
     return None
 
 

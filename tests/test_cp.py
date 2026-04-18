@@ -512,10 +512,10 @@ class TestCopyOverwrite:
     @pytest.mark.parametrize(
         ("compare_mode", "src_bytes", "dst_bytes", "same_mtime", "skip_hint"),
         [
-            ("none", b"new content", b"old content", False, "[SKIPPED]"),
-            ("size", b"AAAA", b"BBBB", False, "[SKIPPED]"),
-            ("size_mtime", b"AAAA", b"BBBB", True, "[SKIPPED]"),
-            ("checksum", b"same content", b"same content", False, "[SKIPPED]"),
+            ("none", b"new content", b"old content", False, "skipped"),
+            ("size", b"AAAA", b"BBBB", False, "skipped"),
+            ("size_mtime", b"AAAA", b"BBBB", True, "skipped"),
+            ("checksum", b"same content", b"same content", False, "skipped"),
         ],
     )
     def test_progress_output_hides_skip_messages_for_compare_modes(
@@ -555,6 +555,7 @@ class TestCopyOverwrite:
         assert rc == 0
         assert "Skipping existing file" not in output
         assert skip_hint in output
+        assert "Scan complete" in output
 
     def test_recursive_tty_outputs_one_done_line_per_file(self, tmp_path):
         srcdir = tmp_path / "src_hist"
@@ -566,8 +567,13 @@ class TestCopyOverwrite:
         rc, output = _run_gfal_tty("cp", "-r", srcdir.as_uri(), dstdir.as_uri())
 
         assert rc == 0
-        assert output.count("Copying one.txt (streamed) [DONE]") == 1
-        assert output.count("Copying two.txt (streamed) [DONE]") == 1
+        assert "Source" in output
+        assert "Destination" in output
+        assert "Starting transfers" in output
+        assert output.count("copied") >= 2
+        assert output.count("one.txt") == 1
+        assert output.count("two.txt") == 1
+        assert "Copy complete" in output
 
     # --- -f / --force --------------------------------------------------------
 
