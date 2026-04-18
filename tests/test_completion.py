@@ -145,6 +145,30 @@ class TestClickShellCompletion:
         assert "rm" in out
         assert "completion" in out
 
+    def test_bash_completes_subcommands_without_trailing_space(self):
+        """Typing ``gfal<TAB>`` still offers subcommands instead of files."""
+        gfal_dir = str(Path(sys.executable).parent)
+        bash_script = """
+            export PATH="$1:$PATH"
+            eval "$(_GFAL_COMPLETE=bash_source gfal)"
+            COMP_WORDS=(gfal)
+            COMP_CWORD=0
+            COMPREPLY=()
+            _gfal_completion gfal
+            printf '%s\n' "${COMPREPLY[@]}"
+        """
+        proc = subprocess.run(
+            ["bash", "-lc", bash_script, "bash", gfal_dir],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_subprocess_env(),
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "ls" in proc.stdout
+        assert "cp" in proc.stdout
+        assert "completion" in proc.stdout
+
     def test_bash_completes_partial_subcommand(self):
         """Typing ``gfal l<TAB>`` narrows to commands starting with 'l'."""
         rc, out, _ = _run_completion(
