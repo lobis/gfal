@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 authors = [
     { name = "Luis Antonio Obis Aparicio", email = "luis.obis@cern.ch" },
@@ -74,19 +75,19 @@ exclude = ["src/gfal/_version.py"]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
     "SIM", # flake8-simplify
-    "C4",  # flake8-comprehensions
+    "C4", # flake8-comprehensions
     "PTH", # use pathlib over os.path (advisory)
 ]
 ignore = [
-    "E501",   # line too long – handled by the formatter
-    "UP045",  # use `X | None` for type annotations (wait: we need 3.9 support!)
+    "E501", # line too long – handled by the formatter
+    "UP045", # use `X | None` for type annotations (wait: we need 3.9 support!)
 ]
 
 [tool.ruff.lint.isort]
