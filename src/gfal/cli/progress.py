@@ -63,6 +63,10 @@ def _final_status_text(label, success, status=None):
     return f"{label} [{outcome}]"
 
 
+def _should_emit_live_final_message(success, status=None):
+    return status == "skipped" or not success
+
+
 def has_live_progress():
     """Return True when Rich progress is currently managing live output."""
     if is_gfal2_compat():
@@ -258,9 +262,11 @@ class RichProgress:
                         self.task_id,
                         final_elapsed=elapsed_text,
                     )
-                final_message = _final_status_text(self.label, success, status)
                 console = getattr(manager.progress, "console", None)
-                if console is not None:
+                if console is not None and _should_emit_live_final_message(
+                    success, status
+                ):
+                    final_message = _final_status_text(self.label, success, status)
                     with contextlib.suppress(Exception):
                         console.print(final_message, markup=False, highlight=False)
                 removed = False

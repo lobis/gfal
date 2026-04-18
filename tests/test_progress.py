@@ -9,6 +9,7 @@ from gfal.cli.progress import (
     RichProgress,
     RichSpinner,
     _final_status_text,
+    _should_emit_live_final_message,
     has_live_progress,
     print_live_message,
 )
@@ -438,7 +439,7 @@ class TestRichProgress:
         progress.start()
         progress.stop(True)
 
-        assert ("print", "Copying example.txt [DONE]", False, False) in backend.calls
+        assert not any(call[0] == "print" for call in backend.calls)
         assert ("remove_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
 
@@ -524,3 +525,14 @@ class TestFinalStatusText:
             _final_status_text("Copying file.txt", True, "skipped")
             == "Copying file.txt [SKIPPED]"
         )
+
+
+class TestShouldEmitLiveFinalMessage:
+    def test_success_is_silent(self):
+        assert _should_emit_live_final_message(True) is False
+
+    def test_skipped_is_printed(self):
+        assert _should_emit_live_final_message(True, "skipped") is True
+
+    def test_failure_is_printed(self):
+        assert _should_emit_live_final_message(False) is True
