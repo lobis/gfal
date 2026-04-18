@@ -6,7 +6,6 @@ import contextlib
 import errno
 import logging
 import os
-import signal
 import sys
 import time
 from importlib.metadata import PackageNotFoundError
@@ -1153,15 +1152,17 @@ class CommandBase:
             self._cancel_event.set()
             if self.progress_bar is not None:
                 self.progress_bar.stop(False)
-            original_handler = signal.getsignal(signal.SIGINT)
-            try:
-                signal.signal(signal.SIGINT, signal.SIG_IGN)
-                deadline = time.monotonic() + 10.0
-                while t.is_alive() and time.monotonic() < deadline:
+
+            deadline = time.monotonic() + 10.0
+            while t.is_alive() and time.monotonic() < deadline:
+                try:
                     t.join(0.1)
-            finally:
-                with contextlib.suppress(Exception):
-                    signal.signal(signal.SIGINT, original_handler)
+                except KeyboardInterrupt:
+                    sys.stderr.write("\nInterrupted\n")
+                    with contextlib.suppress(Exception):
+                        sys.stderr.flush()
+                    return errno.EINTR
+
             with contextlib.suppress(Exception):
                 sys.stdout.flush()
             with contextlib.suppress(Exception):

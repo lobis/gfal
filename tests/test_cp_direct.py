@@ -1461,7 +1461,10 @@ class TestCliUsesLibraryCopy:
         src.mkdir()
         dst.mkdir()
 
-        entries = [str(src / f"file-{index:03d}.txt") for index in range(251)]
+        entries = [
+            {"name": str(src / f"file-{index:03d}.txt"), "size": 1, "type": "file"}
+            for index in range(251)
+        ]
 
         cmd = _make_cmd()
         cmd.params = _default_params(
@@ -1486,10 +1489,6 @@ class TestCliUsesLibraryCopy:
         fake_client.stat.side_effect = [FileNotFoundError()]
         fake_client.start_copy.return_value = _DoneHandle()
         fake_client._async_client = MagicMock()
-        fake_client._async_client._stat_sync.return_value = SimpleNamespace(
-            is_dir=lambda: False,
-            st_size=1,
-        )
 
         fake_src_fs = MagicMock()
         fake_src_fs.ls.return_value = entries
@@ -1537,7 +1536,7 @@ class TestCliUsesLibraryCopy:
             for call in fake_copy_progress.update.call_args_list
         )
 
-    def test_recursive_child_size_probe_uses_sync_stat_helper(self, tmp_path):
+    def test_recursive_child_size_comes_from_scan_metadata(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
         src.mkdir()
@@ -1566,17 +1565,16 @@ class TestCliUsesLibraryCopy:
         fake_client = MagicMock()
         fake_client.stat.side_effect = [FileNotFoundError()]
         fake_client._async_client = MagicMock()
-        fake_client._async_client._stat_sync.return_value = SimpleNamespace(
-            is_dir=lambda: False,
-            st_size=3,
-        )
         fake_client.start_copy.return_value = _DoneHandle()
 
         fake_src_fs = MagicMock()
-        fake_src_fs.ls.return_value = [str(src / "one.txt")]
+        fake_src_fs.ls.return_value = [
+            {"name": str(src / "one.txt"), "size": 3, "type": "file"}
+        ]
         fake_dst_fs = MagicMock()
         fake_dst_fs.ls.return_value = []
 
+        copy_progress = MagicMock()
         with (
             patch(
                 "gfal.cli.copy.fs.url_to_fs",
@@ -1586,7 +1584,7 @@ class TestCliUsesLibraryCopy:
             patch("gfal.cli.copy.Spinner"),
             patch(
                 "gfal.cli.copy.CountProgress",
-                side_effect=[MagicMock(), MagicMock()],
+                side_effect=[MagicMock(), copy_progress],
             ),
         ):
             cmd._copy_directory_parallel(
@@ -1597,8 +1595,12 @@ class TestCliUsesLibraryCopy:
                 SimpleNamespace(),
             )
 
-        fake_client._async_client._stat_sync.assert_called_once()
+        fake_client._async_client._stat_sync.assert_not_called()
         assert fake_client.stat.call_count == 1
+        assert any(
+            call.kwargs.get("bytes_completed") == 3
+            for call in copy_progress.update.call_args_list
+        )
 
     def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
         src = tmp_path / "srcdir"

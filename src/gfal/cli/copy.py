@@ -729,6 +729,19 @@ class CommandCopy(base.CommandBase):
                     return None
         return None
 
+    @staticmethod
+    def _entry_size(entry):
+        if isinstance(entry, dict):
+            value = entry.get("size")
+        else:
+            value = getattr(entry, "st_size", None)
+            if value is None:
+                value = getattr(entry, "size", None)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
     def _prioritize_recursive_child_jobs(
         self,
         src_entries,
@@ -787,8 +800,8 @@ class CommandCopy(base.CommandBase):
                 continue
 
             if compare_mode == "size":
-                src_size = src_info.get("size") if isinstance(src_info, dict) else None
-                dst_size = dst_info.get("size") if isinstance(dst_info, dict) else None
+                src_size = self._entry_size(src_info)
+                dst_size = self._entry_size(dst_info)
                 if (
                     src_size is not None
                     and dst_size is not None
@@ -801,8 +814,8 @@ class CommandCopy(base.CommandBase):
                 continue
 
             if compare_mode == "size_mtime":
-                src_size = src_info.get("size") if isinstance(src_info, dict) else None
-                dst_size = dst_info.get("size") if isinstance(dst_info, dict) else None
+                src_size = self._entry_size(src_info)
+                dst_size = self._entry_size(dst_info)
                 src_mtime = self._entry_mtime(src_info)
                 dst_mtime = self._entry_mtime(dst_info)
                 matches = (
@@ -1146,6 +1159,10 @@ class CommandCopy(base.CommandBase):
             dst_entries,
             copy_options.compare,
         )
+        child_info_by_url = {
+            child_src_url: entry
+            for child_src_url, _child_dst_url, entry in child_entries
+        }
         child_jobs, child_summary = self._apply_job_limit(child_jobs, child_summary)
         if not self._is_quiet():
             if rich_recursive_layout:
@@ -1196,14 +1213,9 @@ class CommandCopy(base.CommandBase):
         def _cancel_active_transfers():
             nonlocal cancelled
             cancelled = True
-            for _, _, active_handle, active_display in active:
+            for _, _, active_handle, active_display in list(active):
                 active_display.suppress_output()
                 active_handle.cancel()
-            deadline = time.monotonic() + min(5.0, 0.2 * len(active) + 0.5)
-            while active and time.monotonic() < deadline:
-                if all(active_handle.done() for _, _, active_handle, _ in active):
-                    break
-                time.sleep(0.05)
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -1223,10 +1235,9 @@ class CommandCopy(base.CommandBase):
             )
             if display.show_progress:
                 display.start()
-            with contextlib.suppress(Exception):
-                child_st = client._async_client._stat_sync(child_src_url)
-                if not child_st.is_dir():
-                    display.set_total_size(child_st.st_size)
+            child_size = self._entry_size(child_info_by_url.get(child_src_url))
+            if child_size is not None:
+                display.set_total_size(child_size)
 
             def _handle_warn(msg, dst=child_dst_url, child_display=display):
                 if self._is_skip_message(msg):
@@ -1255,6 +1266,9 @@ class CommandCopy(base.CommandBase):
                     _cancel_active_transfers()
                     raise GfalError("Transfer cancelled", errno.ECANCELED)
                 while pending and len(active) < max_parallel:
+                    if self._cancel_event.is_set():
+                        _cancel_active_transfers()
+                        raise GfalError("Transfer cancelled", errno.ECANCELED)
                     child_src_url, child_dst_url = pending.popleft()
                     _start_child(child_src_url, child_dst_url)
 
