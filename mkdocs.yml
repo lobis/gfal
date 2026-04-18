@@ -45,5 +45,6 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Python API: python-api.md
   - EOS Public Examples: eospublic-examples.md
   - CLI Reference: reference.md
