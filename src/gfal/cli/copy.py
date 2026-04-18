@@ -1155,6 +1155,11 @@ class CommandCopy(base.CommandBase):
             for _, _, active_handle, active_display in active:
                 active_display.suppress_output()
                 active_handle.cancel()
+            deadline = time.monotonic() + min(5.0, 0.2 * len(active) + 0.5)
+            while active and time.monotonic() < deadline:
+                if all(active_handle.done() for _, _, active_handle, _ in active):
+                    break
+                time.sleep(0.05)
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():

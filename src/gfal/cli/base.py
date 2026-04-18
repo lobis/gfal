@@ -1079,8 +1079,12 @@ class CommandBase:
             if isinstance(e, OSError) and e.errno == errno.EPIPE:
                 self.return_code = 0
                 return
-            self._print_error(e)
             self.return_code = exception_exit_code(e)
+            if not (
+                self._cancel_event.is_set()
+                and self.return_code in {errno.ECANCELED, errno.EINTR}
+            ):
+                self._print_error(e)
 
     def execute(self, func):
         # Forced IP family (IPv4/v6)
@@ -1153,5 +1157,7 @@ class CommandBase:
             deadline = time.monotonic() + 10.0
             while t.is_alive() and time.monotonic() < deadline:
                 t.join(0.1)
-            sys.stderr.write("\nInterrupted\n")
-            return errno.EINTR
+            if t.is_alive():
+                sys.stderr.write("\nInterrupted\n")
+                return errno.EINTR
+            return self.return_code if self.return_code is not None else errno.EINTR
