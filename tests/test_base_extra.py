@@ -645,6 +645,41 @@ class TestCommandBaseExecute:
                 with contextlib.suppress(OSError):
                     proxy_path.unlink()
 
+    @pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="Unix only")
+    def test_execute_expired_x509_proxy_autodetect_ignored(self, monkeypatch, tmp_path):
+        """Expired auto-detected proxies should not be injected into the env."""
+        import contextlib
+        import os
+        from pathlib import Path
+
+        uid = os.getuid()
+        proxy_path = Path(f"/tmp/x509up_u{uid}")
+
+        monkeypatch.delenv("X509_USER_PROXY", raising=False)
+        monkeypatch.delenv("X509_USER_CERT", raising=False)
+        monkeypatch.delenv("X509_USER_KEY", raising=False)
+        monkeypatch.setattr("gfal.cli.base._proxy_is_expired", lambda _path: True)
+
+        already_existed = proxy_path.exists()
+        if not already_existed:
+            proxy_path.write_text("fake proxy")
+        try:
+            cmd = self._make_minimal_cmd_with_params(cert=None)
+
+            def func(self):
+                return 0
+
+            func.is_interactive = False
+            rc = cmd.execute(func)
+            assert rc == 0
+            assert os.environ.get("X509_USER_PROXY") is None
+            assert os.environ.get("X509_USER_CERT") is None
+            assert os.environ.get("X509_USER_KEY") is None
+        finally:
+            if not already_existed:
+                with contextlib.suppress(OSError):
+                    proxy_path.unlink()
+
     def test_execute_keyboard_interrupt_returns_worker_code_when_worker_finishes(
         self, monkeypatch
     ):
