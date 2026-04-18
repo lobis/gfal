@@ -3,6 +3,7 @@ Entry point for the supported ``gfal <command>`` CLI.
 """
 
 import contextlib
+import io
 import os
 import sys
 from pathlib import Path
@@ -188,9 +189,27 @@ def main(argv=None):
     if prog_stem == "gfal":
         # Shell completion: delegate to Click's built-in completion machinery
         # when the _GFAL_COMPLETE env var is set by the shell's completion hook.
-        if os.environ.get("_GFAL_COMPLETE"):
+        complete_mode = os.environ.get("_GFAL_COMPLETE")
+        if complete_mode:
             grp = _build_completion_group()
-            grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
+            if complete_mode == "zsh_source":
+                # Zsh: prepend compinit bootstrap so completion works in fresh
+                # shells where compdef is not yet loaded (e.g. zsh -f).
+                script_out = io.StringIO()
+                with (
+                    contextlib.redirect_stdout(script_out),
+                    contextlib.suppress(SystemExit),
+                ):
+                    grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
+                sys.stdout.write(
+                    "autoload -Uz compinit\n"
+                    "if ! whence compdef >/dev/null 2>&1; then\n"
+                    "    compinit\n"
+                    "fi\n"
+                )
+                sys.stdout.write(script_out.getvalue())
+            else:
+                grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
             return
 
         if len(argv) < 2:

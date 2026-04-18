@@ -2,7 +2,10 @@
 
 import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
+
+import pytest
 
 from helpers import _subprocess_env
 
@@ -90,7 +93,41 @@ class TestClickShellCompletion:
         """``_GFAL_COMPLETE=zsh_source gfal`` emits a zsh completion function."""
         rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "zsh_source"})
         assert rc == 0
+        assert "autoload -Uz compinit" in out
+        assert "compinit" in out
         assert "_gfal_completion" in out
+
+    def test_zsh_wrapper_bootstraps_compinit(self):
+        """The generated zsh setup works even in a fresh shell without compinit."""
+        try:
+            version_check = subprocess.run(
+                ["zsh", "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=_subprocess_env(),
+            )
+        except FileNotFoundError:
+            pytest.skip("zsh not installed")
+
+        if version_check.returncode != 0:
+            pytest.skip("zsh --version failed")
+
+        gfal_dir = str(Path(sys.executable).parent)
+        zsh_script = """
+            export PATH="$1:$PATH"
+            eval "$(_GFAL_COMPLETE=zsh_source gfal)"
+            whence compdef >/dev/null 2>&1
+            whence _gfal_completion >/dev/null 2>&1
+        """
+        proc = subprocess.run(
+            ["zsh", "-f", "-c", zsh_script, "zsh", gfal_dir],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_subprocess_env(),
+        )
+        assert proc.returncode == 0, proc.stderr
 
     def test_bash_completes_subcommands(self):
         """Typing ``gfal <TAB>`` offers the known subcommands."""

@@ -828,7 +828,7 @@ jobs:
           ${{ matrix.os.image }} \
           bash -c "dnf install -y git rpm-build make python3-devel python3-pip && \
                    git config --global --add safe.directory '*' && \
-                   python3 -m pip install build hatchling hatch-vcs && \
+                   python3 -m pip install build hatchling hatch-vcs click 'rich>=13.0.0' 'rich-click>=1.7.0' 'fsspec>=2023.1.0' && \
                    make rpm"
     - name: Store RPMs
       uses: actions/upload-artifact@v7
@@ -913,6 +913,12 @@ jobs:
       run: |
         command -v gfal
         gfal --help
+    - name: Verify shell completion files
+      run: |
+        test -f /usr/share/bash-completion/completions/gfal
+        test -f /usr/share/zsh/site-functions/_gfal
+        grep -q '_gfal_completion' /usr/share/bash-completion/completions/gfal
+        grep -q '_gfal_completion' /usr/share/zsh/site-functions/_gfal
     - name: Install pip and test dependencies
       run: |
         python3 -m ensurepip --upgrade || dnf install -y python3-pip
