@@ -7,11 +7,10 @@
 [![Conda](https://img.shields.io/conda/vn/lobis/gfal)](https://anaconda.org/lobis/gfal)
 [![Python](https://img.shields.io/pypi/pyversions/gfal)](https://pypi.org/project/gfal/)
 [![License](https://img.shields.io/pypi/l/gfal)](https://github.com/lobis/gfal/blob/main/LICENSE)
-[![Lines of code](https://img.shields.io/badge/lines%20of%20code-7.4k-blue)](https://github.com/lobis/gfal/tree/main/src/gfal)
-[![Lines of tests](https://img.shields.io/badge/lines%20of%20tests-22k-blue)](https://github.com/lobis/gfal/tree/main/tests)
-[![Tests](https://img.shields.io/badge/tests-1400%2B-green)](https://github.com/lobis/gfal/tree/main/tests)
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)<!-- ALL-CONTRIBUTORS-BADGE:END -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
+[![Lines of code](https://img.shields.io/badge/lines%20of%20code-7.5k-blue)](https://github.com/lobis/gfal/tree/main/src/gfal)
+[![Lines of tests](https://img.shields.io/badge/lines%20of%20tests-26k-blue)](https://github.com/lobis/gfal/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-1700%2B-green)](https://github.com/lobis/gfal/tree/main/tests)
 
 **Grid File Access Library — Python rewrite of gfal2**
 
