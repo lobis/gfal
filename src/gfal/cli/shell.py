@@ -193,6 +193,8 @@ def main(argv=None):
         if complete_mode:
             grp = _build_completion_group()
             if complete_mode == "zsh_source":
+                # Zsh: prepend compinit bootstrap so completion works in fresh
+                # shells where compdef is not yet loaded (e.g. zsh -f).
                 script_out = io.StringIO()
                 with (
                     contextlib.redirect_stdout(script_out),
