@@ -68,6 +68,19 @@ the RPM is intentionally published without XRootD runtime dependencies.
     "fsspec>=2023.1.0"
 %endif
 
+# Generate and install shell completion scripts
+# The gfal binary is inside buildroot; we need to call it via Python
+# so that Click's completion machinery can discover all commands.
+export PYTHONPATH=%{buildroot}%{python3_sitelib}
+mkdir -p %{buildroot}%{_datadir}/bash-completion/completions
+mkdir -p %{buildroot}%{_datadir}/zsh/site-functions
+_GFAL_COMPLETE=bash_source %{__python3} -c \
+    "import sys; sys.argv=['gfal']; from gfal.cli.shell import main; main()" \
+    > %{buildroot}%{_datadir}/bash-completion/completions/gfal
+_GFAL_COMPLETE=zsh_source %{__python3} -c \
+    "import sys; sys.argv=['gfal']; from gfal.cli.shell import main; main()" \
+    > %{buildroot}%{_datadir}/zsh/site-functions/_gfal
+
 %files
 %{python3_sitelib}/gfal/
 %{python3_sitelib}/gfal-*.dist-info/
@@ -76,5 +89,7 @@ the RPM is intentionally published without XRootD runtime dependencies.
 %{python3_sitelib}/fsspec-*.dist-info/
 %endif
 %{_bindir}/gfal*
+%{_datadir}/bash-completion/completions/gfal
+%{_datadir}/zsh/site-functions/_gfal
 
 %changelog -f %{_sourcedir}/CHANGELOG

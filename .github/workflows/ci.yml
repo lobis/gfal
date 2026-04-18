@@ -913,6 +913,12 @@ jobs:
       run: |
         command -v gfal
         gfal --help
+    - name: Verify shell completion files
+      run: |
+        test -f /usr/share/bash-completion/completions/gfal
+        test -f /usr/share/zsh/site-functions/_gfal
+        grep -q '_gfal_completion' /usr/share/bash-completion/completions/gfal
+        grep -q '_gfal_completion' /usr/share/zsh/site-functions/_gfal
     - name: Install pip and test dependencies
       run: |
         python3 -m ensurepip --upgrade || dnf install -y python3-pip
