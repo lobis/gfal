@@ -472,6 +472,20 @@ class TestRecursivePrioritization:
         assert "Eligible to copy : 45,353" in output
         assert "Already up to date (size match) : 219 (scan estimate)" in output
         assert "Copy limit applied : 4 files" in output
+        assert output.endswith("\n")
+
+    def test_render_recursive_intro_adds_visual_gap_before_scan_block(self):
+        cmd = _make_cmd()
+
+        renderable = cmd._render_recursive_intro(
+            "https://example.org/src",
+            "https://example.org/dst",
+        )
+
+        output = str(renderable)
+        assert "Source      https://example.org/src" in output
+        assert "Destination https://example.org/dst" in output
+        assert output.endswith("\n")
 
     def test_render_recursive_final_summary_promotes_skips(self):
         cmd = _make_cmd()

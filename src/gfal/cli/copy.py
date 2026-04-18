@@ -879,6 +879,7 @@ class CommandCopy(base.CommandBase):
         intro.append("\n")
         intro.append("Destination ", style="bold")
         intro.append(dst_url, style="cyan")
+        intro.append("\n")
         return intro
 
     def _render_recursive_scan_summary(self, summary):
@@ -928,11 +929,14 @@ class CommandCopy(base.CommandBase):
             block.append("  Existing files requiring checksum")
             block.append(" : ", style="dim")
             block.append(_format_count(summary["deferred_existing"]), style="yellow")
+        block.append("\n")
         return block
 
     @staticmethod
     def _render_recursive_transfer_start():
-        return Text("▶ Starting transfers", style="bold blue")
+        start = Text("▶ Starting transfers", style="bold blue")
+        start.append("\n")
+        return start
 
     def _render_recursive_final_summary(
         self,
@@ -1009,7 +1013,7 @@ class CommandCopy(base.CommandBase):
 
         scan_spinner = None
         if not self._is_quiet():
-            scan_spinner = Spinner(f"Scanning {src_url}  =>  {dst_url}")
+            scan_spinner = Spinner("Scanning files")
             scan_spinner.start()
         try:
             entries = src_fs.ls(src_path, detail=True)
@@ -1088,12 +1092,15 @@ class CommandCopy(base.CommandBase):
             print_live_message(self._render_recursive_transfer_start())
         if (
             child_jobs
-            and not rich_recursive_layout
             and sys.stdout.isatty()
             and not self.params.verbose
             and not self._is_quiet()
         ):
-            aggregate_progress = CountProgress("Copying files", len(child_jobs))
+            aggregate_progress = CountProgress(
+                "Copying files",
+                len(child_jobs),
+                transient=not rich_recursive_layout,
+            )
             aggregate_progress.start()
 
         def _start_child(child_src_url, child_dst_url):
