@@ -236,7 +236,7 @@ class TestTuiProgress:
 
 
 class TestRichProgressExtraBranches:
-    def test_manager_configures_transient_rich_progress(self, monkeypatch):
+    def test_manager_configures_persistent_rich_progress(self, monkeypatch):
         import types
 
         created_kwargs = {}
@@ -274,7 +274,7 @@ class TestRichProgressExtraBranches:
 
         RichProgress._manager()
 
-        assert created_kwargs["transient"] is True
+        assert created_kwargs["transient"] is False
 
     def _make_backend(self, task_total=None):
         class _FakeRichBackend:

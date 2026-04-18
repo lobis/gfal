@@ -64,7 +64,8 @@ def _final_status_text(label, success, status=None):
 
 
 def _should_emit_live_final_message(success, status=None):
-    return status == "skipped" or not success
+    del success, status
+    return True
 
 
 def has_live_progress():
@@ -194,7 +195,7 @@ class RichProgress:
                             _PinnedElapsedColumn(),
                             console=get_console(stderr=False),
                             expand=True,
-                            transient=True,
+                            transient=False,
                             refresh_per_second=20,
                         ),
                         started=False,
@@ -262,13 +263,7 @@ class RichProgress:
                         self.task_id,
                         final_elapsed=elapsed_text,
                     )
-                console = getattr(manager.progress, "console", None)
-                if console is not None and _should_emit_live_final_message(
-                    success, status
-                ):
-                    final_message = _final_status_text(self.label, success, status)
-                    with contextlib.suppress(Exception):
-                        console.print(final_message, markup=False, highlight=False)
+                final_message = _final_status_text(self.label, success, status)
                 removed = False
                 remove_task = getattr(manager.progress, "remove_task", None)
                 if remove_task is not None:
@@ -292,6 +287,13 @@ class RichProgress:
                             self.task_id,
                             description=f"{self.label} [red]\\[FAILED][/]",
                         )
+                manager.progress.refresh()
+                console = getattr(manager.progress, "console", None)
+                if console is not None and _should_emit_live_final_message(
+                    success, status
+                ):
+                    with contextlib.suppress(Exception):
+                        console.print(final_message, markup=False, highlight=False)
             manager.progress.refresh()
             self._started_at = None
             manager.active = max(0, manager.active - 1)

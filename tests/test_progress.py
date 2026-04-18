@@ -439,9 +439,12 @@ class TestRichProgress:
         progress.start()
         progress.stop(True)
 
-        assert not any(call[0] == "print" for call in backend.calls)
+        assert ("print", "Copying example.txt [DONE]", False, False) in backend.calls
         assert ("remove_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
+        assert backend.calls.index(("remove_task", 0)) < backend.calls.index(
+            ("print", "Copying example.txt [DONE]", False, False)
+        )
 
 
 class TestRichSpinner:
@@ -528,8 +531,8 @@ class TestFinalStatusText:
 
 
 class TestShouldEmitLiveFinalMessage:
-    def test_success_is_silent(self):
-        assert _should_emit_live_final_message(True) is False
+    def test_success_is_printed(self):
+        assert _should_emit_live_final_message(True) is True
 
     def test_skipped_is_printed(self):
         assert _should_emit_live_final_message(True, "skipped") is True
