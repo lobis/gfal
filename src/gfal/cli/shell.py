@@ -165,6 +165,55 @@ def _build_completion_group():
     return grp
 
 
+def _emit_bash_completion_source() -> None:
+    """Emit a bash completion wrapper with support for ``gfal<TAB>``.
+
+    Click returns no candidates when bash invokes completion on the command
+    word itself (``COMP_CWORD=0`` for ``gfal<TAB>`` without a trailing space).
+    Normalizing that exact case to the first-argument position avoids bash's
+    fallback to filename completion.
+    """
+    sys.stdout.write(
+        """_gfal_completion() {
+    local IFS=$'\\n'
+    local response
+    local cmd="${1:-gfal}"
+    local cword=$COMP_CWORD
+    local words=("${COMP_WORDS[@]}")
+
+    if [[ $cword -eq 0 && ${#words[@]} -eq 1 && ${words[0]} == "$cmd" ]]; then
+        words=("$cmd" "")
+        cword=1
+    fi
+
+    response=$(env COMP_WORDS="${words[*]}" COMP_CWORD=$cword _GFAL_COMPLETE=bash_complete "$cmd")
+
+    for completion in $response; do
+        IFS=',' read type value <<< "$completion"
+
+        if [[ $type == 'dir' ]]; then
+            COMPREPLY=()
+            compopt -o dirnames
+        elif [[ $type == 'file' ]]; then
+            COMPREPLY=()
+            compopt -o default
+        elif [[ $type == 'plain' ]]; then
+            COMPREPLY+=($value)
+        fi
+    done
+
+    return 0
+}
+
+_gfal_completion_setup() {
+    complete -o nosort -F _gfal_completion gfal
+}
+
+_gfal_completion_setup;
+"""
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -191,25 +240,28 @@ def main(argv=None):
         # when the _GFAL_COMPLETE env var is set by the shell's completion hook.
         complete_mode = os.environ.get("_GFAL_COMPLETE")
         if complete_mode:
-            grp = _build_completion_group()
-            if complete_mode == "zsh_source":
-                # Zsh: prepend compinit bootstrap so completion works in fresh
-                # shells where compdef is not yet loaded (e.g. zsh -f).
-                script_out = io.StringIO()
-                with (
-                    contextlib.redirect_stdout(script_out),
-                    contextlib.suppress(SystemExit),
-                ):
-                    grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
-                sys.stdout.write(
-                    "autoload -Uz compinit\n"
-                    "if ! whence compdef >/dev/null 2>&1; then\n"
-                    "    compinit\n"
-                    "fi\n"
-                )
-                sys.stdout.write(script_out.getvalue())
+            if complete_mode == "bash_source":
+                _emit_bash_completion_source()
             else:
-                grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
+                grp = _build_completion_group()
+                if complete_mode == "zsh_source":
+                    # Zsh: prepend compinit bootstrap so completion works in fresh
+                    # shells where compdef is not yet loaded (e.g. zsh -f).
+                    script_out = io.StringIO()
+                    with (
+                        contextlib.redirect_stdout(script_out),
+                        contextlib.suppress(SystemExit),
+                    ):
+                        grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
+                    sys.stdout.write(
+                        "autoload -Uz compinit\n"
+                        "if ! whence compdef >/dev/null 2>&1; then\n"
+                        "    compinit\n"
+                        "fi\n"
+                    )
+                    sys.stdout.write(script_out.getvalue())
+                else:
+                    grp.main(list(argv[1:]), prog_name="gfal", standalone_mode=True)
             return
 
         if len(argv) < 2:

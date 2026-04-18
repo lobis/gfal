@@ -82,6 +82,24 @@ class TestCompletionCommand:
 class TestClickShellCompletion:
     """Click's ``_GFAL_COMPLETE`` env-var mechanism returns completion data."""
 
+    @staticmethod
+    def _require_usable_bash():
+        """Skip if ``bash`` is missing or unusable on this platform."""
+        try:
+            version_check = subprocess.run(
+                ["bash", "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=_subprocess_env(),
+            )
+        except FileNotFoundError:
+            pytest.skip("bash not installed")
+
+        if version_check.returncode != 0:
+            pytest.skip("bash is not usable in this environment")
+
     def test_bash_source_script_is_generated(self):
         """``_GFAL_COMPLETE=bash_source gfal`` emits a bash completion function."""
         rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "bash_source"})
@@ -144,6 +162,31 @@ class TestClickShellCompletion:
         assert "cp" in out
         assert "rm" in out
         assert "completion" in out
+
+    def test_bash_completes_subcommands_without_trailing_space(self):
+        """Typing ``gfal<TAB>`` still offers subcommands instead of files."""
+        self._require_usable_bash()
+        gfal_dir = str(Path(sys.executable).parent)
+        bash_script = """
+            export PATH="$1:$PATH"
+            eval "$(_GFAL_COMPLETE=bash_source gfal)"
+            COMP_WORDS=(gfal)
+            COMP_CWORD=0
+            COMPREPLY=()
+            _gfal_completion gfal
+            printf '%s\n' "${COMPREPLY[@]}"
+        """
+        proc = subprocess.run(
+            ["bash", "-lc", bash_script, "bash", gfal_dir],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_subprocess_env(),
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "ls" in proc.stdout
+        assert "cp" in proc.stdout
+        assert "completion" in proc.stdout
 
     def test_bash_completes_partial_subcommand(self):
         """Typing ``gfal l<TAB>`` narrows to commands starting with 'l'."""
