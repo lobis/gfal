@@ -301,6 +301,71 @@ class TestTraverseCallback:
         assert "Scanning" in mock_plm.call_args[0][0]
 
 
+class TestRecursivePrioritization:
+    def test_missing_files_prioritized_for_compare_none(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("present.bin", "src://present.bin", "dst://present.bin", {"size": 1}),
+            ("missing.bin", "src://missing.bin", "dst://missing.bin", {"size": 1}),
+        ]
+        dst_entries = [{"name": "/dst/present.bin", "size": 1}]
+
+        jobs = cmd._prioritize_recursive_child_jobs(src_entries, dst_entries, "none")
+
+        assert jobs == [
+            ("src://missing.bin", "dst://missing.bin"),
+            ("src://present.bin", "dst://present.bin"),
+        ]
+
+    def test_size_compare_prioritizes_mismatches_before_equal_sizes(self):
+        cmd = _make_cmd()
+        src_entries = [
+            ("same.bin", "src://same.bin", "dst://same.bin", {"size": 4}),
+            ("diff.bin", "src://diff.bin", "dst://diff.bin", {"size": 8}),
+        ]
+        dst_entries = [
+            {"name": "/dst/same.bin", "size": 4},
+            {"name": "/dst/diff.bin", "size": 2},
+        ]
+
+        jobs = cmd._prioritize_recursive_child_jobs(src_entries, dst_entries, "size")
+
+        assert jobs == [
+            ("src://diff.bin", "dst://diff.bin"),
+            ("src://same.bin", "dst://same.bin"),
+        ]
+
+    def test_size_mtime_prioritizes_mismatches_before_matching_entries(self):
+        cmd = _make_cmd()
+        src_entries = [
+            (
+                "match.bin",
+                "src://match.bin",
+                "dst://match.bin",
+                {"size": 4, "mtime": 100.0},
+            ),
+            (
+                "stale.bin",
+                "src://stale.bin",
+                "dst://stale.bin",
+                {"size": 4, "mtime": 100.0},
+            ),
+        ]
+        dst_entries = [
+            {"name": "/dst/match.bin", "size": 4, "mtime": 100.0},
+            {"name": "/dst/stale.bin", "size": 4, "mtime": 90.0},
+        ]
+
+        jobs = cmd._prioritize_recursive_child_jobs(
+            src_entries, dst_entries, "size_mtime"
+        )
+
+        assert jobs == [
+            ("src://stale.bin", "dst://stale.bin"),
+            ("src://match.bin", "dst://match.bin"),
+        ]
+
+
 # ===================================================================
 # copy.py: _predicted_transfer_mode
 # ===================================================================

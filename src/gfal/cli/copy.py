@@ -548,6 +548,92 @@ class CommandCopy(base.CommandBase):
             return 1
         return max(1, getattr(self.params, "parallel", _DEFAULT_RECURSIVE_PARALLELISM))
 
+    @staticmethod
+    def _entry_name(entry):
+        value = entry.get("name", "") if isinstance(entry, dict) else str(entry)
+        return Path(str(value).rstrip("/")).name
+
+    @staticmethod
+    def _entry_mtime(entry):
+        if not isinstance(entry, dict):
+            return None
+        for key in ("mtime", "LastModified", "last_modified"):
+            value = entry.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _prioritize_recursive_child_jobs(
+        self,
+        src_entries,
+        dst_entries,
+        compare_mode,
+    ):
+        if not src_entries:
+            return []
+
+        if not dst_entries:
+            return [
+                (child_src_url, child_dst_url)
+                for _name, child_src_url, child_dst_url, _src_info in src_entries
+            ]
+
+        dst_by_name = {self._entry_name(entry): entry for entry in dst_entries}
+        preferred = []
+        deferred = []
+
+        for name, child_src_url, child_dst_url, src_info in src_entries:
+            dst_info = dst_by_name.get(name)
+            if dst_info is None:
+                preferred.append((child_src_url, child_dst_url))
+                continue
+
+            if compare_mode == "none":
+                deferred.append((child_src_url, child_dst_url))
+                continue
+
+            if compare_mode == "size":
+                src_size = src_info.get("size") if isinstance(src_info, dict) else None
+                dst_size = dst_info.get("size") if isinstance(dst_info, dict) else None
+                target = (
+                    deferred
+                    if src_size is not None
+                    and dst_size is not None
+                    and src_size == dst_size
+                    else preferred
+                )
+                target.append((child_src_url, child_dst_url))
+                continue
+
+            if compare_mode == "size_mtime":
+                src_size = src_info.get("size") if isinstance(src_info, dict) else None
+                dst_size = dst_info.get("size") if isinstance(dst_info, dict) else None
+                src_mtime = self._entry_mtime(src_info)
+                dst_mtime = self._entry_mtime(dst_info)
+                matches = (
+                    src_size is not None
+                    and dst_size is not None
+                    and src_size == dst_size
+                    and src_mtime is not None
+                    and dst_mtime is not None
+                    and abs(src_mtime - dst_mtime) < 1.0
+                )
+                (deferred if matches else preferred).append(
+                    (child_src_url, child_dst_url)
+                )
+                continue
+
+            if compare_mode == "checksum":
+                deferred.append((child_src_url, child_dst_url))
+                continue
+
+            preferred.append((child_src_url, child_dst_url))
+
+        return preferred + deferred
+
     def _copy_directory_parallel(self, client, src_url, dst_url, opts, src_st):
         copy_options = self._build_copy_options()
         self._reported_child_errors = set()
@@ -566,7 +652,10 @@ class CommandCopy(base.CommandBase):
             scan_spinner = Spinner(f"Scanning {src_url}  =>  {dst_url}")
             scan_spinner.start()
         try:
-            entries = src_fs.ls(src_path, detail=False)
+            entries = src_fs.ls(src_path, detail=True)
+            dst_entries = []
+            with contextlib.suppress(Exception):
+                dst_entries = _dst_fs.ls(dst_path, detail=True)
         except Exception:
             if scan_spinner is not None:
                 scan_spinner.stop(False)
@@ -574,14 +663,22 @@ class CommandCopy(base.CommandBase):
         else:
             if scan_spinner is not None:
                 scan_spinner.stop(True)
-        child_jobs = []
-        for entry_path in entries:
-            name = Path(entry_path.rstrip("/")).name
+        child_entries = []
+        for entry in entries:
+            name = self._entry_name(entry)
             if name in (".", ".."):
                 continue
-            child_jobs.append(
-                (_url_path_join(src_url, name), _url_path_join(dst_url, name))
+            child_entries.append(
+                (_url_path_join(src_url, name), _url_path_join(dst_url, name), entry)
             )
+        child_jobs = self._prioritize_recursive_child_jobs(
+            [
+                (self._entry_name(entry), child_src_url, child_dst_url, entry)
+                for child_src_url, child_dst_url, entry in child_entries
+            ],
+            dst_entries,
+            copy_options.compare,
+        )
 
         max_parallel = min(
             self._recursive_parallelism(src_url, dst_url), len(child_jobs)
