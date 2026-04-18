@@ -8,7 +8,6 @@ import logging
 import os
 import signal
 import sys
-import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -1153,11 +1152,15 @@ class CommandBase:
             self._cancel_event.set()
             if self.progress_bar is not None:
                 self.progress_bar.stop(False)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            deadline = time.monotonic() + 10.0
-            while t.is_alive() and time.monotonic() < deadline:
-                t.join(0.1)
-            if t.is_alive():
-                sys.stderr.write("\nInterrupted\n")
-                return errno.EINTR
+            original_handler = signal.getsignal(signal.SIGINT)
+            try:
+                while t.is_alive():
+                    try:
+                        t.join(0.1)
+                    except KeyboardInterrupt:
+                        sys.stderr.write("\nInterrupted\n")
+                        return errno.EINTR
+            finally:
+                with contextlib.suppress(Exception):
+                    signal.signal(signal.SIGINT, original_handler)
             return self.return_code if self.return_code is not None else errno.EINTR
