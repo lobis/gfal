@@ -48,6 +48,16 @@ dev = [
     "codespell>=2.4.2",
     "certifi",
 ]
+# S3 / SFTP protocol test backends — installed separately in the
+# fsspec-protocols CI job because moto[server] pulls in a very deep
+# dependency tree that triggers pip resolution-too-deep on some Python
+# versions when combined with the base package constraints.
+dev-protocols = [
+    "s3fs",
+    "moto[server]",
+    "paramiko",
+    "boto3",
+]
 
 [tool.hatch.version]
 source = "vcs"
@@ -66,6 +76,8 @@ markers = [
     "network: tests that make real network calls (retried automatically on failure)",
     "xrootd: tests that require a local XRootD server (started automatically by the fixture)",
     "xdist_group(name): keep related tests on the same xdist worker",
+    "sftp: tests that require a local SFTP server (started automatically by the fixture)",
+    "s3: tests that require a local S3-compatible server (started automatically by the fixture)",
 ]
 
 [tool.ruff]
@@ -95,4 +107,4 @@ known-first-party = ["gfal"]
 
 [tool.codespell]
 skip = ".git,.venv,*.egg-info"
-ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag"
+ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag,moto,paramiko"

@@ -345,6 +345,79 @@ gfal completion fish > ~/.config/fish/completions/gfal.fish
 | `http://` / `https://` | HTTP/WebDAV | Built-in |
 | `dav://` / `davs://` | WebDAV (converted to HTTP) | Built-in |
 | `root://` | XRootD | `xrootd` + `fsspec-xrootd` |
+| `s3://` / `s3a://` | Amazon S3 and S3-compatible (MinIO, Ceph, …) | `s3fs` |
+| `sftp://` / `ssh://` | SSH File Transfer Protocol | `paramiko` |
+| `gs://` | Google Cloud Storage | `gcsfs` |
+| `abfs://` / `az://` | Azure Blob Storage | `adlfs` |
+| `ftp://` | FTP | Built-in (fsspec) |
+
+Any other protocol supported by fsspec can be used transparently by
+installing the corresponding backend library.
+
+### S3 / S3-compatible storage
+
+Install `s3fs` to enable S3 support:
+
+```bash
+pip install s3fs
+```
+
+Authentication uses standard AWS environment variables or `~/.aws/credentials`:
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=us-east-1
+
+# For MinIO or other S3-compatible endpoints:
+export AWS_ENDPOINT_URL=https://minio.example.com
+```
+
+Example usage:
+
+```bash
+# List a bucket
+gfal ls s3://my-bucket/
+
+# Copy a local file to S3
+gfal cp /tmp/data.root s3://my-bucket/data/data.root
+
+# Download from S3
+gfal cp s3://my-bucket/data/data.root /tmp/data.root
+
+# Verify checksum
+gfal sum s3://my-bucket/data/data.root MD5
+
+# Remove an object
+gfal rm s3://my-bucket/data/old.root
+```
+
+### SSH / SFTP
+
+Install `paramiko` to enable SFTP support:
+
+```bash
+pip install paramiko
+```
+
+Credentials are embedded in the URL or picked up from `~/.ssh/config`:
+
+```bash
+# Stat a remote file
+gfal stat sftp://user:pass@host/path/to/file.txt
+
+# Copy local file to remote
+gfal cp /tmp/data.root sftp://user@host/data/data.root
+
+# Download from SFTP
+gfal cp sftp://user@host/data/data.root /tmp/data.root
+
+# List a remote directory
+gfal ls sftp://user@host/data/
+
+# Remove a remote file
+gfal rm sftp://user@host/data/old.txt
+```
 
 ## More resources
 

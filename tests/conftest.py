@@ -1,5 +1,6 @@
 """Shared pytest fixtures for gfal-cli tests."""
 
+import contextlib
 import os
 import ssl
 import urllib.request
@@ -444,3 +445,271 @@ def xrootd_server(tmp_path_factory):
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+
+
+# ---------------------------------------------------------------------------
+# In-process SFTP server fixture (paramiko)
+# ---------------------------------------------------------------------------
+
+# Guard the class definitions so that conftest.py can be imported even when
+# paramiko is not installed.  When paramiko IS installed, both classes are
+# defined at module level and reused across the session fixture below.
+try:
+    import paramiko as _paramiko  # noqa: PLC0415
+
+    class _SFTPServerInterface(_paramiko.SFTPServerInterface):
+        """Minimal paramiko SFTP server backed by a real temp directory."""
+
+        def __init__(self, server, root_dir, *args, **kwargs):
+            super().__init__(server, *args, **kwargs)
+            self._root = root_dir
+
+        def _realpath(self, path):
+            return self._root + self.canonicalize(path)
+
+        def list_folder(self, path):
+            real = Path(self._realpath(path))
+            try:
+                out = []
+                for child in real.iterdir():
+                    attr = _paramiko.SFTPAttributes.from_stat(child.stat())
+                    attr.filename = child.name
+                    out.append(attr)
+                return out
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+        def stat(self, path):
+            real = Path(self._realpath(path))
+            try:
+                return _paramiko.SFTPAttributes.from_stat(real.stat())
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+        def lstat(self, path):
+            return self.stat(path)
+
+        def open(self, path, flags, attr):
+            real_path = self._realpath(path)
+            try:
+                fd = os.open(
+                    real_path,
+                    flags | getattr(os, "O_BINARY", 0),
+                    getattr(attr, "st_mode", None) or 0o666,
+                )
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+            fobj = _paramiko.SFTPHandle(flags)
+            fobj.filename = real_path
+            fmode = (
+                "wb"
+                if (flags & os.O_WRONLY)
+                else ("r+b" if (flags & os.O_RDWR) else "rb")
+            )
+            try:
+                fobj.readfile = fobj.writefile = os.fdopen(fd, fmode)
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+            return fobj
+
+        def mkdir(self, path, attr):
+            try:
+                Path(self._realpath(path)).mkdir()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+        def rmdir(self, path):
+            try:
+                Path(self._realpath(path)).rmdir()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+        def remove(self, path):
+            try:
+                Path(self._realpath(path)).unlink()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+        def rename(self, oldpath, newpath):
+            try:
+                Path(self._realpath(oldpath)).rename(self._realpath(newpath))
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+
+    class _SFTPAuthServer(_paramiko.ServerInterface):
+        """Accept any password credential — test-only, not for production use."""
+
+        def check_auth_password(self, username, password):
+            return _paramiko.AUTH_SUCCESSFUL
+
+        def check_channel_request(self, kind, chanid):
+            return _paramiko.OPEN_SUCCEEDED
+
+        def get_allowed_auths(self, username):
+            return "password"
+
+except ImportError:
+    # paramiko not installed — the sftp_server fixture will skip the test.
+    _SFTPServerInterface = None  # type: ignore[assignment,misc]
+    _SFTPAuthServer = None  # type: ignore[assignment,misc]
+    _paramiko = None  # type: ignore[assignment]
+
+
+@pytest.fixture(scope="session")
+def sftp_server(tmp_path_factory):
+    """Start an in-process paramiko SFTP server for unit tests.
+
+    Yields a dict with keys:
+      ``data_dir``  — pathlib.Path to the directory being served
+      ``host``      — hostname string (``"127.0.0.1"``)
+      ``port``      — TCP port the server listens on
+      ``username``  — username to authenticate with
+      ``password``  — password to authenticate with
+      ``base_url``  — ``sftp://username:password@host:port`` prefix
+    """
+    import socket
+    import threading
+
+    if _paramiko is None:
+        pytest.skip("paramiko not installed")
+
+    try:
+        import fsspec.implementations.sftp  # noqa: F401, PLC0415
+    except ImportError:
+        pytest.skip("fsspec sftp implementation not available")
+
+    data_dir = tmp_path_factory.mktemp("sftp_data")
+    host_key = _paramiko.RSAKey.generate(2048)
+
+    srv_sock = socket.socket()
+    srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv_sock.bind(("127.0.0.1", 0))
+    port = srv_sock.getsockname()[1]
+    srv_sock.listen(10)
+    srv_sock.settimeout(0.5)
+
+    stop_event = threading.Event()
+
+    def _handle_client(client_sock):
+        """Handle a single SFTP client connection in its own thread."""
+        transport = _paramiko.Transport(client_sock)
+        transport.add_server_key(host_key)
+        transport.set_subsystem_handler(
+            "sftp",
+            _paramiko.SFTPServer,
+            sftp_si=_SFTPServerInterface,
+            root_dir=str(data_dir),
+        )
+        # Suppress SSH banner errors that occur when a TCP health-check probe
+        # (not a real SSH client) connects and immediately disconnects.
+        with contextlib.suppress(Exception):
+            transport.start_server(server=_SFTPAuthServer())
+            chan = transport.accept(30)
+            if chan:
+                chan.event.wait(30)
+
+    def _serve():
+        while not stop_event.is_set():
+            try:
+                client_sock, _ = srv_sock.accept()
+            except (OSError, TimeoutError):
+                continue
+            threading.Thread(
+                target=_handle_client, args=(client_sock,), daemon=True
+            ).start()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+
+    # Verify the server responds before handing the fixture to tests.
+    if not _wait_for_port("127.0.0.1", port, timeout=10.0):
+        stop_event.set()
+        srv_sock.close()
+        require_test_prereq(False, "SFTP test server did not start in time")
+
+    username = "testuser"
+    password = "testpass"
+
+    yield {
+        "data_dir": data_dir,
+        "host": "127.0.0.1",
+        "port": port,
+        "username": username,
+        "password": password,
+        "base_url": f"sftp://{username}:{password}@127.0.0.1:{port}",
+    }
+
+    stop_event.set()
+    srv_sock.close()
+
+
+# ---------------------------------------------------------------------------
+# In-process S3-compatible server fixture (moto)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def s3_server(tmp_path_factory):
+    """Start a moto S3-compatible server for unit tests.
+
+    Yields a dict with keys:
+      ``endpoint_url`` — HTTP endpoint of the fake S3 server
+      ``bucket``       — pre-created bucket name
+      ``region``       — AWS region string
+      ``key``          — AWS access key ID (fake)
+      ``secret``       — AWS secret access key (fake)
+      ``base_url``     — ``s3://bucket`` prefix for the pre-created bucket
+    """
+    import time
+
+    try:
+        from moto.server import ThreadedMotoServer  # noqa: PLC0415
+    except ImportError:
+        pytest.skip("moto[server] not installed")
+
+    try:
+        import s3fs  # noqa: F401, PLC0415
+    except ImportError:
+        pytest.skip("s3fs not installed")
+
+    port = _find_free_port()
+    endpoint_url = f"http://127.0.0.1:{port}"
+
+    # Set fake AWS credentials in the environment so boto3/s3fs pick them up.
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+    os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+
+    server = ThreadedMotoServer(port=port)
+    server.start()
+    time.sleep(0.3)
+
+    # Verify the server is reachable.
+    if not _wait_for_port("127.0.0.1", port, timeout=10.0):
+        server.stop()
+        require_test_prereq(False, "Moto S3 server did not start in time")
+
+    import boto3  # noqa: PLC0415
+
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        region_name="us-east-1",
+    )
+    bucket = "gfal-test-bucket"
+    s3_client.create_bucket(Bucket=bucket)
+
+    yield {
+        "endpoint_url": endpoint_url,
+        "bucket": bucket,
+        "region": "us-east-1",
+        "key": "testing",
+        "secret": "testing",
+        "base_url": f"s3://{bucket}",
+    }
+
+    server.stop()
