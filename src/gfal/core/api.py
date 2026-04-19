@@ -451,16 +451,17 @@ class AsyncGfalClient:
                 raw_entries = fs.xrootd_ls_enrich(fso, path)
             except OSError as e:
                 msg = str(e).lower()
-                if (
-                    any(
-                        marker in msg
-                        for marker in ["not a directory", "unable to open directory"]
-                    )
-                    or getattr(e, "errno", None) == errno.ENOTDIR
-                ):
-                    raw_entries = [fs.xrootd_enrich(fso.info(path), fso)]
-                else:
+                should_try_info_fallback = any(
+                    marker in msg
+                    for marker in ["not a directory", "unable to open directory"]
+                ) or getattr(e, "errno", None) in {errno.ENOTDIR, errno.ENOENT}
+                if not should_try_info_fallback:
                     raise
+
+                try:
+                    raw_entries = [fs.xrootd_enrich(fso.info(path), fso)]
+                except Exception as info_error:
+                    raise e from info_error
         except Exception as e:
             raise self._map_error(e, url) from e
 

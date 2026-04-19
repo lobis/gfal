@@ -81,6 +81,22 @@ conda install -c conda-forge xrootd
 conda install -c lobis -c conda-forge gfal
 ```
 
+Optional protocol backends are installed separately:
+
+```bash
+# pip
+pip install "gfal[s3]"
+pip install "gfal[ssh]"
+
+# conda
+conda install -c conda-forge s3fs boto3
+conda install -c conda-forge paramiko sshfs
+```
+
+S3 and SSH support are intentionally not bundled into the base conda package.
+
+Because `gfal` uses `fsspec` underneath, many other `fsspec`-supported protocols can also work once their backend library is installed. HTTP/HTTPS, XRootD, S3, and SSH/SFTP are the most explicitly exercised today, but extending support for additional backends is generally straightforward when there is demand.
+
 For RPM packages, native repositories, and CERN CA certificate setup, see [Installation](installation.md).
 
 ## CLI quick start
@@ -356,10 +372,14 @@ installing the corresponding backend library.
 
 ### S3 / S3-compatible storage
 
-Install `s3fs` to enable S3 support:
+Install the optional S3 backend:
 
 ```bash
-pip install s3fs
+# pip
+pip install "gfal[s3]"
+
+# conda
+conda install -c conda-forge s3fs boto3
 ```
 
 Authentication uses standard AWS environment variables or `~/.aws/credentials`:
@@ -379,6 +399,9 @@ Example usage:
 # List a bucket
 gfal ls s3://my-bucket/
 
+# List a single object
+gfal ls s3://my-bucket/data/file.root
+
 # Copy a local file to S3
 gfal cp /tmp/data.root s3://my-bucket/data/data.root
 
@@ -394,10 +417,14 @@ gfal rm s3://my-bucket/data/old.root
 
 ### SSH / SFTP
 
-Install `paramiko` to enable SFTP support:
+Install the optional SSH/SFTP backend:
 
 ```bash
-pip install paramiko
+# pip
+pip install "gfal[ssh]"
+
+# conda
+conda install -c conda-forge paramiko sshfs
 ```
 
 Credentials are embedded in the URL or picked up from `~/.ssh/config`:

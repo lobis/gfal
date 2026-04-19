@@ -282,6 +282,47 @@ class TestExecuteLs:
         rc = cmd.execute_ls()
         captured = capsys.readouterr()
         assert rc == 0
+        assert captured.out.splitlines() == ["solo.txt"]
+
+    def test_ls_file_directly_when_backend_ls_raises_enoent(self, capsys, monkeypatch):
+        monkeypatch.setenv("GFAL_CLI_GFAL2", "1")
+        cmd = _make_cmd()
+        remote_path = "sftp://host/remote/solo.txt"
+        cmd.params = _default_params(file=[remote_path])
+        file_info = {
+            "name": "/remote/solo.txt",
+            "type": "file",
+            "size": 5,
+            "mode": stat.S_IFREG | 0o644,
+            "uid": 0,
+            "gid": 0,
+            "nlink": 1,
+            "mtime": 0,
+        }
+        mock_stat = SimpleNamespace(
+            st_mode=file_info["mode"],
+            st_size=file_info["size"],
+            st_uid=file_info["uid"],
+            st_gid=file_info["gid"],
+            st_atime=0,
+            st_mtime=file_info["mtime"],
+            st_ctime=0,
+            info=file_info,
+        )
+
+        with (
+            patch("gfal.cli.ls.GfalClient") as mock_client_cls,
+            patch(
+                "gfal.cli.ls.fs.url_to_fs", return_value=(object(), "/remote/solo.txt")
+            ),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.stat.return_value = mock_stat
+            mock_client.ls.return_value = [mock_stat]
+            rc = cmd.execute_ls()
+
+        captured = capsys.readouterr()
+        assert rc == 0
         assert "solo.txt" in captured.out
 
     def test_ls_full_time(self, tmp_path, capsys, monkeypatch):

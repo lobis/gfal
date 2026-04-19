@@ -35,6 +35,24 @@ For conda environments, install `gfal` from the `lobis` channel with
 conda install -c lobis -c conda-forge gfal
 ```
 
+The base conda package intentionally does **not** pull in every optional
+fsspec backend. Install protocol-specific dependencies separately when needed:
+
+```bash
+# S3 / S3-compatible endpoints
+conda install -c conda-forge s3fs boto3
+
+# SSH / SFTP endpoints
+conda install -c conda-forge paramiko sshfs
+```
+
+For pip users, the equivalent extras are:
+
+```bash
+pip install "gfal[s3]"
+pip install "gfal[ssh]"
+```
+
 This package depends on both `xrootd` and `fsspec-xrootd`, so `root://` support
 is available immediately after install.
 
