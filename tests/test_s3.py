@@ -17,10 +17,11 @@ or as part of the full suite (they auto-skip when dependencies are missing).
 
 import uuid
 
-import boto3
 import pytest
 
 from helpers import run_gfal
+
+boto3 = pytest.importorskip("boto3", reason="boto3 not installed")
 
 pytestmark = [
     pytest.mark.s3,

@@ -574,12 +574,13 @@ def sftp_server(tmp_path_factory):
     import socket
     import threading
 
-    require_test_prereq(_paramiko is not None, "paramiko not installed")
+    if _paramiko is None:
+        pytest.skip("paramiko not installed")
 
     try:
         import fsspec.implementations.sftp  # noqa: F401, PLC0415
     except ImportError:
-        require_test_prereq(False, "fsspec sftp implementation not available")
+        pytest.skip("fsspec sftp implementation not available")
 
     data_dir = tmp_path_factory.mktemp("sftp_data")
     host_key = _paramiko.RSAKey.generate(2048)
@@ -668,12 +669,12 @@ def s3_server(tmp_path_factory):
     try:
         from moto.server import ThreadedMotoServer  # noqa: PLC0415
     except ImportError:
-        require_test_prereq(False, "moto[server] not installed")
+        pytest.skip("moto[server] not installed")
 
     try:
         import s3fs  # noqa: F401, PLC0415
     except ImportError:
-        require_test_prereq(False, "s3fs not installed")
+        pytest.skip("s3fs not installed")
 
     port = _find_free_port()
     endpoint_url = f"http://127.0.0.1:{port}"
