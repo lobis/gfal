@@ -1,5 +1,6 @@
 """Unit tests for the fsspec integration layer (fs.py)."""
 
+import datetime
 import stat as stat_module
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +10,9 @@ import pytest
 from gfal.core.fs import (
     RootProtocolFallbackWarning,
     StatInfo,
+    _generic_storage_opts,
     _root_url_to_https,
+    _to_timestamp,
     isdir,
     normalize_url,
     stat,
@@ -513,3 +516,116 @@ class TestBuildStorageOptionsBearerToken:
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         assert "bearer_token" not in opts
+
+
+# ---------------------------------------------------------------------------
+# _to_timestamp
+# ---------------------------------------------------------------------------
+
+
+class TestToTimestamp:
+    def test_none_returns_zero(self):
+        assert _to_timestamp(None) == 0.0
+
+    def test_float_unchanged(self):
+        assert _to_timestamp(1_700_000_000.0) == 1_700_000_000.0
+
+    def test_int_unchanged(self):
+        assert _to_timestamp(1_700_000_000) == 1_700_000_000.0
+
+    def test_zero_preserved(self):
+        """Unix epoch (0) must not be treated as missing."""
+        assert _to_timestamp(0) == 0.0
+        assert _to_timestamp(0.0) == 0.0
+
+    def test_naive_datetime(self):
+        """Naive datetime is converted via .timestamp()."""
+        dt = datetime.datetime(2024, 1, 15, 12, 0, 0)
+        assert _to_timestamp(dt) == dt.timestamp()
+
+    def test_aware_datetime(self):
+        """Timezone-aware datetime is handled correctly."""
+        dt = datetime.datetime(2024, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        assert _to_timestamp(dt) == dt.timestamp()
+
+
+# ---------------------------------------------------------------------------
+# StatInfo — alternate mtime keys (SFTP and S3)
+# ---------------------------------------------------------------------------
+
+
+class TestStatInfoAlternateMtimeKeys:
+    def test_sftp_time_key(self):
+        """SFTP info dicts use 'time' for mtime instead of 'mtime'."""
+        ts = 1_700_000_000.0
+        si = StatInfo({"type": "file", "size": 0, "time": ts})
+        assert si.st_mtime == ts
+        assert si.st_atime == ts
+        assert si.st_ctime == ts
+
+    def test_sftp_time_key_with_datetime(self):
+        """SFTP may return a datetime object under the 'time' key."""
+        dt = datetime.datetime(2024, 3, 10, 8, 0, 0, tzinfo=datetime.timezone.utc)
+        si = StatInfo({"type": "file", "size": 0, "time": dt})
+        assert si.st_mtime == pytest.approx(dt.timestamp(), abs=1e-3)
+
+    def test_s3_last_modified_key(self):
+        """S3 info dicts use 'LastModified' (a datetime) for mtime."""
+        dt = datetime.datetime(2024, 6, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        si = StatInfo({"type": "file", "size": 100, "LastModified": dt})
+        assert si.st_mtime == pytest.approx(dt.timestamp(), abs=1e-3)
+        assert si.st_atime == si.st_mtime
+        assert si.st_ctime == si.st_mtime
+
+    def test_mtime_key_takes_precedence_over_time(self):
+        """'mtime' wins over 'time' when both are present."""
+        si = StatInfo({"mtime": 1000.0, "time": 2000.0})
+        assert si.st_mtime == 1000.0
+
+    def test_no_mtime_keys_returns_zero(self):
+        """When no mtime keys are present, mtime defaults to 0."""
+        si = StatInfo({"type": "file", "size": 0})
+        assert si.st_mtime == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _generic_storage_opts
+# ---------------------------------------------------------------------------
+
+
+class TestGenericStorageOpts:
+    def test_strips_http_specific_keys(self):
+        opts = {
+            "client_cert": "/tmp/cert.pem",
+            "client_key": "/tmp/key.pem",
+            "ssl_verify": False,
+            "bearer_token": "tok",
+            "ipv4_only": True,
+            "ipv6_only": False,
+            "timeout": 30,
+        }
+        result = _generic_storage_opts(opts)
+        assert result == {}
+
+    def test_preserves_non_http_keys(self):
+        opts = {
+            "key": "AKID",
+            "secret": "SECRET",
+            "endpoint_url": "http://localhost:5000",
+        }
+        result = _generic_storage_opts(opts)
+        assert result == opts
+
+    def test_mixed_opts(self):
+        opts = {
+            "client_cert": "/tmp/cert.pem",
+            "anon": True,
+            "region_name": "us-east-1",
+        }
+        result = _generic_storage_opts(opts)
+        assert "client_cert" not in result
+        assert result["anon"] is True
+        assert result["region_name"] == "us-east-1"
+
+    def test_empty_opts(self):
+        assert _generic_storage_opts({}) == {}
