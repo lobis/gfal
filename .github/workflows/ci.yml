@@ -117,7 +117,9 @@ jobs:
         cache: 'pip'
         cache-dependency-path: pyproject.toml
     - name: Install package and test dependencies
-      run: pip install --no-cache-dir ".[dev]"
+      run: |
+        pip install --no-cache-dir ".[dev]"
+        pip install --no-cache-dir s3fs "moto[server]" paramiko boto3
     - name: Run S3 and SFTP tests
       run: pytest tests/ -v -m "s3 or sftp"
 
