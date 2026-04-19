@@ -141,6 +141,20 @@ class TestS3Ls:
         assert "file1.txt" in out
         assert "file2.txt" in out
 
+    def test_ls_single_file(self, s3_server):
+        """gfal ls on a single S3 object prints that object, like Unix ls."""
+        key = f"single_{_uid()}.txt"
+        _put(s3_server, key, b"single file")
+
+        rc, out, err = run_gfal(
+            "ls",
+            f"{s3_server['base_url']}/{key}",
+            env=_s3_env(s3_server),
+        )
+
+        assert rc == 0, err
+        assert key in out
+
 
 # ---------------------------------------------------------------------------
 # gfal cat  (s3://)
