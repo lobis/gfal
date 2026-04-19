@@ -16,7 +16,7 @@
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available.
+A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available, plus optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
@@ -35,6 +35,22 @@ conda install -c conda-forge xrootd
 # Or install the full bundle from the lobis channel
 conda install -c lobis -c conda-forge gfal
 ```
+
+Optional protocol backends are installed separately:
+
+```bash
+# pip
+pip install "gfal[s3]"
+pip install "gfal[ssh]"
+
+# conda
+conda install -c conda-forge s3fs boto3
+conda install -c conda-forge paramiko sshfs
+```
+
+S3 and SSH support are intentionally **not** included in the base conda package for every user.
+
+Because `gfal` is built on `fsspec`, many other `fsspec`-supported protocols can also work with the same CLI and Python API once their backend library is installed. The project currently tests HTTP/HTTPS, XRootD, S3, and SSH/SFTP most explicitly, but adding support for other `fsspec` backends is generally straightforward when needed.
 
 See the [installation docs](https://lobis.github.io/gfal/installation/) for RPM packages, native repositories, and CERN CA certificate setup.
 
@@ -155,6 +171,80 @@ gfal cat https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-ph
 ```
 
 Local paths work as bare paths or `file://` URIs. See [EOS public examples](docs/eospublic-examples.md) for more.
+
+## S3 / S3-compatible storage
+
+S3 support is a first-class optional backend, useful for AWS S3, MinIO, Ceph RGW, and similar deployments.
+
+Install support with:
+
+```bash
+# pip
+pip install "gfal[s3]"
+
+# conda
+conda install -c conda-forge s3fs boto3
+```
+
+Authentication uses the standard AWS environment variables or `~/.aws/credentials`:
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=us-east-1
+
+# For MinIO or other S3-compatible endpoints
+export AWS_ENDPOINT_URL=https://minio.example.com
+```
+
+Examples:
+
+```bash
+# List a bucket
+gfal ls s3://my-bucket/
+
+# List a single object
+gfal ls s3://my-bucket/data/file.root
+
+# Upload
+gfal cp /tmp/data.root s3://my-bucket/data/data.root
+
+# Download
+gfal cp s3://my-bucket/data/data.root /tmp/data.root
+
+# Checksum
+gfal sum s3://my-bucket/data/data.root MD5
+```
+
+## SSH / SFTP
+
+Install support with:
+
+```bash
+# pip
+pip install "gfal[ssh]"
+
+# conda
+conda install -c conda-forge paramiko sshfs
+```
+
+Examples:
+
+```bash
+# Stat a remote file
+gfal stat sftp://user@host/path/to/file.txt
+
+# Copy local file to remote
+gfal cp /tmp/data.root sftp://user@host/data/data.root
+
+# Download from SFTP
+gfal cp sftp://user@host/data/data.root /tmp/data.root
+
+# List a remote directory
+gfal ls sftp://user@host/data/
+```
+
+Other `fsspec` protocols such as `gs://`, `abfs://`, or similar backends may also work once their driver is installed, even if they are not currently covered as heavily as HTTP/XRootD/S3/SSH in this repository.
 
 ## CLI reference
 
