@@ -299,11 +299,11 @@ def _to_timestamp(value) -> float:
     """Convert *value* to a POSIX float timestamp.
 
     Handles:
-    - ``None`` / falsy  → 0.0
-    - ``float`` / ``int``  → unchanged
+    - ``None``  → 0.0
+    - ``float`` / ``int``  → unchanged (including 0 for Unix epoch)
     - ``datetime.datetime``  → ``.timestamp()`` (handles tz-aware objects)
     """
-    if not value:
+    if value is None:
         return 0.0
     if isinstance(value, datetime.datetime):
         return value.timestamp()
@@ -348,15 +348,25 @@ class StatInfo:
         raw_nlink = info.get("nlink")
         self.st_nlink = int(raw_nlink) if raw_nlink is not None else 1
         # Some filesystems (SFTP, S3) return datetime objects or use
-        # alternate key names for modification time.
-        self.st_mtime = _to_timestamp(
-            info.get("mtime")
-            or info.get("time")  # SFTP uses "time"
-            or info.get("LastModified")  # S3 uses "LastModified"
-            or 0
-        )
-        self.st_atime = _to_timestamp(info.get("atime") or self.st_mtime)
-        self.st_ctime = _to_timestamp(info.get("ctime") or self.st_mtime)
+        # alternate key names for modification time.  Prefer "mtime" but fall
+        # back to "time" (SFTP) and "LastModified" (S3).  Use explicit key
+        # presence checks so that a valid timestamp of 0 (Unix epoch) is
+        # preserved rather than incorrectly treated as "missing".
+        if "mtime" in info:
+            raw_mtime = info["mtime"]
+        elif "time" in info:
+            raw_mtime = info["time"]
+        elif "LastModified" in info:
+            raw_mtime = info["LastModified"]
+        else:
+            raw_mtime = None
+        self.st_mtime = _to_timestamp(raw_mtime)
+        self.st_atime = _to_timestamp(info.get("atime"))
+        if self.st_atime == 0.0:
+            self.st_atime = self.st_mtime
+        self.st_ctime = _to_timestamp(info.get("ctime"))
+        if self.st_ctime == 0.0:
+            self.st_ctime = self.st_mtime
 
     @property
     def info(self) -> dict[str, Any]:

@@ -8,9 +8,6 @@ from pathlib import Path
 
 import pytest
 
-with contextlib.suppress(ImportError):
-    import paramiko
-
 CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 
@@ -454,103 +451,112 @@ def xrootd_server(tmp_path_factory):
 # In-process SFTP server fixture (paramiko)
 # ---------------------------------------------------------------------------
 
+# Guard the class definitions so that conftest.py can be imported even when
+# paramiko is not installed.  When paramiko IS installed, both classes are
+# defined at module level and reused across the session fixture below.
+try:
+    import paramiko as _paramiko  # noqa: PLC0415
 
-class _SFTPServerInterface(paramiko.SFTPServerInterface):
-    """Minimal paramiko SFTP server backed by a real temp directory."""
+    class _SFTPServerInterface(_paramiko.SFTPServerInterface):
+        """Minimal paramiko SFTP server backed by a real temp directory."""
 
-    def __init__(self, server, root_dir, *args, **kwargs):
-        super().__init__(server, *args, **kwargs)
-        self._root = root_dir
+        def __init__(self, server, root_dir, *args, **kwargs):
+            super().__init__(server, *args, **kwargs)
+            self._root = root_dir
 
-    def _realpath(self, path):
-        return self._root + self.canonicalize(path)
+        def _realpath(self, path):
+            return self._root + self.canonicalize(path)
 
-    def list_folder(self, path):
+        def list_folder(self, path):
+            real = Path(self._realpath(path))
+            try:
+                out = []
+                for child in real.iterdir():
+                    attr = _paramiko.SFTPAttributes.from_stat(child.stat())
+                    attr.filename = child.name
+                    out.append(attr)
+                return out
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
-        real = Path(self._realpath(path))
-        try:
-            out = []
-            for child in real.iterdir():
-                attr = paramiko.SFTPAttributes.from_stat(child.stat())
-                attr.filename = child.name
-                out.append(attr)
-            return out
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def stat(self, path):
+            real = Path(self._realpath(path))
+            try:
+                return _paramiko.SFTPAttributes.from_stat(real.stat())
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
-    def stat(self, path):
-        real = Path(self._realpath(path))
-        try:
-            return paramiko.SFTPAttributes.from_stat(real.stat())
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def lstat(self, path):
+            return self.stat(path)
 
-    def lstat(self, path):
-        return self.stat(path)
-
-    def open(self, path, flags, attr):
-        import os
-
-        real_path = self._realpath(path)
-        try:
-            fd = os.open(
-                real_path,
-                flags | getattr(os, "O_BINARY", 0),
-                getattr(attr, "st_mode", None) or 0o666,
+        def open(self, path, flags, attr):
+            real_path = self._realpath(path)
+            try:
+                fd = os.open(
+                    real_path,
+                    flags | getattr(os, "O_BINARY", 0),
+                    getattr(attr, "st_mode", None) or 0o666,
+                )
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+            fobj = _paramiko.SFTPHandle(flags)
+            fobj.filename = real_path
+            fmode = (
+                "wb"
+                if (flags & os.O_WRONLY)
+                else ("r+b" if (flags & os.O_RDWR) else "rb")
             )
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
-        fobj = paramiko.SFTPHandle(flags)
-        fobj.filename = real_path
-        fmode = (
-            "wb" if (flags & os.O_WRONLY) else ("r+b" if (flags & os.O_RDWR) else "rb")
-        )
-        try:
-            fobj.readfile = fobj.writefile = os.fdopen(fd, fmode)
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
-        return fobj
+            try:
+                fobj.readfile = fobj.writefile = os.fdopen(fd, fmode)
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
+            return fobj
 
-    def mkdir(self, path, attr):
-        try:
-            Path(self._realpath(path)).mkdir()
-            return paramiko.SFTP_OK
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def mkdir(self, path, attr):
+            try:
+                Path(self._realpath(path)).mkdir()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
-    def rmdir(self, path):
-        try:
-            Path(self._realpath(path)).rmdir()
-            return paramiko.SFTP_OK
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def rmdir(self, path):
+            try:
+                Path(self._realpath(path)).rmdir()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
-    def remove(self, path):
-        try:
-            Path(self._realpath(path)).unlink()
-            return paramiko.SFTP_OK
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def remove(self, path):
+            try:
+                Path(self._realpath(path)).unlink()
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
-    def rename(self, oldpath, newpath):
-        try:
-            Path(self._realpath(oldpath)).rename(self._realpath(newpath))
-            return paramiko.SFTP_OK
-        except OSError as exc:
-            return paramiko.SFTPServer.convert_errno(exc.errno)
+        def rename(self, oldpath, newpath):
+            try:
+                Path(self._realpath(oldpath)).rename(self._realpath(newpath))
+                return _paramiko.SFTP_OK
+            except OSError as exc:
+                return _paramiko.SFTPServer.convert_errno(exc.errno)
 
+    class _SFTPAuthServer(_paramiko.ServerInterface):
+        """Accept any password credential — test-only, not for production use."""
 
-class _SFTPAuthServer(paramiko.ServerInterface):
-    """Accept any password credential — test-only, not for production use."""
+        def check_auth_password(self, username, password):
+            return _paramiko.AUTH_SUCCESSFUL
 
-    def check_auth_password(self, username, password):
-        return paramiko.AUTH_SUCCESSFUL
+        def check_channel_request(self, kind, chanid):
+            return _paramiko.OPEN_SUCCEEDED
 
-    def check_channel_request(self, kind, chanid):
-        return paramiko.OPEN_SUCCEEDED
+        def get_allowed_auths(self, username):
+            return "password"
 
-    def get_allowed_auths(self, username):
-        return "password"
+except ImportError:
+    # paramiko not installed — the sftp_server fixture will skip the test.
+    _SFTPServerInterface = None  # type: ignore[assignment,misc]
+    _SFTPAuthServer = None  # type: ignore[assignment,misc]
+    _paramiko = None  # type: ignore[assignment]
 
 
 @pytest.fixture(scope="session")
@@ -568,10 +574,7 @@ def sftp_server(tmp_path_factory):
     import socket
     import threading
 
-    try:
-        import paramiko  # noqa: PLC0415 — optional dependency
-    except ImportError:
-        require_test_prereq(False, "paramiko not installed")
+    require_test_prereq(_paramiko is not None, "paramiko not installed")
 
     try:
         import fsspec.implementations.sftp  # noqa: F401, PLC0415
@@ -579,7 +582,7 @@ def sftp_server(tmp_path_factory):
         require_test_prereq(False, "fsspec sftp implementation not available")
 
     data_dir = tmp_path_factory.mktemp("sftp_data")
-    host_key = paramiko.RSAKey.generate(2048)
+    host_key = _paramiko.RSAKey.generate(2048)
 
     srv_sock = socket.socket()
     srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -592,13 +595,11 @@ def sftp_server(tmp_path_factory):
 
     def _handle_client(client_sock):
         """Handle a single SFTP client connection in its own thread."""
-        import contextlib
-
-        transport = paramiko.Transport(client_sock)
+        transport = _paramiko.Transport(client_sock)
         transport.add_server_key(host_key)
         transport.set_subsystem_handler(
             "sftp",
-            paramiko.SFTPServer,
+            _paramiko.SFTPServer,
             sftp_si=_SFTPServerInterface,
             root_dir=str(data_dir),
         )
@@ -662,7 +663,6 @@ def s3_server(tmp_path_factory):
       ``secret``       — AWS secret access key (fake)
       ``base_url``     — ``s3://bucket`` prefix for the pre-created bucket
     """
-    import os
     import time
 
     try:
