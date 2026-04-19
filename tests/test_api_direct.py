@@ -612,6 +612,45 @@ class TestGfalClientLsFallback:
         # Should get at least one entry back (the file itself)
         assert len(entries) >= 1
 
+    def test_ls_enoent_file_fallback_when_info_succeeds(self):
+        """Backends like sshfs raise ENOENT for ls(file) but info(file) still works."""
+
+        from unittest.mock import MagicMock, patch
+
+        file_info = {
+            "name": "/tmp/file.txt",
+            "type": "file",
+            "size": 5,
+            "mode": stat.S_IFREG | 0o644,
+            "uid": 0,
+            "gid": 0,
+            "nlink": 1,
+            "mtime": 0,
+        }
+        mock_fso = MagicMock()
+        mock_fso.info.return_value = file_info
+        mock_enoent = FileNotFoundError(errno.ENOENT, "No such file or directory")
+
+        with (
+            patch(
+                "gfal.core.api.fs.url_to_fs", return_value=(mock_fso, "/tmp/file.txt")
+            ),
+            patch(
+                "gfal.core.api.fs.xrootd_ls_enrich",
+                side_effect=mock_enoent,
+            ),
+            patch(
+                "gfal.core.api.fs.xrootd_enrich",
+                side_effect=lambda info, _fso: info,
+            ),
+        ):
+            client = GfalClient()
+            entries = client.ls("sftp://host/tmp/file.txt", detail=True)
+
+        assert len(entries) == 1
+        assert entries[0].st_size == 5
+        assert entries[0].info["name"] == "/tmp/file.txt"
+
 
 class TestGfalClientXattrWithMock:
     def test_getxattr_supported_filesystem(self, tmp_path):
