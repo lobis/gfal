@@ -4,6 +4,7 @@ and a stat-like wrapper around fsspec info() dicts.
 """
 
 import contextlib
+import datetime
 import hashlib
 import os
 import stat as stat_module
@@ -224,8 +225,28 @@ def url_to_fs(url, storage_options=None, **kwargs):
         return fso, path
 
     # fallback
-    fs, path = fsspec.url_to_fs(url, **storage_options)
+    fs, path = fsspec.url_to_fs(url, **_generic_storage_opts(storage_options))
     return fs, path
+
+
+# Options that are gfal/HTTP-specific and should not be forwarded to
+# generic fsspec backends (S3, SFTP, GCS, etc.) which do not accept them.
+_GFAL_HTTP_OPTS = frozenset(
+    {
+        "client_cert",
+        "client_key",
+        "ssl_verify",
+        "bearer_token",
+        "ipv4_only",
+        "ipv6_only",
+        "timeout",
+    }
+)
+
+
+def _generic_storage_opts(opts: dict) -> dict:
+    """Strip gfal-internal HTTP options that generic fsspec backends don't accept."""
+    return {k: v for k, v in opts.items() if k not in _GFAL_HTTP_OPTS}
 
 
 def build_storage_options(params):
@@ -274,6 +295,21 @@ def build_storage_options(params):
 # ---------------------------------------------------------------------------
 
 
+def _to_timestamp(value) -> float:
+    """Convert *value* to a POSIX float timestamp.
+
+    Handles:
+    - ``None`` / falsy  → 0.0
+    - ``float`` / ``int``  → unchanged
+    - ``datetime.datetime``  → ``.timestamp()`` (handles tz-aware objects)
+    """
+    if not value:
+        return 0.0
+    if isinstance(value, datetime.datetime):
+        return value.timestamp()
+    return float(value)
+
+
 class StatInfo:
     """
     Wraps an fsspec info() dict as a POSIX stat-like object.
@@ -311,9 +347,16 @@ class StatInfo:
         self.st_gid = int(info.get("gid") or 0)
         raw_nlink = info.get("nlink")
         self.st_nlink = int(raw_nlink) if raw_nlink is not None else 1
-        self.st_mtime = float(info.get("mtime") or 0)
-        self.st_atime = float(info.get("atime") or self.st_mtime)
-        self.st_ctime = float(info.get("ctime") or self.st_mtime)
+        # Some filesystems (SFTP, S3) return datetime objects or use
+        # alternate key names for modification time.
+        self.st_mtime = _to_timestamp(
+            info.get("mtime")
+            or info.get("time")  # SFTP uses "time"
+            or info.get("LastModified")  # S3 uses "LastModified"
+            or 0
+        )
+        self.st_atime = _to_timestamp(info.get("atime") or self.st_mtime)
+        self.st_ctime = _to_timestamp(info.get("ctime") or self.st_mtime)
 
     @property
     def info(self) -> dict[str, Any]:
@@ -439,15 +482,29 @@ def compute_checksum(fso, path, alg):
     # This is a fsspec-xrootd and WebDAVFileSystem extension.
     if hasattr(fso, "checksum"):
         try:
-            # Check if it accepts the second argument (algorithm)
-            # WebDAVFileSystem and fsspec-xrootd's _checksum do.
-            # fsspec's LocalFileSystem.checksum only takes 'path'.
+            # Check if it accepts a second argument that looks like an algorithm
+            # name (e.g. "ADLER32", "MD5").  WebDAVFileSystem and
+            # fsspec-xrootd's _checksum accept (path, algorithm).
+            # Exclude implementations whose second parameter is named
+            # 'refresh' (s3fs) or 'recalculate' — those have a different
+            # semantic and the call would silently return wrong results.
             import inspect
 
             sig = inspect.signature(fso.checksum)
-            if len(sig.parameters) >= 2 or any(
-                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
-            ):
+            params = list(sig.parameters.values())
+            # params[0] is always 'path'; we need a second param that accepts
+            # a string algorithm name (not a boolean refresh flag).
+            _REFRESH_NAMES = {"refresh", "recalculate", "check_files", "recompute"}
+            has_alg_param = (
+                len(params) >= 2
+                and params[1].name not in _REFRESH_NAMES
+                and params[1].kind
+                not in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                )
+            ) or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+            if has_alg_param:
                 result = fso.checksum(path, alg_upper)
                 if result:
                     # If it returns (alg, value), verify it's what we asked for

@@ -47,6 +47,11 @@ dev = [
     "pre-commit>=3.0",
     "codespell>=2.4.2",
     "certifi",
+    # Optional protocol backends for S3 / SFTP tests
+    "s3fs>=2023.1.0",
+    "moto[server]>=5.0.0",
+    "paramiko>=3.0.0",
+    "boto3>=1.26.0",
 ]
 
 [tool.hatch.version]
@@ -66,6 +71,8 @@ markers = [
     "network: tests that make real network calls (retried automatically on failure)",
     "xrootd: tests that require a local XRootD server (started automatically by the fixture)",
     "xdist_group(name): keep related tests on the same xdist worker",
+    "sftp: tests that require a local SFTP server (started automatically by the fixture)",
+    "s3: tests that require a local S3-compatible server (started automatically by the fixture)",
 ]
 
 [tool.ruff]
@@ -95,4 +102,4 @@ known-first-party = ["gfal"]
 
 [tool.codespell]
 skip = ".git,.venv,*.egg-info"
-ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag"
+ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag,moto,paramiko"

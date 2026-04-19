@@ -106,6 +106,21 @@ jobs:
       shell: bash -el {0}
       run: pytest tests/ -v -m xrootd
 
+  fsspec-protocols:
+    name: fsspec Protocol Tests (S3, SFTP)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+    - name: Install package and test dependencies
+      run: pip install --no-cache-dir ".[dev]"
+    - name: Run S3 and SFTP tests
+      run: pytest tests/ -v -m "s3 or sftp"
+
   integration:
     name: Integration Tests (EOS)
     runs-on: ubuntu-latest
