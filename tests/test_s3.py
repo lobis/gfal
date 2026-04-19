@@ -16,6 +16,7 @@ or as part of the full suite (they auto-skip when dependencies are missing).
 """
 
 import uuid
+from pathlib import PurePosixPath
 
 import pytest
 
@@ -143,7 +144,7 @@ class TestS3Ls:
 
     def test_ls_single_file(self, s3_server):
         """gfal ls on a single S3 object prints that object, like Unix ls."""
-        key = f"single_{_uid()}.txt"
+        key = f"single/{_uid()}/file.txt"
         _put(s3_server, key, b"single file")
 
         rc, out, err = run_gfal(
@@ -153,7 +154,8 @@ class TestS3Ls:
         )
 
         assert rc == 0, err
-        assert key in out
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        assert lines == [PurePosixPath(key).name]
 
 
 # ---------------------------------------------------------------------------

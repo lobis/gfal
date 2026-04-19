@@ -98,6 +98,17 @@ class TestSFTPLs:
         assert rc == 0, err
         assert "42" in out
 
+    def test_ls_single_file(self, sftp_server):
+        """gfal ls on a single SFTP file prints the basename."""
+        name = f"single_{_uid()}.txt"
+        (sftp_server["data_dir"] / name).write_text("single file")
+
+        rc, out, err = run_gfal("ls", _url(sftp_server, f"/{name}"))
+
+        assert rc == 0, err
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        assert lines == [name]
+
     def test_ls_nonexistent(self, sftp_server):
         """gfal ls exits non-zero for a missing path."""
         rc, _out, _err = run_gfal("ls", _url(sftp_server, f"/no_such_{_uid()}"))

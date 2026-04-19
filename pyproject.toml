@@ -48,15 +48,13 @@ dev = [
     "codespell>=2.4.2",
     "certifi",
 ]
-# S3 / SFTP protocol test backends — installed separately in the
-# fsspec-protocols CI job because moto[server] pulls in a very deep
-# dependency tree that triggers pip resolution-too-deep on some Python
-# versions when combined with the base package constraints.
-dev-protocols = [
-    "s3fs",
-    "moto[server]",
+ssh = [
     "paramiko",
+    "sshfs",
+]
+s3 = [
     "boto3",
+    "s3fs",
 ]
 
 [tool.hatch.version]

@@ -106,8 +106,8 @@ jobs:
       shell: bash -el {0}
       run: pytest tests/ -v -m xrootd
 
-  fsspec-protocols:
-    name: fsspec Protocol Tests (S3, SFTP)
+  sftp:
+    name: SFTP Tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -118,10 +118,26 @@ jobs:
         cache-dependency-path: pyproject.toml
     - name: Install package and test dependencies
       run: |
-        pip install --no-cache-dir ".[dev]"
-        pip install --no-cache-dir s3fs "moto[server]" paramiko boto3
-    - name: Run S3 and SFTP tests
-      run: pytest tests/ -v -m "s3 or sftp"
+        pip install --no-cache-dir ".[dev,ssh]"
+    - name: Run SFTP tests
+      run: pytest tests/ -v -m sftp
+
+  s3:
+    name: S3 Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+    - name: Install package and test dependencies
+      run: |
+        pip install --no-cache-dir ".[dev,s3]"
+        pip install --no-cache-dir "moto[server]"
+    - name: Run S3 tests
+      run: pytest tests/ -v -m s3
 
   integration:
     name: Integration Tests (EOS)

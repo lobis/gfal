@@ -10,7 +10,7 @@ import ssl
 import stat
 import sys
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -617,8 +617,9 @@ class TestGfalClientLsFallback:
 
         from unittest.mock import MagicMock, patch
 
+        remote = PurePosixPath("/remote/file.txt")
         file_info = {
-            "name": "/tmp/file.txt",
+            "name": remote.as_posix(),
             "type": "file",
             "size": 5,
             "mode": stat.S_IFREG | 0o644,
@@ -633,7 +634,8 @@ class TestGfalClientLsFallback:
 
         with (
             patch(
-                "gfal.core.api.fs.url_to_fs", return_value=(mock_fso, "/tmp/file.txt")
+                "gfal.core.api.fs.url_to_fs",
+                return_value=(mock_fso, remote.as_posix()),
             ),
             patch(
                 "gfal.core.api.fs.xrootd_ls_enrich",
@@ -645,11 +647,11 @@ class TestGfalClientLsFallback:
             ),
         ):
             client = GfalClient()
-            entries = client.ls("sftp://host/tmp/file.txt", detail=True)
+            entries = client.ls(f"sftp://host{remote}", detail=True)
 
         assert len(entries) == 1
         assert entries[0].st_size == 5
-        assert entries[0].info["name"] == "/tmp/file.txt"
+        assert PurePosixPath(entries[0].info["name"]).parts == remote.parts
 
 
 class TestGfalClientXattrWithMock:

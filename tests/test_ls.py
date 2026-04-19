@@ -95,14 +95,14 @@ class TestLsLongFormat:
         assert "42" in out
 
     def test_long_format_shows_name(self, tmp_path):
-        """Reference: test_name — long format includes the URI."""
+        """Long format for a single file shows the basename, like Unix ls."""
         f = tmp_path / "myfile.txt"
         f.write_text("x")
 
         rc, out, err = run_gfal("ls", "-l", f.as_uri())
 
         assert rc == 0
-        assert f.as_uri() in out
+        assert "myfile.txt" in out
 
     def test_long_format_permissions_string(self, tmp_path):
         f = tmp_path / "file.txt"
