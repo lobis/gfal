@@ -1358,8 +1358,12 @@ class CommandCopy(base.CommandBase):
             def _handle_warn(msg, dst=child_dst_url, child_display=display):
                 if self._is_skip_message(msg):
                     child_display.mark_skipped()
-                    if child_display.show_progress:
-                        return
+                    if not child_display.show_progress and not self._is_quiet():
+                        # Non-TTY: print directly, bypassing _warn_copy_message's
+                        # has_live_progress() which can transiently return False
+                        # during another thread's print_live_message stop/start.
+                        print_live_message(msg)
+                    return
                 self._warn_copy_message(msg, dst)
 
             handle = client.start_copy(
@@ -1552,8 +1556,9 @@ class CommandCopy(base.CommandBase):
         def _handle_warn(message):
             if self._is_skip_message(message):
                 display.mark_skipped()
-                if display.show_progress:
-                    return
+                if not display.show_progress and not self._is_quiet():
+                    print_live_message(message)
+                return
             self._warn_copy_message(message, dst_url)
 
         copy_failed = True

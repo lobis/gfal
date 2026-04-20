@@ -633,6 +633,61 @@ class TestCopyOverwrite:
         assert skip_hint in output
         assert "Scan complete" in output
 
+    def test_parallel_recursive_skip_no_plain_text_leak_tty(self, tmp_path):
+        """With --parallel N on a TTY, skip messages must never appear as plain text."""
+        srcdir = tmp_path / "src_par_skip"
+        dstdir = tmp_path / "dst_par_skip"
+        srcdir.mkdir()
+        dstdir.mkdir()
+        for i in range(6):
+            data = f"file{i}".encode()
+            (srcdir / f"f{i}.bin").write_bytes(data)
+            (dstdir / f"f{i}.bin").write_bytes(data)
+
+        rc, output = _run_gfal_tty(
+            "cp",
+            "-r",
+            "--parallel",
+            "4",
+            "--compare",
+            "checksum",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+        )
+
+        assert rc == 0
+        assert "Skipping existing file" not in output
+        assert "skipped" in output
+
+    def test_parallel_recursive_skip_non_tty_prints_once_per_file(self, tmp_path):
+        """Non-TTY parallel recursive skip: one message per skipped file, no duplication."""
+        srcdir = tmp_path / "src_nonttpy_skip"
+        dstdir = tmp_path / "dst_nonttpy_skip"
+        srcdir.mkdir()
+        dstdir.mkdir()
+        for i in range(4):
+            data = f"content{i}".encode()
+            (srcdir / f"f{i}.bin").write_bytes(data)
+            (dstdir / f"f{i}.bin").write_bytes(data)
+
+        rc, out, err = run_gfal(
+            "cp",
+            "-r",
+            "--parallel",
+            "4",
+            "--compare",
+            "checksum",
+            srcdir.as_uri(),
+            dstdir.as_uri(),
+            env={"GFAL_CLI_GFAL2": "0"},
+        )
+
+        assert rc == 0
+        # Each skipped file emits exactly one message
+        assert out.count("Skipping existing file") == 4
+        # No warning-prefix on skip messages
+        assert "warning: Skipping" not in err
+
     def test_recursive_tty_outputs_one_done_line_per_file(self, tmp_path):
         srcdir = tmp_path / "src_hist"
         dstdir = tmp_path / "dst_hist"
