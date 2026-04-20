@@ -323,6 +323,20 @@ class TestHttpTpc:
         _, kwargs = session.request.call_args
         assert kwargs["timeout"] == 30
 
+    def test_http_tpc_closes_session(self):
+        session, _ = self._make_session(201)
+        with patch.object(tpc_mod, "_build_session", return_value=session):
+            tpc_mod._http_tpc(
+                "https://src.example.com/file",
+                "https://dst.example.com/file",
+                {},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+            )
+        session.close.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _build_session — options

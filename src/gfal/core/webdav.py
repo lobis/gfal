@@ -249,6 +249,8 @@ class _SyncAiohttpSession:
             self._ssl_context.load_cert_chain(self._cert, self._key or self._cert)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._close_lock = threading.Lock()
+        self._closed = False
 
         self.verify = self._verify
         self.cert = (self._cert, self._key or self._cert) if self._cert else None
@@ -258,6 +260,8 @@ class _SyncAiohttpSession:
             self.headers["Authorization"] = f"Bearer {bearer_token}"
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._closed:
+            raise RuntimeError("Session is closed")
         if self._loop is not None:
             return self._loop
 
@@ -275,7 +279,20 @@ class _SyncAiohttpSession:
             )
             self._loop = loop
             ready.set()
-            loop.run_forever()
+            try:
+                loop.run_forever()
+            finally:
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    with contextlib.suppress(Exception):
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                with contextlib.suppress(Exception):
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
 
         self._thread = threading.Thread(target=_runner, daemon=True)
         self._thread.start()
@@ -656,6 +673,31 @@ class _SyncAiohttpSession:
             ),
             loop,
         )
+
+    def close(self) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            loop = self._loop
+            thread = self._thread
+            self._loop = None
+            self._thread = None
+
+        if loop is None:
+            return
+        if loop.is_running():
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=2)
+
+    def __enter__(self) -> _SyncAiohttpSession:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        del exc_type, exc, tb
+        self.close()
 
 
 def _make_session(storage_options):
@@ -1221,6 +1263,12 @@ class WebDAVFileSystem(AbstractFileSystem):
             self._timeout,
             content_length=content_length,
         )
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._session.close()
+        with contextlib.suppress(Exception):
+            self._http_fs.close()
 
     def checksum(self, path: str, algorithm: str) -> str:
         """Fetch server-side checksum via HTTP HEAD and the Digest header."""

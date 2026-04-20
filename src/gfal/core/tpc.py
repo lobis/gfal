@@ -238,16 +238,20 @@ def _http_tpc(
 
     request_timeout = timeout if timeout else None
     session = _build_session(opts)
-    if start_callback is not None:
-        start_callback()
-    resp = session.request(
-        "COPY",
-        url,
-        headers=headers,
-        timeout=request_timeout,
-        stream=True,
-    )
-    _parse_tpc_body(resp, progress_callback=progress_callback)
+    try:
+        if start_callback is not None:
+            start_callback()
+        resp = session.request(
+            "COPY",
+            url,
+            headers=headers,
+            timeout=request_timeout,
+            stream=True,
+        )
+        _parse_tpc_body(resp, progress_callback=progress_callback)
+    finally:
+        with contextlib.suppress(Exception):
+            session.close()
     return True
 
 

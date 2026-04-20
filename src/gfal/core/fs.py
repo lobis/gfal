@@ -3,12 +3,14 @@ fsspec integration layer: URL normalization, filesystem acquisition,
 and a stat-like wrapper around fsspec info() dicts.
 """
 
+import atexit
 import contextlib
 import datetime
 import hashlib
 import os
 import stat as stat_module
 import sys
+import threading
 import warnings
 import zlib
 from pathlib import Path
@@ -19,6 +21,8 @@ import fsspec
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
 _EMITTED_ROOT_HTTPS_FALLBACKS: set[tuple[str, str]] = set()
+_WEBDAV_FS_CACHE_LOCK = threading.Lock()
+_WEBDAV_FS_CACHE: dict[tuple[Any, ...], Any] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +176,46 @@ def _warn_root_https_fallback(root_url, https_url):
     )
 
 
+def _freeze_cache_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze_cache_value(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_cache_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_cache_value(item) for item in value))
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _webdav_cache_key(storage_options: dict[str, Any]) -> tuple[Any, ...]:
+    return ("webdav", _freeze_cache_value(storage_options))
+
+
+def _get_cached_webdav_fs(storage_options: dict[str, Any]):
+    from gfal.core.webdav import WebDAVFileSystem
+
+    key = _webdav_cache_key(storage_options)
+    with _WEBDAV_FS_CACHE_LOCK:
+        cached = _WEBDAV_FS_CACHE.get(key)
+        if cached is None:
+            cached = WebDAVFileSystem(storage_options)
+            _WEBDAV_FS_CACHE[key] = cached
+        return cached
+
+
+def _clear_cached_webdav_filesystems() -> None:
+    with _WEBDAV_FS_CACHE_LOCK:
+        cached = list(_WEBDAV_FS_CACHE.values())
+        _WEBDAV_FS_CACHE.clear()
+    for filesystem in cached:
+        with contextlib.suppress(Exception):
+            filesystem.close()
+
+
+atexit.register(_clear_cached_webdav_filesystems)
+
+
 def url_to_fs(url, storage_options=None, **kwargs):
     """
     Return (AbstractFileSystem, path) for a URL.
@@ -189,9 +233,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
     scheme = parsed.scheme.lower()
 
     if scheme in ("http", "https"):
-        from gfal.core.webdav import WebDAVFileSystem
-
-        return WebDAVFileSystem(storage_options), url
+        return _get_cached_webdav_fs(storage_options), url
 
     if scheme in ("root", "xroot"):
         _fix_xrootd_plugin_path()
@@ -201,9 +243,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
             if _is_missing_xrootd_dependency(e):
                 https_url = _root_url_to_https(url)
                 _warn_root_https_fallback(url, https_url)
-                from gfal.core.webdav import WebDAVFileSystem
-
-                return WebDAVFileSystem(storage_options), https_url
+                return _get_cached_webdav_fs(storage_options), https_url
             cause = e.__cause__ or e
             raise RuntimeError(
                 f"Cannot load XRootD filesystem: {cause}\n"

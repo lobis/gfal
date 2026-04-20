@@ -682,6 +682,19 @@ class TestSyncAiohttpSession:
         assert seen["body"] == b"payload"
         assert fake_session.closed is True
 
+    def test_close_stops_background_loop_thread(self):
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+
+        loop = session._ensure_loop()
+        assert loop.is_running()
+        assert session._thread is not None
+        assert session._thread.is_alive()
+
+        session.close()
+
+        assert session._thread is None
+        assert session._loop is None
+
 
 # ---------------------------------------------------------------------------
 # WebDAVFileSystem integration tests against mock server
