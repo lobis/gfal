@@ -10,6 +10,7 @@ import pytest
 from gfal.core.fs import (
     RootProtocolFallbackWarning,
     StatInfo,
+    _clear_cached_webdav_filesystems,
     _generic_storage_opts,
     _root_url_to_https,
     _to_timestamp,
@@ -233,6 +234,18 @@ class TestUrlToFs:
         fso, path = url_to_fs("davs://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
         assert path == "https://example.com/file"
+
+    def test_http_reuses_cached_webdav_fs_for_same_storage_options(self):
+        _clear_cached_webdav_filesystems()
+        try:
+            first, _ = url_to_fs("https://example.com/one", {"ssl_verify": False})
+            second, _ = url_to_fs("https://example.com/two", {"ssl_verify": False})
+            third, _ = url_to_fs("https://example.com/three", {"ssl_verify": True})
+        finally:
+            _clear_cached_webdav_filesystems()
+
+        assert first is second
+        assert first is not third
 
     def test_storage_options_forwarded(self, tmp_path):
         """storage_options shouldn't cause errors for local filesystem."""
