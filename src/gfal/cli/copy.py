@@ -708,6 +708,17 @@ class CommandCopy(base.CommandBase):
             "Skipping directory "
         )
 
+    def _handle_skip_warn(self, message, display):
+        if not self._is_skip_message(message):
+            return False
+        display.mark_skipped()
+        if not display.show_progress and not self._is_quiet():
+            # Non-TTY: print directly, bypassing _warn_copy_message's
+            # has_live_progress() which can transiently return False
+            # during another thread's print_live_message stop/start.
+            print_live_message(message)
+        return True
+
     def _predicted_transfer_mode(self, src_url, dst_url):
         copy_options = self._build_copy_options()
         if copy_options.tpc == "never":
@@ -1356,13 +1367,7 @@ class CommandCopy(base.CommandBase):
                 display.set_total_size(child_size)
 
             def _handle_warn(msg, dst=child_dst_url, child_display=display):
-                if self._is_skip_message(msg):
-                    child_display.mark_skipped()
-                    if not child_display.show_progress and not self._is_quiet():
-                        # Non-TTY: print directly, bypassing _warn_copy_message's
-                        # has_live_progress() which can transiently return False
-                        # during another thread's print_live_message stop/start.
-                        print_live_message(msg)
+                if self._handle_skip_warn(msg, child_display):
                     return
                 self._warn_copy_message(msg, dst)
 
@@ -1554,10 +1559,7 @@ class CommandCopy(base.CommandBase):
             display.set_total_size(client.stat(src_url).st_size)
 
         def _handle_warn(message):
-            if self._is_skip_message(message):
-                display.mark_skipped()
-                if not display.show_progress and not self._is_quiet():
-                    print_live_message(message)
+            if self._handle_skip_warn(message, display):
                 return
             self._warn_copy_message(message, dst_url)
 

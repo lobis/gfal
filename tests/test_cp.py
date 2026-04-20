@@ -661,8 +661,8 @@ class TestCopyOverwrite:
 
     def test_parallel_recursive_skip_non_tty_prints_once_per_file(self, tmp_path):
         """Non-TTY parallel recursive skip: one message per skipped file, no duplication."""
-        srcdir = tmp_path / "src_nonttpy_skip"
-        dstdir = tmp_path / "dst_nonttpy_skip"
+        srcdir = tmp_path / "src_nontty_skip"
+        dstdir = tmp_path / "dst_nontty_skip"
         srcdir.mkdir()
         dstdir.mkdir()
         for i in range(4):
