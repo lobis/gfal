@@ -563,6 +563,28 @@ class TestPredictedTransferMode:
         mode = cmd._predicted_transfer_mode("https://a.com/f", "https://b.com/f")
         assert mode == "streamed"
 
+    def test_smart_auto_small_http_to_http_streamed(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        cmd.argv = []
+        mode = cmd._predicted_transfer_mode(
+            "https://a.com/f",
+            "https://b.com/f",
+            source_size=1024,
+        )
+        assert mode == "streamed"
+
+    def test_smart_auto_large_http_to_http_tpc_pull(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        cmd.argv = []
+        mode = cmd._predicted_transfer_mode(
+            "https://a.com/f",
+            "https://b.com/f",
+            source_size=128 * 1024 * 1024,
+        )
+        assert mode == "tpc-pull"
+
     def test_local_to_local_streamed(self):
         """Local files are not TPC applicable → streamed."""
         cmd = _make_cmd()
@@ -630,6 +652,13 @@ class TestBuildCopyOptions:
         cmd.argv = []
         opts = cmd._build_copy_options()
         assert opts.tpc == "never"
+
+    def test_default_copy_mode_is_smart(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        cmd.argv = []
+        opts = cmd._build_copy_options()
+        assert opts.tpc == "smart"
 
 
 # ===================================================================

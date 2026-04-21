@@ -8,6 +8,7 @@ in the pytest process.
 import errno
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
@@ -881,7 +882,7 @@ class TestCliUsesLibraryCopy:
         assert kwargs["options"] == CopyOptions(
             compare="size",
             preserve_times=True,
-            tpc="auto",
+            tpc="smart",
         )
         assert callable(kwargs["progress_callback"])
         assert callable(kwargs["start_callback"])
@@ -915,7 +916,33 @@ class TestCliUsesLibraryCopy:
 
         assert opts.preserve_times is True
         assert opts.preserve_times_explicit is True
+        assert opts.tpc == "smart"
+
+    def test_build_copy_options_defaults_to_smart_auto_mode(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"])
+
+        opts = cmd._build_copy_options()
+
+        assert opts.tpc == "smart"
+
+    def test_build_copy_options_copy_mode_auto_enables_smart_tpc(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(src="src", dst=["dst"], copy_mode="auto")
+
+        opts = cmd._build_copy_options()
+
+        assert opts.tpc == "smart"
+
+    def test_build_copy_options_explicit_tpc_mode_keeps_legacy_tpc(self):
+        cmd = _make_cmd()
+        cmd.argv = ["gfal-cp", "--tpc-mode", "push", "src", "dst"]
+        cmd.params = _default_params(src="src", dst=["dst"], tpc_mode="push")
+
+        opts = cmd._build_copy_options()
+
         assert opts.tpc == "auto"
+        assert opts.tpc_direction == "push"
 
     def test_build_copy_options_copy_mode_streamed_disables_tpc(self):
         cmd = _make_cmd()
@@ -951,6 +978,38 @@ class TestCliUsesLibraryCopy:
                 "https://dst.example/file",
             )
             == "streamed"
+        )
+
+    def test_predicted_transfer_mode_uses_streaming_for_small_smart_auto(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src="https://src.example/file",
+            dst=["https://dst.example/file"],
+        )
+
+        assert (
+            cmd._predicted_transfer_mode(
+                "https://src.example/file",
+                "https://dst.example/file",
+                source_size=4 * 1024 * 1024,
+            )
+            == "streamed"
+        )
+
+    def test_predicted_transfer_mode_uses_tpc_for_large_smart_auto(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src="https://src.example/file",
+            dst=["https://dst.example/file"],
+        )
+
+        assert (
+            cmd._predicted_transfer_mode(
+                "https://src.example/file",
+                "https://dst.example/file",
+                source_size=128 * 1024 * 1024,
+            )
+            == "tpc-pull"
         )
 
     def test_warn_copy_message_routes_skip_through_live_output(self):
@@ -1259,6 +1318,67 @@ class TestCliUsesLibraryCopy:
         assert any("Scan complete" in message for message in messages)
         assert any("Starting transfers\n" in message for message in messages)
         assert any("Copy complete" in message for message in messages)
+
+    def test_recursive_children_pass_precomputed_metadata_to_start_copy(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+        (dst / "one.txt").write_text("old")
+        (src / "two.txt").write_text("two")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            compare="size",
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        seen: list[tuple[str, str, object, object]] = []
+
+        def _start_copy(self, src_url, dst_url, **kwargs):
+            seen.append(
+                (
+                    src_url,
+                    dst_url,
+                    kwargs.get("source_info"),
+                    kwargs.get("destination_info"),
+                )
+            )
+            kwargs["transfer_mode_callback"]("streamed")
+            kwargs["start_callback"]()
+            return _DoneHandle()
+
+        with (
+            patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        seen_by_name = {
+            Path(src_url).name: (src_info, dst_info)
+            for src_url, _dst_url, src_info, dst_info in seen
+        }
+        one_src_info, one_dst_info = seen_by_name["one.txt"]
+        two_src_info, two_dst_info = seen_by_name["two.txt"]
+
+        assert one_src_info["size"] == 3
+        assert one_dst_info["size"] == 3
+        assert two_src_info["size"] == 3
+        assert two_dst_info is None
 
     def test_recursive_tty_uses_history_lines_not_rich_bars(self, tmp_path, capsys):
         src = tmp_path / "srcdir"
@@ -1798,6 +1918,7 @@ class TestCliUsesLibraryCopy:
             error_callback=cmd._child_error_callback,
             traverse_callback=cmd._traverse_callback,
             cancel_event=cmd._cancel_event,
+            destination_info=None,
         )
 
     def test_recursive_child_failure_is_reported_once(self, tmp_path):

@@ -1544,6 +1544,12 @@ class TestCopyCopyMode:
 
         assert "Traceback" not in err
 
+    def test_copy_mode_auto_appears_in_help(self):
+        rc, out, err = run_gfal("cp", "--help")
+        assert rc == 0
+        combined = out + err
+        assert "auto" in combined
+
     def test_copy_mode_appears_in_help(self):
         rc, out, err = run_gfal("cp", "--help")
         assert rc == 0
