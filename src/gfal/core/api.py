@@ -160,14 +160,20 @@ class TransferHandle:
         cancel_event: threading.Event,
         result_holder: dict[str, Any],
         exc_holder: dict[str, BaseException],
+        ready_event: threading.Event | None = None,
     ):
         self._thread = thread
         self._cancel_event = cancel_event
         self._result_holder = result_holder
         self._exc_holder = exc_holder
+        self._ready_event = ready_event or threading.Event()
 
     def cancel(self) -> None:
         self._cancel_event.set()
+
+    def ready(self) -> bool:
+        """Return True when the scheduler may free this transfer's submit slot."""
+        return self._ready_event.is_set()
 
     def done(self) -> bool:
         return not self._thread.is_alive()
@@ -374,6 +380,10 @@ class AsyncGfalClient:
             cancel_event = threading.Event()
         result_holder: dict[str, Any] = {}
         exc_holder: dict[str, BaseException] = {}
+        ready_event = threading.Event()
+
+        def _mark_submission_ready() -> None:
+            ready_event.set()
 
         def _runner() -> None:
             try:
@@ -390,18 +400,27 @@ class AsyncGfalClient:
                     cancel_event,
                     source_info=source_info,
                     destination_info=destination_info,
+                    submission_ready_callback=_mark_submission_ready,
                 )
             except Exception as exc:  # pragma: no cover - exercised via handle.wait
                 exc_holder["error"] = self._map_error(exc, src_url)
             except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
+            finally:
+                ready_event.set()
 
         # Copy handles run in background worker threads so recursive-copy
         # cancellations can emit a final summary and let the process exit
         # without waiting for every in-flight transfer backend to unwind.
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
-        return TransferHandle(thread, cancel_event, result_holder, exc_holder)
+        return TransferHandle(
+            thread,
+            cancel_event,
+            result_holder,
+            exc_holder,
+            ready_event=ready_event,
+        )
 
     def _invoke_copy_sync(
         self,
@@ -418,6 +437,7 @@ class AsyncGfalClient:
         *,
         source_info: Any = _INFO_UNSET,
         destination_info: Any = _INFO_UNSET,
+        submission_ready_callback: Callable[[], None] | None = None,
     ) -> Any:
         if source_info is not _INFO_UNSET or destination_info is not _INFO_UNSET:
             return self._copy_sync_with_metadata(
@@ -433,6 +453,7 @@ class AsyncGfalClient:
                 cancel_event,
                 source_info=source_info,
                 destination_info=destination_info,
+                submission_ready_callback=submission_ready_callback,
             )
 
         parameters = inspect.signature(self._copy_sync).parameters
@@ -536,6 +557,7 @@ class AsyncGfalClient:
         *,
         source_info: Any = _INFO_UNSET,
         destination_info: Any = _INFO_UNSET,
+        submission_ready_callback: Callable[[], None] | None = None,
     ) -> Any:
         src_url = self._copy_url(src_url)
         dst_url = self._copy_url(dst_url)
@@ -698,6 +720,7 @@ class AsyncGfalClient:
                     no_delegation=options.no_delegation,
                     progress_callback=progress_callback,
                     start_callback=start_callback,
+                    submission_ready_callback=submission_ready_callback,
                 )
                 if progress_callback is not None and src_st.st_size > 0:
                     progress_callback(src_st.st_size)

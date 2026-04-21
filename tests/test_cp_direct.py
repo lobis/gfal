@@ -1722,6 +1722,85 @@ class TestCliUsesLibraryCopy:
             for call in copy_progress.update.call_args_list
         )
 
+    def test_recursive_parallel_http_tpc_releases_submit_slot_after_start(
+        self, tmp_path
+    ):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        for name in ("one.txt", "two.txt"):
+            (src / name).write_text(name)
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            parallel=1,
+        )
+
+        events = []
+        handles = []
+
+        class _DetachedReadyHandle:
+            def __init__(self, src_url):
+                self.src_url = src_url
+                self._ready = False
+                self._done = False
+
+            def ready(self):
+                return self._ready
+
+            def done(self):
+                return self._done
+
+            def wait(self, timeout=None):
+                del timeout
+                events.append(("wait", self.src_url))
+                return None
+
+            def cancel(self):
+                return None
+
+        def _start_copy(src_url, dst_url, **kwargs):
+            del dst_url
+            handle = _DetachedReadyHandle(src_url)
+            handles.append(handle)
+            events.append(("start", src_url))
+            kwargs["transfer_mode_callback"]("tpc-pull")
+            kwargs["start_callback"]()
+            return handle
+
+        sleep_steps = {"count": 0}
+
+        def _sleep(_seconds):
+            sleep_steps["count"] += 1
+            if sleep_steps["count"] == 1:
+                handles[0]._ready = True
+                return
+            for handle in handles:
+                handle._done = True
+
+        with (
+            patch("gfal.core.api.GfalClient.start_copy", side_effect=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+            patch("gfal.cli.copy.time.sleep", side_effect=_sleep),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        second_start_index = next(
+            index
+            for index, event in enumerate(events)
+            if event[0] == "start" and event[1].endswith("two.txt")
+        )
+        first_wait_index = next(
+            index
+            for index, event in enumerate(events)
+            if event[0] == "wait" and event[1].endswith("one.txt")
+        )
+        assert second_start_index < first_wait_index
+
     def test_recursive_scan_summary_reports_copy_and_skip_counts(self, tmp_path):
         src = tmp_path / "srcdir"
         dst = tmp_path / "dstdir"
