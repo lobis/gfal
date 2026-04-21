@@ -1420,8 +1420,10 @@ class CommandCopy(base.CommandBase):
                 "error_callback": self._child_error_callback,
                 "traverse_callback": self._traverse_callback,
                 "cancel_event": self._cancel_event,
-                "destination_info": child_dst_info_by_url.get(child_dst_url),
             }
+            destination_info = child_dst_info_by_url.get(child_dst_url)
+            if destination_info is not None:
+                start_copy_kwargs["destination_info"] = destination_info
             source_info = _usable_precomputed_source_info(
                 child_info_by_url.get(child_src_url)
             )

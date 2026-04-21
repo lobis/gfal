@@ -504,6 +504,17 @@ class AsyncGfalClient:
                 info_dict[target_key] = value
         return StatResult.from_info(info_dict)
 
+    @staticmethod
+    def _probe_destination_info(dst_fs: Any, dst_path: str) -> StatResult | None:
+        try:
+            return StatResult.from_info(dst_fs.info(dst_path))
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if is_xrootd_not_found_message(str(exc)):
+                return None
+            raise
+
     def _precomputed_match(
         self,
         src_st: StatResult,
@@ -585,13 +596,10 @@ class AsyncGfalClient:
         dst_isdir = False
         dst_st: StatResult | None = None
         if destination_info is _INFO_UNSET:
-            try:
-                dst_info = dst_fs.info(dst_path)
-                dst_st = StatResult.from_info(dst_info)
+            dst_st = self._probe_destination_info(dst_fs, dst_path)
+            if dst_st is not None:
                 dst_exists = True
                 dst_isdir = dst_st.is_dir()
-            except Exception:
-                pass
         elif destination_info is not None:
             dst_st = self._coerce_stat_result(destination_info)
             dst_exists = True
@@ -640,13 +648,10 @@ class AsyncGfalClient:
             dst_exists = False
             dst_isdir = False
             dst_st = None
-            try:
-                dst_info = dst_fs.info(dst_path)
-                dst_st = StatResult.from_info(dst_info)
+            dst_st = self._probe_destination_info(dst_fs, dst_path)
+            if dst_st is not None:
                 dst_exists = True
                 dst_isdir = dst_st.is_dir()
-            except Exception:
-                pass
 
         if (
             not options.just_copy

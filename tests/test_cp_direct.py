@@ -1997,8 +1997,9 @@ class TestCliUsesLibraryCopy:
             error_callback=cmd._child_error_callback,
             traverse_callback=cmd._traverse_callback,
             cancel_event=cmd._cancel_event,
-            destination_info=None,
         )
+        _, kwargs = fake_client.start_copy.call_args
+        assert "destination_info" not in kwargs
 
     def test_recursive_child_failure_is_reported_once(self, tmp_path):
         src = tmp_path / "srcdir"
@@ -2040,6 +2041,47 @@ class TestCliUsesLibraryCopy:
 
         assert "1 recursive transfer(s) failed" in str(excinfo.value)
         mock_print_error.assert_called_once_with(failure)
+
+    def test_recursive_child_omits_destination_info_when_scan_has_no_snapshot(
+        self, tmp_path
+    ):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        (src / "one.txt").write_text("one")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        captured = {}
+
+        def _start_copy(_src_url, _dst_url, **kwargs):
+            captured.update(kwargs)
+            return _DoneHandle()
+
+        with (
+            patch("gfal.core.api.GfalClient.start_copy", side_effect=_start_copy),
+            patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
+        ):
+            cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
+
+        assert "destination_info" not in captured
 
     def test_do_copy_tty_compare_skip_marks_progress_as_skipped(self, tmp_path):
         src = tmp_path / "src.txt"

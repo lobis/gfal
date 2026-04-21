@@ -1023,6 +1023,85 @@ class TestGfalClientLibraryHelpers:
         ):
             client.copy("https://src.example/file.txt", "https://dst.example/file.txt")
 
+    def test_copy_permission_error_on_destination_probe_is_not_suppressed(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(PermissionError("denied"))
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect),
+            pytest.raises(GfalPermissionError, match="denied"),
+        ):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="never"),
+            )
+
+    def test_copy_xrootd_not_found_destination_probe_is_treated_as_missing(self):
+        client = GfalClient()
+
+        class _FakeFs:
+            def __init__(self, info_result):
+                self._info_result = info_result
+
+            def info(self, path):
+                if isinstance(self._info_result, BaseException):
+                    raise self._info_result
+                return self._info_result
+
+            def open(self, path, mode):
+                if "r" in mode:
+                    return nullcontext(io.BytesIO(b"payload"))
+                return nullcontext(io.BytesIO())
+
+        src_info = {
+            "name": "/src/file.txt",
+            "type": "file",
+            "size": 7,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        src_fs = _FakeFs(src_info)
+        dst_fs = _FakeFs(
+            OSError(
+                "Server responded with an error: [3011] Unable to locate "
+                "/dst/file.txt; no such file or directory"
+            )
+        )
+
+        def _url_to_fs_side_effect(url, storage_options=None):
+            if url == "https://src.example/file.txt":
+                return src_fs, "/src/file.txt"
+            return dst_fs, "/dst/file.txt"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs_side_effect):
+            client.copy(
+                "https://src.example/file.txt",
+                "https://dst.example/file.txt",
+                options=CopyOptions(tpc="never"),
+            )
+
     def test_transfer_destination_url_skips_remote_mtime_without_explicit_flag(self):
         client = GfalClient()
         src_st = client.stat(Path(__file__).as_uri())
