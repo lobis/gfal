@@ -446,7 +446,7 @@ Returned by `stat()` and `ls()` (when `detail=True`).
 | `/path` (bare path) | Local filesystem (auto-converted to `file://`) | Built-in |
 | `http://`, `https://` | HTTP/WebDAV               | Built-in                         |
 | `dav://`, `davs://`  | WebDAV (converted to `http://`/`https://`) | Built-in        |
-| `root://`           | XRootD                       | `xrootd` + `fsspec-xrootd`      |
+| `root://`           | XRootD                       | `gfal[xrootd]` or `xrootd` + `fsspec-xrootd` |
 
 ---
 

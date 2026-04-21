@@ -16,7 +16,7 @@
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd) when XRootD bindings are available, plus optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
+A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with **XRootD** support via an optional extra, plus optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
@@ -26,13 +26,26 @@ A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com
 pip install gfal
 ```
 
-This installs the CLI and the Python library with local-file and HTTP/HTTPS support. For XRootD (`root://`) support, you additionally need XRootD bindings:
+This installs the CLI and the Python library with local-file and HTTP/HTTPS support.
+
+For XRootD (`root://`) support with pip-managed dependencies:
 
 ```bash
-# Conda (recommended)
+pip install "gfal[xrootd]"
+```
+
+This installs both `fsspec-xrootd` and the PyPI `xrootd` bindings.
+
+On grid systems where XRootD Python bindings are already provided and centrally managed, prefer the site package manager or conda for those bindings and keep `gfal` itself lean:
+
+```bash
+# Conda
 conda install -c conda-forge xrootd
 
-# Or install the full bundle from the lobis channel
+# Or install just the fsspec adapter alongside site-provided XRootD Python bindings
+pip install fsspec-xrootd
+
+# Or install the full conda bundle from the lobis channel
 conda install -c lobis -c conda-forge gfal
 ```
 
@@ -481,7 +494,7 @@ gfal completion fish > ~/.config/fish/completions/gfal.fish
 | `file://` or bare path | Local filesystem | Built-in |
 | `http://` / `https://` | HTTP/WebDAV | Built-in |
 | `dav://` / `davs://` | WebDAV (converted to HTTP) | Built-in |
-| `root://` | XRootD | `xrootd` + `fsspec-xrootd` |
+| `root://` | XRootD | `gfal[xrootd]` or `xrootd` + `fsspec-xrootd` |
 
 ## Development
 
