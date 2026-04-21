@@ -35,6 +35,9 @@ from gfal.core.api import (
     parse_checksum_arg as _parse_checksum_arg,
 )
 from gfal.core.api import (
+    select_transfer_mode as _select_transfer_mode,
+)
+from gfal.core.api import (
     tpc_applicable as _tpc_applicable,
 )
 from gfal.core.errors import GfalError, GfalPartialFailureError
@@ -46,6 +49,7 @@ _is_special_file = core_api.is_special_file
 _eos_mtime_url = core_api.eos_mtime_url
 
 _DEFAULT_RECURSIVE_PARALLELISM = 1
+_DEFAULT_RECURSIVE_TPC_DETACHED_LIMIT_MULTIPLIER = 2
 _TRANSFER_MODE_LABELS = {
     "streamed": "streamed",
     "tpc-pull": "TPC pull",
@@ -419,11 +423,12 @@ class CommandCopy(base.CommandBase):
     @base.arg(
         "--copy-mode",
         type=str,
-        choices=["pull", "push", "streamed"],
+        choices=["auto", "pull", "push", "streamed"],
         default=None,
-        help="copy mode (gfal2-util compatible): pull/push = TPC with that direction; "
-        "streamed = force client-side streaming. By default, HTTP->HTTP and "
-        "root->root copies try pull-mode TPC first with fallback to streaming. "
+        help="copy mode (gfal2-util compatible): auto = choose streamed for smaller "
+        "transfers and TPC for larger remote-to-remote copies; pull/push = force "
+        "TPC with that direction; streamed = force client-side streaming. By default, "
+        "copies use auto mode unless overridden by --tpc/--tpc-only/--tpc-mode. "
         "Overrides --tpc/--tpc-only/--tpc-mode when specified.",
     )
     @base.arg(
@@ -514,9 +519,15 @@ class CommandCopy(base.CommandBase):
             if self.params.copy_mode == "streamed":
                 self.params.tpc = False
                 self.params.tpc_only = False
-            else:
-                self.params.tpc = True
+                self.params.tpc_mode = "pull"
+            elif self.params.copy_mode in {"pull", "push"}:
+                self.params.tpc = False
+                self.params.tpc_only = False
                 self.params.tpc_mode = self.params.copy_mode  # "pull" or "push"
+            else:
+                self.params.tpc = False
+                self.params.tpc_only = False
+                self.params.tpc_mode = "pull"
 
         # Validate --scitag range [65, 65535] per WLCG spec
         if self.params.scitag is not None and not (65 <= self.params.scitag <= 65535):
@@ -634,14 +645,25 @@ class CommandCopy(base.CommandBase):
             )
 
         tpc = "auto"
-        if getattr(self.params, "copy_mode", None) == "streamed":
+        argv = self.argv or []
+        tpc_mode_explicit = "--tpc-mode" in argv
+        effective_copy_mode = getattr(self.params, "copy_mode", None)
+        if effective_copy_mode is None and not (
+            getattr(self.params, "tpc", False)
+            or getattr(self.params, "tpc_only", False)
+            or tpc_mode_explicit
+        ):
+            effective_copy_mode = "auto"
+
+        if effective_copy_mode == "streamed":
             tpc = "never"
+        elif effective_copy_mode == "auto":
+            tpc = "smart"
         elif getattr(self.params, "tpc_only", False):
             tpc = "only"
         elif getattr(self.params, "tpc", False):
             tpc = "auto"
 
-        argv = self.argv or []
         preserve_times_explicit = "--preserve-times" in argv
 
         return CopyOptions(
@@ -719,17 +741,14 @@ class CommandCopy(base.CommandBase):
             print_live_message(message)
         return True
 
-    def _predicted_transfer_mode(self, src_url, dst_url):
+    def _predicted_transfer_mode(self, src_url, dst_url, source_size=None):
         copy_options = self._build_copy_options()
-        if copy_options.tpc == "never":
-            return "streamed"
-        if not _tpc_applicable(src_url, dst_url):
-            return "streamed"
-        src_scheme = urlparse(src_url).scheme.lower()
-        dst_scheme = urlparse(dst_url).scheme.lower()
-        if src_scheme == "root" and dst_scheme == "root":
-            return "tpc-xrootd"
-        return f"tpc-{copy_options.tpc_direction}"
+        return _select_transfer_mode(
+            src_url,
+            dst_url,
+            copy_options,
+            source_size=source_size,
+        )
 
     def _recursive_parallelism(self, src_url, dst_url):
         del src_url, dst_url
@@ -1281,6 +1300,11 @@ class CommandCopy(base.CommandBase):
             child_src_url: entry
             for child_src_url, _child_dst_url, entry in child_entries
         }
+        dst_info_by_name = {self._entry_name(entry): entry for entry in dst_entries}
+        child_dst_info_by_url = {
+            child_dst_url: dst_info_by_name.get(self._entry_name(entry))
+            for child_src_url, child_dst_url, entry in child_entries
+        }
         child_jobs, child_summary = self._apply_job_limit(child_jobs, child_summary)
         if not self._is_quiet():
             if rich_recursive_layout:
@@ -1296,8 +1320,10 @@ class CommandCopy(base.CommandBase):
         )
         if max_parallel <= 0:
             max_parallel = 1
+        max_detached = max_parallel * _DEFAULT_RECURSIVE_TPC_DETACHED_LIMIT_MULTIPLIER
 
         active = []
+        detached = []
         failures = []
         pending = deque(child_jobs)
         copied_count = 0
@@ -1337,12 +1363,24 @@ class CommandCopy(base.CommandBase):
                     bytes_completed=copied_bytes,
                 )
 
-        def _cancel_active_transfers():
+        def _usable_precomputed_source_info(entry):
+            if isinstance(entry, dict):
+                return entry
+            if any(
+                hasattr(entry, attr)
+                for attr in ("info", "st_size", "size", "st_mode", "mode")
+            ):
+                return entry
+            return None
+
+        def _cancel_inflight_transfers():
             nonlocal cancelled
             cancelled = True
-            for _, _, active_handle, active_display in list(active):
-                active_display.suppress_output()
-                active_handle.cancel()
+            for _, _, inflight_handle, inflight_display in list(active) + list(
+                detached
+            ):
+                inflight_display.suppress_output()
+                inflight_handle.cancel()
 
         def _start_child(child_src_url, child_dst_url):
             if self._cancel_event.is_set():
@@ -1353,7 +1391,9 @@ class CommandCopy(base.CommandBase):
                 quiet=self._is_quiet(),
                 verbose=self.params.verbose,
                 transfer_mode=self._predicted_transfer_mode(
-                    child_src_url, child_dst_url
+                    child_src_url,
+                    child_dst_url,
+                    source_size=self._entry_size(child_info_by_url.get(child_src_url)),
                 ),
                 history_only=True,
                 transfer_index=finished_count + len(active) + 1,
@@ -1371,81 +1411,121 @@ class CommandCopy(base.CommandBase):
                     return
                 self._warn_copy_message(msg, dst)
 
+            start_copy_kwargs = {
+                "options": copy_options,
+                "progress_callback": display.update,
+                "start_callback": display.start,
+                "warn_callback": _handle_warn,
+                "transfer_mode_callback": display.set_mode,
+                "error_callback": self._child_error_callback,
+                "traverse_callback": self._traverse_callback,
+                "cancel_event": self._cancel_event,
+            }
+            destination_info = child_dst_info_by_url.get(child_dst_url)
+            if destination_info is not None:
+                start_copy_kwargs["destination_info"] = destination_info
+            source_info = _usable_precomputed_source_info(
+                child_info_by_url.get(child_src_url)
+            )
+            if source_info is not None:
+                start_copy_kwargs["source_info"] = source_info
+
             handle = client.start_copy(
                 child_src_url,
                 child_dst_url,
-                options=copy_options,
-                progress_callback=display.update,
-                start_callback=display.start,
-                warn_callback=_handle_warn,
-                transfer_mode_callback=display.set_mode,
-                error_callback=self._child_error_callback,
-                traverse_callback=self._traverse_callback,
-                cancel_event=self._cancel_event,
+                **start_copy_kwargs,
             )
             active.append((child_src_url, child_dst_url, handle, display))
 
+        def _finalize_finished_transfer(
+            entry,
+            *,
+            remove_from=None,
+        ):
+            nonlocal copied_count, copied_bytes, skipped_count, finished_count
+            child_src_url, child_dst_url, handle, display = entry
+            del child_src_url, child_dst_url
+            if remove_from is not None:
+                remove_from.remove(entry)
+            try:
+                display.transfer_index = finished_count + 1
+                handle.wait()
+                display.finish(True)
+                if getattr(display, "final_status", None) == "skipped":
+                    skipped_count += 1
+                else:
+                    copied_count += 1
+                    display_size = getattr(display, "src_size", None)
+                    if display_size:
+                        copied_bytes += display_size
+                finished_count += 1
+                self._update_recursive_interrupt_summary_state(
+                    copied=copied_count,
+                    copied_bytes=copied_bytes,
+                    skipped=skipped_count,
+                    failed=len(failures),
+                )
+                _update_aggregate_progress()
+            except Exception as exc:
+                display.transfer_index = finished_count + 1
+                display.finish(False)
+                if self._child_error_key(exc) not in self._reported_child_errors:
+                    self._print_error(exc)
+                failures.append(exc)
+                finished_count += 1
+                self._update_recursive_interrupt_summary_state(
+                    copied=copied_count,
+                    copied_bytes=copied_bytes,
+                    skipped=skipped_count,
+                    failed=len(failures),
+                )
+                _update_aggregate_progress()
+                if copy_options.abort_on_failure:
+                    for _, _, inflight_handle, inflight_display in list(active) + list(
+                        detached
+                    ):
+                        inflight_handle.cancel()
+                        inflight_display.finish(False)
+                    if aggregate_progress is not None:
+                        aggregate_progress.stop(False)
+                    raise exc
+
+        def _handle_ready(handle):
+            ready = getattr(handle, "ready", None)
+            if callable(ready):
+                return ready()
+            return handle.done()
+
         try:
-            while pending or active:
+            while pending or active or detached:
                 if self._cancel_event.is_set():
-                    _cancel_active_transfers()
+                    _cancel_inflight_transfers()
                     raise GfalError("Transfer cancelled", errno.ECANCELED)
                 while pending and len(active) < max_parallel:
                     if self._cancel_event.is_set():
-                        _cancel_active_transfers()
+                        _cancel_inflight_transfers()
                         raise GfalError("Transfer cancelled", errno.ECANCELED)
                     child_src_url, child_dst_url = pending.popleft()
                     _start_child(child_src_url, child_dst_url)
 
                 completed_any = False
                 for child_src_url, child_dst_url, handle, display in list(active):
+                    entry = (child_src_url, child_dst_url, handle, display)
+                    if handle.done():
+                        completed_any = True
+                        _finalize_finished_transfer(entry, remove_from=active)
+                        continue
+                    if _handle_ready(handle) and len(detached) < max_detached:
+                        completed_any = True
+                        active.remove(entry)
+                        detached.append(entry)
+                        continue
+                for child_src_url, child_dst_url, handle, display in list(detached):
+                    entry = (child_src_url, child_dst_url, handle, display)
                     if not handle.done():
                         continue
                     completed_any = True
-                    active.remove((child_src_url, child_dst_url, handle, display))
-                    try:
-                        display.transfer_index = finished_count + 1
-                        handle.wait()
-                        display.finish(True)
-                        if getattr(display, "final_status", None) == "skipped":
-                            skipped_count += 1
-                        else:
-                            copied_count += 1
-                            display_size = getattr(display, "src_size", None)
-                            if display_size:
-                                copied_bytes += display_size
-                        finished_count += 1
-                        self._update_recursive_interrupt_summary_state(
-                            copied=copied_count,
-                            copied_bytes=copied_bytes,
-                            skipped=skipped_count,
-                            failed=len(failures),
-                        )
-                        _update_aggregate_progress()
-                    except Exception as exc:
-                        display.transfer_index = finished_count + 1
-                        display.finish(False)
-                        if (
-                            self._child_error_key(exc)
-                            not in self._reported_child_errors
-                        ):
-                            self._print_error(exc)
-                        failures.append(exc)
-                        finished_count += 1
-                        self._update_recursive_interrupt_summary_state(
-                            copied=copied_count,
-                            copied_bytes=copied_bytes,
-                            skipped=skipped_count,
-                            failed=len(failures),
-                        )
-                        _update_aggregate_progress()
-                        if copy_options.abort_on_failure:
-                            for _, _, active_handle, active_display in active:
-                                active_handle.cancel()
-                                active_display.finish(False)
-                            if aggregate_progress is not None:
-                                aggregate_progress.stop(False)
-                            raise exc
+                    _finalize_finished_transfer(entry, remove_from=detached)
 
                 if not completed_any:
                     time.sleep(0.05)
@@ -1550,7 +1630,11 @@ class CommandCopy(base.CommandBase):
             dst_url,
             quiet=quiet,
             verbose=self.params.verbose,
-            transfer_mode=self._predicted_transfer_mode(src_url, dst_url),
+            transfer_mode=self._predicted_transfer_mode(
+                src_url,
+                dst_url,
+                source_size=getattr(src_st, "st_size", None),
+            ),
         )
         if display.show_progress:
             display.start()

@@ -111,6 +111,25 @@ class TestParseTpcBody:
         resp = self._make_resp(202, lines)
         tpc_mod._parse_tpc_body(resp)  # should not raise
 
+    def test_202_perf_marker_marks_submission_ready(self):
+        resp = self._make_resp(
+            202,
+            [
+                "Perf Marker",
+                "  Stripe Bytes Transferred: 1048576",
+                "End",
+                "success: Created",
+            ],
+        )
+        ready = []
+
+        tpc_mod._parse_tpc_body(
+            resp,
+            submission_ready_callback=lambda: ready.append(True),
+        )
+
+        assert ready == [True]
+
 
 # ---------------------------------------------------------------------------
 # do_tpc — scheme dispatch
@@ -336,6 +355,23 @@ class TestHttpTpc:
                 scitag=None,
             )
         session.close.assert_called_once()
+
+    def test_http_tpc_passes_submission_ready_callback(self):
+        session, _ = self._make_session(202, ["success: Created"])
+        ready = []
+        with patch.object(tpc_mod, "_build_session", return_value=session):
+            tpc_mod._http_tpc(
+                "https://src.example.com/file",
+                "https://dst.example.com/file",
+                {},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+                submission_ready_callback=lambda: ready.append(True),
+            )
+
+        assert ready == [True]
 
 
 # ---------------------------------------------------------------------------

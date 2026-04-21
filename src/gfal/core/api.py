@@ -38,6 +38,8 @@ StartCallback = Optional[Callable[[], None]]
 TransferModeCallback = Optional[Callable[[str], None]]
 ErrorCallback = Optional[Callable[[str, str, Exception], None]]
 TraverseCallback = Optional[Callable[[str, str], None]]
+_INFO_UNSET = object()
+_SMART_TPC_THRESHOLD_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -158,14 +160,20 @@ class TransferHandle:
         cancel_event: threading.Event,
         result_holder: dict[str, Any],
         exc_holder: dict[str, BaseException],
+        ready_event: threading.Event | None = None,
     ):
         self._thread = thread
         self._cancel_event = cancel_event
         self._result_holder = result_holder
         self._exc_holder = exc_holder
+        self._ready_event = ready_event or threading.Event()
 
     def cancel(self) -> None:
         self._cancel_event.set()
+
+    def ready(self) -> bool:
+        """Return True when the scheduler may free this transfer's submit slot."""
+        return self._ready_event.is_set()
 
     def done(self) -> bool:
         return not self._thread.is_alive()
@@ -365,11 +373,17 @@ class AsyncGfalClient:
         error_callback: ErrorCallback = None,
         traverse_callback: TraverseCallback = None,
         cancel_event: threading.Event | None = None,
+        source_info: Any = _INFO_UNSET,
+        destination_info: Any = _INFO_UNSET,
     ) -> TransferHandle:
         if cancel_event is None:
             cancel_event = threading.Event()
         result_holder: dict[str, Any] = {}
         exc_holder: dict[str, BaseException] = {}
+        ready_event = threading.Event()
+
+        def _mark_submission_ready() -> None:
+            ready_event.set()
 
         def _runner() -> None:
             try:
@@ -384,18 +398,29 @@ class AsyncGfalClient:
                     error_callback,
                     traverse_callback,
                     cancel_event,
+                    source_info=source_info,
+                    destination_info=destination_info,
+                    submission_ready_callback=_mark_submission_ready,
                 )
             except Exception as exc:  # pragma: no cover - exercised via handle.wait
                 exc_holder["error"] = self._map_error(exc, src_url)
             except BaseException as exc:  # pragma: no cover - loop/thread edge path
                 exc_holder["error"] = exc
+            finally:
+                ready_event.set()
 
         # Copy handles run in background worker threads so recursive-copy
         # cancellations can emit a final summary and let the process exit
         # without waiting for every in-flight transfer backend to unwind.
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
-        return TransferHandle(thread, cancel_event, result_holder, exc_holder)
+        return TransferHandle(
+            thread,
+            cancel_event,
+            result_holder,
+            exc_holder,
+            ready_event=ready_event,
+        )
 
     def _invoke_copy_sync(
         self,
@@ -409,7 +434,28 @@ class AsyncGfalClient:
         error_callback: ErrorCallback,
         traverse_callback: TraverseCallback,
         cancel_event: threading.Event | None,
+        *,
+        source_info: Any = _INFO_UNSET,
+        destination_info: Any = _INFO_UNSET,
+        submission_ready_callback: Callable[[], None] | None = None,
     ) -> Any:
+        if source_info is not _INFO_UNSET or destination_info is not _INFO_UNSET:
+            return self._copy_sync_with_metadata(
+                src_url,
+                dst_url,
+                options,
+                progress_callback,
+                start_callback,
+                warn_callback,
+                transfer_mode_callback,
+                error_callback,
+                traverse_callback,
+                cancel_event,
+                source_info=source_info,
+                destination_info=destination_info,
+                submission_ready_callback=submission_ready_callback,
+            )
+
         parameters = inspect.signature(self._copy_sync).parameters
         if len(parameters) <= 8:
             return self._copy_sync(
@@ -434,6 +480,285 @@ class AsyncGfalClient:
             traverse_callback,
             cancel_event,
         )
+
+    @staticmethod
+    def _coerce_stat_result(info: Any) -> StatResult:
+        if isinstance(info, StatResult):
+            return info
+        if isinstance(info, dict):
+            return StatResult.from_info(info)
+        raw_info = getattr(info, "info", None)
+        if isinstance(raw_info, dict):
+            return StatResult.from_info(raw_info)
+
+        info_dict: dict[str, Any] = {}
+        for source_key, target_key in (
+            ("name", "name"),
+            ("size", "size"),
+            ("mtime", "mtime"),
+            ("mode", "mode"),
+            ("type", "type"),
+        ):
+            value = getattr(info, source_key, _INFO_UNSET)
+            if value is not _INFO_UNSET:
+                info_dict[target_key] = value
+        return StatResult.from_info(info_dict)
+
+    @staticmethod
+    def _probe_destination_info(dst_fs: Any, dst_path: str) -> StatResult | None:
+        try:
+            return StatResult.from_info(dst_fs.info(dst_path))
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if is_xrootd_not_found_message(str(exc)):
+                return None
+            raise
+
+    def _precomputed_match(
+        self,
+        src_st: StatResult,
+        dst_st: StatResult,
+        dst_url: str,
+        options: CopyOptions,
+        warn_callback: WarnCallback = None,
+    ) -> bool | None:
+        compare = options.compare
+        if compare is None:
+            return None
+
+        if compare == "none":
+            if warn_callback is not None:
+                warn_callback(f"Skipping existing file {dst_url} (--compare none)")
+            return True
+
+        if compare == "size":
+            if src_st.st_size == dst_st.st_size:
+                if warn_callback is not None:
+                    warn_callback(f"Skipping existing file {dst_url} (matching size)")
+                return True
+            return False
+
+        if compare == "size_mtime":
+            if (
+                src_st.st_size == dst_st.st_size
+                and abs(src_st.st_mtime - dst_st.st_mtime) < 1.0
+            ):
+                if warn_callback is not None:
+                    warn_callback(
+                        f"Skipping existing file {dst_url} (matching mtime and size)"
+                    )
+                return True
+            return False
+
+        return None
+
+    def _copy_sync_with_metadata(
+        self,
+        src_url: str,
+        dst_url: str,
+        options: CopyOptions,
+        progress_callback: ProgressCallback,
+        start_callback: StartCallback,
+        warn_callback: WarnCallback,
+        transfer_mode_callback: TransferModeCallback,
+        error_callback: ErrorCallback,
+        traverse_callback: TraverseCallback,
+        cancel_event: threading.Event | None,
+        *,
+        source_info: Any = _INFO_UNSET,
+        destination_info: Any = _INFO_UNSET,
+        submission_ready_callback: Callable[[], None] | None = None,
+    ) -> Any:
+        src_url = self._copy_url(src_url)
+        dst_url = self._copy_url(dst_url)
+        opts = self.storage_options
+
+        src_fs, src_path = fs.url_to_fs(src_url, opts)
+        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+
+        if source_info is _INFO_UNSET:
+            src_info = src_fs.info(src_path)
+            src_st = StatResult.from_info(src_info)
+        else:
+            src_st = self._coerce_stat_result(source_info)
+        src_isdir = src_st.is_dir()
+
+        if options.tpc == "only" and not tpc_applicable(src_url, dst_url):
+            src_scheme = urlparse(src_url).scheme.lower()
+            dst_scheme = urlparse(dst_url).scheme.lower()
+            raise OSError(
+                "Third-party copy required (--tpc-only) but not available: "
+                f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
+            )
+
+        dst_exists = False
+        dst_isdir = False
+        dst_st: StatResult | None = None
+        if destination_info is _INFO_UNSET:
+            dst_st = self._probe_destination_info(dst_fs, dst_path)
+            if dst_st is not None:
+                dst_exists = True
+                dst_isdir = dst_st.is_dir()
+        elif destination_info is not None:
+            dst_st = self._coerce_stat_result(destination_info)
+            dst_exists = True
+            dst_isdir = dst_st.is_dir()
+
+        if dst_exists and not dst_isdir and src_isdir:
+            raise IsADirectoryError("Cannot copy a directory over a file")
+
+        if src_isdir:
+            if not options.recursive:
+                if warn_callback is not None:
+                    warn_callback(
+                        f"Skipping directory {src_url} (use recursive=True to copy recursively)"
+                    )
+                return None
+            if not dst_exists:
+                dst_fs.mkdir(dst_path, create_parents=options.create_parents)
+            self._recursive_copy(
+                src_url,
+                src_fs,
+                src_path,
+                dst_url,
+                dst_fs,
+                dst_path,
+                options,
+                progress_callback,
+                start_callback,
+                transfer_mode_callback,
+                warn_callback,
+                error_callback,
+                traverse_callback,
+                cancel_event,
+            )
+            self._preserve_times(
+                src_st,
+                dst_url,
+                dst_path,
+                options,
+                warn_callback,
+            )
+            return None
+
+        if dst_isdir:
+            dst_url = self._url_path_join(dst_url, Path(src_path.rstrip("/")).name)
+            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+            dst_exists = False
+            dst_isdir = False
+            dst_st = None
+            dst_st = self._probe_destination_info(dst_fs, dst_path)
+            if dst_st is not None:
+                dst_exists = True
+                dst_isdir = dst_st.is_dir()
+
+        if (
+            not options.just_copy
+            and dst_exists
+            and not dst_isdir
+            and not options.overwrite
+            and not is_special_file(dst_path)
+        ):
+            if options.compare is None:
+                raise GfalFileExistsError(
+                    f"Destination {dst_url} exists and overwrite is not set"
+                )
+            if dst_st is not None:
+                precomputed_match = self._precomputed_match(
+                    src_st,
+                    dst_st,
+                    dst_url,
+                    options,
+                    warn_callback,
+                )
+                if precomputed_match is True:
+                    return None
+                if precomputed_match is False:
+                    pass
+                elif self._existing_file_matches_source(
+                    src_fs,
+                    src_path,
+                    src_st,
+                    dst_fs,
+                    dst_path,
+                    dst_url,
+                    options,
+                    warn_callback,
+                    cancel_event,
+                ):
+                    return None
+            elif self._existing_file_matches_source(
+                src_fs,
+                src_path,
+                src_st,
+                dst_fs,
+                dst_path,
+                dst_url,
+                options,
+                warn_callback,
+                cancel_event,
+            ):
+                return None
+
+        transfer_mode = select_transfer_mode(
+            src_url,
+            dst_url,
+            options,
+            source_size=src_st.st_size,
+        )
+        if transfer_mode != "streamed":
+            tpc_dst_url = self._transfer_destination_url(dst_url, src_st, options)
+            try:
+                from gfal.core import tpc as tpc_module  # noqa: PLC0415
+
+                if transfer_mode_callback is not None:
+                    transfer_mode_callback(transfer_mode)
+                tpc_module.do_tpc(
+                    src_url,
+                    tpc_dst_url,
+                    opts,
+                    mode=options.tpc_direction,
+                    timeout=options.timeout,
+                    verbose=False,
+                    scitag=options.scitag,
+                    no_delegation=options.no_delegation,
+                    progress_callback=progress_callback,
+                    start_callback=start_callback,
+                    submission_ready_callback=submission_ready_callback,
+                )
+                if progress_callback is not None and src_st.st_size > 0:
+                    progress_callback(src_st.st_size)
+                return None
+            except ImportError as e:
+                if options.tpc == "only":
+                    raise OSError(
+                        "Third-party copy required but the tpc module is not available"
+                    ) from e
+            except NotImplementedError as e:
+                if options.tpc == "only":
+                    raise OSError(
+                        f"Third-party copy required but not available: {e}"
+                    ) from e
+            except Exception:
+                raise
+
+        self._copy_file(
+            src_url,
+            src_fs,
+            src_path,
+            dst_url,
+            dst_fs,
+            dst_path,
+            src_st,
+            options,
+            progress_callback,
+            start_callback,
+            transfer_mode_callback,
+            warn_callback,
+            cancel_event,
+        )
+        return None
 
     def _stat_sync(self, url: str) -> StatResult:
         try:
@@ -590,164 +915,18 @@ class AsyncGfalClient:
         traverse_callback: TraverseCallback,
         cancel_event: threading.Event | None,
     ) -> Any:
-        src_url = self._copy_url(src_url)
-        dst_url = self._copy_url(dst_url)
-        opts = self.storage_options
-
-        src_fs, src_path = fs.url_to_fs(src_url, opts)
-        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
-
-        src_info = src_fs.info(src_path)
-        src_st = StatResult.from_info(src_info)
-        src_isdir = src_st.is_dir()
-
-        if options.tpc == "only" and not tpc_applicable(src_url, dst_url):
-            src_scheme = urlparse(src_url).scheme.lower()
-            dst_scheme = urlparse(dst_url).scheme.lower()
-            raise OSError(
-                "Third-party copy required (--tpc-only) but not available: "
-                f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
-            )
-
-        dst_exists = False
-        dst_isdir = False
-        try:
-            dst_info = dst_fs.info(dst_path)
-            dst_exists = True
-            dst_isdir = StatResult.from_info(dst_info).is_dir()
-        except Exception:
-            pass
-
-        if dst_exists and not dst_isdir and src_isdir:
-            raise IsADirectoryError("Cannot copy a directory over a file")
-
-        if src_isdir:
-            if not options.recursive:
-                if warn_callback is not None:
-                    warn_callback(
-                        f"Skipping directory {src_url} (use recursive=True to copy recursively)"
-                    )
-                return None
-            if not dst_exists:
-                dst_fs.mkdir(dst_path, create_parents=options.create_parents)
-            self._recursive_copy(
-                src_url,
-                src_fs,
-                src_path,
-                dst_url,
-                dst_fs,
-                dst_path,
-                options,
-                progress_callback,
-                start_callback,
-                transfer_mode_callback,
-                warn_callback,
-                error_callback,
-                traverse_callback,
-                cancel_event,
-            )
-            self._preserve_times(
-                src_st,
-                dst_url,
-                dst_path,
-                options,
-                warn_callback,
-            )
-            return None
-
-        if dst_isdir:
-            dst_url = self._url_path_join(dst_url, Path(src_path.rstrip("/")).name)
-            dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
-            dst_exists = False
-            dst_isdir = False
-            try:
-                dst_info = dst_fs.info(dst_path)
-                dst_exists = True
-                dst_isdir = StatResult.from_info(dst_info).is_dir()
-            except Exception:
-                pass
-
-        if (
-            not options.just_copy
-            and dst_exists
-            and not dst_isdir
-            and not options.overwrite
-            and not is_special_file(dst_path)
-        ):
-            if options.compare is None:
-                raise GfalFileExistsError(
-                    f"Destination {dst_url} exists and overwrite is not set"
-                )
-            if self._existing_file_matches_source(
-                src_fs,
-                src_path,
-                src_st,
-                dst_fs,
-                dst_path,
-                dst_url,
-                options,
-                warn_callback,
-                cancel_event,
-            ):
-                return None
-
-        tpc_supported = tpc_applicable(src_url, dst_url)
-        explicit_tpc = options.tpc in {"auto", "only"} and tpc_supported
-        if explicit_tpc:
-            tpc_dst_url = self._transfer_destination_url(dst_url, src_st, options)
-            try:
-                from gfal.core import tpc as tpc_module  # noqa: PLC0415
-
-                if transfer_mode_callback is not None:
-                    src_scheme = urlparse(src_url).scheme.lower()
-                    if src_scheme in {"http", "https"}:
-                        transfer_mode_callback(f"tpc-{options.tpc_direction}")
-                    else:
-                        transfer_mode_callback("tpc-xrootd")
-                tpc_module.do_tpc(
-                    src_url,
-                    tpc_dst_url,
-                    opts,
-                    mode=options.tpc_direction,
-                    timeout=options.timeout,
-                    verbose=False,
-                    scitag=options.scitag,
-                    no_delegation=options.no_delegation,
-                    progress_callback=progress_callback,
-                    start_callback=start_callback,
-                )
-                if progress_callback is not None and src_st.st_size > 0:
-                    progress_callback(src_st.st_size)
-                return None
-            except ImportError as e:
-                if options.tpc == "only":
-                    raise OSError(
-                        "Third-party copy required but the tpc module is not available"
-                    ) from e
-            except NotImplementedError as e:
-                if options.tpc == "only":
-                    raise OSError(
-                        f"Third-party copy required but not available: {e}"
-                    ) from e
-            except Exception:
-                raise
-
-        self._copy_file(
+        return self._copy_sync_with_metadata(
             src_url,
-            src_fs,
-            src_path,
             dst_url,
-            dst_fs,
-            dst_path,
-            src_st,
             options,
             progress_callback,
             start_callback,
-            transfer_mode_callback,
             warn_callback,
+            transfer_mode_callback,
+            error_callback,
+            traverse_callback,
             cancel_event,
         )
-        return None
 
     def _recursive_copy(
         self,
@@ -1297,6 +1476,8 @@ class GfalClient:
         error_callback: ErrorCallback = None,
         traverse_callback: TraverseCallback = None,
         cancel_event: threading.Event | None = None,
+        source_info: Any = _INFO_UNSET,
+        destination_info: Any = _INFO_UNSET,
     ) -> TransferHandle:
         return self._async_client.start_copy(
             src_url,
@@ -1309,6 +1490,8 @@ class GfalClient:
             error_callback=error_callback,
             traverse_callback=traverse_callback,
             cancel_event=cancel_event,
+            source_info=source_info,
+            destination_info=destination_info,
         )
 
     def _map_error(self, e: Exception, url: str) -> GfalError:
@@ -1408,6 +1591,31 @@ def tpc_applicable(src_url: str, dst_url: str) -> bool:
     return (src_scheme in http and dst_scheme in http) or (
         src_scheme in xrootd and dst_scheme in xrootd
     )
+
+
+def select_transfer_mode(
+    src_url: str,
+    dst_url: str,
+    options: CopyOptions,
+    *,
+    source_size: int | None = None,
+) -> str:
+    if options.tpc == "never":
+        return "streamed"
+    if not tpc_applicable(src_url, dst_url):
+        return "streamed"
+    if (
+        options.tpc == "smart"
+        and source_size is not None
+        and source_size <= _SMART_TPC_THRESHOLD_BYTES
+    ):
+        return "streamed"
+
+    src_scheme = urlparse(src_url).scheme.lower()
+    dst_scheme = urlparse(dst_url).scheme.lower()
+    if src_scheme in {"root", "xroot"} and dst_scheme in {"root", "xroot"}:
+        return "tpc-xrootd"
+    return f"tpc-{options.tpc_direction}"
 
 
 def split_timestamp_ns(timestamp: float) -> tuple[int, int]:

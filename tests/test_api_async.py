@@ -251,6 +251,62 @@ async def test_async_start_copy_wait_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_async_start_copy_marks_submission_ready_before_completion(monkeypatch):
+    client = AsyncGfalClient()
+
+    def _copy(
+        src_url,
+        dst_url,
+        options,
+        progress_callback,
+        start_callback,
+        warn_callback,
+        transfer_mode_callback,
+        error_callback,
+        traverse_callback,
+        cancel_event,
+        *,
+        source_info,
+        destination_info,
+        submission_ready_callback=None,
+    ):
+        del (
+            src_url,
+            dst_url,
+            options,
+            progress_callback,
+            start_callback,
+            warn_callback,
+            transfer_mode_callback,
+            error_callback,
+            traverse_callback,
+            cancel_event,
+            source_info,
+            destination_info,
+        )
+        if submission_ready_callback is not None:
+            submission_ready_callback()
+        time.sleep(0.05)
+
+    monkeypatch.setattr(client, "_invoke_copy_sync", _copy)
+    handle = client.start_copy(
+        "file:///tmp/src.txt",
+        "file:///tmp/dst.txt",
+        source_info={"name": "/tmp/src.txt", "size": 1, "type": "file"},
+        destination_info=None,
+    )
+
+    deadline = time.monotonic() + 1
+    while not handle.ready() and time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+
+    assert handle.ready() is True
+    assert handle.done() is False
+
+    await handle.wait_async(timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_async_start_copy_uses_daemon_thread(monkeypatch):
     client = AsyncGfalClient()
 

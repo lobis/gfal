@@ -25,7 +25,10 @@ XRootD
 
 import contextlib
 import sys
+import threading
 from urllib.parse import urlparse
+
+_HTTP_TPC_SUBMIT_AHEAD_DELAY = 0.35
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -44,6 +47,7 @@ def do_tpc(
     no_delegation=False,
     progress_callback=None,
     start_callback=None,
+    submission_ready_callback=None,
 ):
     """Perform a third-party copy between two remote URLs.
 
@@ -96,6 +100,7 @@ def do_tpc(
             no_delegation=no_delegation,
             progress_callback=progress_callback,
             start_callback=start_callback,
+            submission_ready_callback=submission_ready_callback,
         )
 
     raise NotImplementedError(
@@ -115,7 +120,11 @@ def _build_session(opts):
     return _make_session(opts)
 
 
-def _parse_tpc_body(resp, progress_callback=None):
+def _parse_tpc_body(
+    resp,
+    progress_callback=None,
+    submission_ready_callback=None,
+):
     """Parse a WebDAV TPC response, including WLCG streaming perf-markers.
 
     The WLCG HTTP-TPC spec allows the server to send ``202 Accepted`` and
@@ -158,12 +167,29 @@ def _parse_tpc_body(resp, progress_callback=None):
     last_non_empty = ""
     in_marker = False
     marker_bytes = 0
+    ready_flag = threading.Event()
+    ready_timer = None
+
+    def _mark_submission_ready():
+        if submission_ready_callback is None or ready_flag.is_set():
+            return
+        ready_flag.set()
+        submission_ready_callback()
+
+    if submission_ready_callback is not None:
+        ready_timer = threading.Timer(
+            _HTTP_TPC_SUBMIT_AHEAD_DELAY,
+            _mark_submission_ready,
+        )
+        ready_timer.daemon = True
+        ready_timer.start()
     try:
         for raw in resp.iter_lines(decode_unicode=True):
             line = (raw or "").strip()
             if line == "Perf Marker":
                 in_marker = True
                 marker_bytes = 0
+                _mark_submission_ready()
             elif line == "End" and in_marker:
                 in_marker = False
                 if progress_callback is not None and marker_bytes > 0:
@@ -172,6 +198,7 @@ def _parse_tpc_body(resp, progress_callback=None):
                 with contextlib.suppress(ValueError):
                     marker_bytes = int(line.split(":", 1)[1].strip())
             elif line.startswith("success:"):
+                _mark_submission_ready()
                 return
             elif line.startswith("failure:"):
                 raise OSError(f"HTTP TPC server reported failure: {line[8:].strip()}")
@@ -179,9 +206,12 @@ def _parse_tpc_body(resp, progress_callback=None):
                 last_non_empty = line
     except ConnectionError:
         if last_non_empty.startswith("success:"):
+            _mark_submission_ready()
             return
         raise
     finally:
+        if ready_timer is not None:
+            ready_timer.cancel()
         with contextlib.suppress(Exception):
             resp.close()
 
@@ -189,6 +219,7 @@ def _parse_tpc_body(resp, progress_callback=None):
     if last_non_empty.startswith("failure:"):
         raise OSError(f"HTTP TPC server reported failure: {last_non_empty[8:].strip()}")
     # Treat silent end-of-body as success (some implementations omit the line)
+    _mark_submission_ready()
 
 
 def _http_tpc(
@@ -203,6 +234,7 @@ def _http_tpc(
     no_delegation=False,
     progress_callback=None,
     start_callback=None,
+    submission_ready_callback=None,
 ):
     """Send a WebDAV COPY request to initiate an HTTP TPC transfer."""
     headers = {
@@ -248,7 +280,11 @@ def _http_tpc(
             timeout=request_timeout,
             stream=True,
         )
-        _parse_tpc_body(resp, progress_callback=progress_callback)
+        _parse_tpc_body(
+            resp,
+            progress_callback=progress_callback,
+            submission_ready_callback=submission_ready_callback,
+        )
     finally:
         with contextlib.suppress(Exception):
             session.close()
