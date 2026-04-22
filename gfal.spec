@@ -19,13 +19,15 @@ BuildRequires: python3-pip
 # Runtime dependencies available in EPEL / base RHEL
 Requires: python3-aiohttp
 Requires: python3-rich
-Requires: python3-rich-click
 Requires: python3-click
 Requires: python3-urllib3
 Requires: bash-completion
-# python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
+# python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below.
+# python3-rich-click follows the same pattern: on EL9 we omit it because the
+# CLI falls back to plain click when rich-click is unavailable.
 %if 0%{?rhel} >= 10
 Requires: python3-fsspec
+Requires: python3-rich-click
 Requires: python3-truststore
 %endif
 # Note: the fsspec-xrootd adapter is bundled below to match the base Python
