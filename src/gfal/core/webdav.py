@@ -85,19 +85,17 @@ def _make_ssl_context(verify: bool) -> ssl.SSLContext:
 
 # WebDAV methods that are safe to retry on connection errors.
 # Standard idempotent methods plus the WebDAV-specific ones.
-_RETRY_METHODS = frozenset(
-    [
-        "DELETE",
-        "GET",
-        "HEAD",
-        "OPTIONS",
-        "TRACE",
-        "PROPFIND",
-        "MKCOL",
-        "MOVE",
-        "COPY",
-    ]
-)
+_RETRY_METHODS = frozenset([
+    "DELETE",
+    "GET",
+    "HEAD",
+    "OPTIONS",
+    "TRACE",
+    "PROPFIND",
+    "MKCOL",
+    "MOVE",
+    "COPY",
+])
 
 
 class HttpStatusError(Exception):
@@ -803,17 +801,15 @@ def _parse_propfind(xml_bytes: bytes, base_url: str) -> list[dict]:
             with contextlib.suppress(Exception):
                 mtime = parsedate_to_datetime(mt_el.text).timestamp()
 
-        entries.append(
-            {
-                "name": entry_url,
-                "size": size,
-                "type": "directory" if is_dir else "file",
-                "mtime": mtime,
-                "mode": (stat_module.S_IFDIR | 0o755)
-                if is_dir
-                else (stat_module.S_IFREG | 0o644),
-            }
-        )
+        entries.append({
+            "name": entry_url,
+            "size": size,
+            "type": "directory" if is_dir else "file",
+            "mtime": mtime,
+            "mode": (stat_module.S_IFDIR | 0o755)
+            if is_dir
+            else (stat_module.S_IFREG | 0o644),
+        })
 
     return entries
 

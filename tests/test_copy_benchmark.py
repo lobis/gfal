@@ -220,9 +220,11 @@ class TestStreamingCopyRegression:
         state = _StreamingCopyState()
         client = AsyncGfalClient()
         total_size = state.chunk_count * state.chunk_bytes
-        src_st = StatResult.from_info(
-            {"name": "src", "size": total_size, "type": "file"}
-        )
+        src_st = StatResult.from_info({
+            "name": "src",
+            "size": total_size,
+            "type": "file",
+        })
         fake_src_fs = _FakeSourceFs(state)
         fake_dst_fs = _FakeDestinationFs(state)
 
@@ -279,39 +281,33 @@ def _assert_benchmark_parity(results: list[_BenchmarkResult]) -> None:
 
 class TestBenchmarkParityAssertions:
     def test_assert_benchmark_parity_accepts_near_equal_results(self):
-        _assert_benchmark_parity(
-            [
-                _BenchmarkResult(
-                    "public_to_pilot_streamed", "repo_gfal", 6.95, 0, "", ""
-                ),
-                _BenchmarkResult("public_to_pilot_streamed", "gfal2", 7.00, 0, "", ""),
-                _BenchmarkResult("local_to_root_256m", "repo_gfal", 1.62, 0, "", ""),
-                _BenchmarkResult("local_to_root_256m", "gfal2", 1.60, 0, "", ""),
-            ]
-        )
+        _assert_benchmark_parity([
+            _BenchmarkResult("public_to_pilot_streamed", "repo_gfal", 6.95, 0, "", ""),
+            _BenchmarkResult("public_to_pilot_streamed", "gfal2", 7.00, 0, "", ""),
+            _BenchmarkResult("local_to_root_256m", "repo_gfal", 1.62, 0, "", ""),
+            _BenchmarkResult("local_to_root_256m", "gfal2", 1.60, 0, "", ""),
+        ])
 
     def test_assert_benchmark_parity_rejects_slow_public_https_copy(self):
         with pytest.raises(AssertionError, match="public_to_pilot_streamed"):
-            _assert_benchmark_parity(
-                [
-                    _BenchmarkResult(
-                        "public_to_pilot_streamed",
-                        "repo_gfal",
-                        8.50,
-                        0,
-                        "",
-                        "",
-                    ),
-                    _BenchmarkResult(
-                        "public_to_pilot_streamed",
-                        "gfal2",
-                        7.00,
-                        0,
-                        "",
-                        "",
-                    ),
-                ]
-            )
+            _assert_benchmark_parity([
+                _BenchmarkResult(
+                    "public_to_pilot_streamed",
+                    "repo_gfal",
+                    8.50,
+                    0,
+                    "",
+                    "",
+                ),
+                _BenchmarkResult(
+                    "public_to_pilot_streamed",
+                    "gfal2",
+                    7.00,
+                    0,
+                    "",
+                    "",
+                ),
+            ])
 
 
 @requires_benchmark_opt_in

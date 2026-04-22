@@ -1350,14 +1350,12 @@ class TestCliUsesLibraryCopy:
         seen: list[tuple[str, str, object, object]] = []
 
         def _start_copy(self, src_url, dst_url, **kwargs):
-            seen.append(
-                (
-                    src_url,
-                    dst_url,
-                    kwargs.get("source_info"),
-                    kwargs.get("destination_info"),
-                )
-            )
+            seen.append((
+                src_url,
+                dst_url,
+                kwargs.get("source_info"),
+                kwargs.get("destination_info"),
+            ))
             kwargs["transfer_mode_callback"]("streamed")
             kwargs["start_callback"]()
             return _DoneHandle()
@@ -1412,12 +1410,16 @@ class TestCliUsesLibraryCopy:
         fake_scan_progress = MagicMock()
         fake_copy_progress = MagicMock()
         events = []
-        fake_scan_progress.stop.side_effect = lambda *args, **kwargs: events.append(
-            ("stop", args, kwargs)
-        )
-        fake_copy_progress.stop.side_effect = lambda *args, **kwargs: events.append(
-            ("copy-stop", args, kwargs)
-        )
+        fake_scan_progress.stop.side_effect = lambda *args, **kwargs: events.append((
+            "stop",
+            args,
+            kwargs,
+        ))
+        fake_copy_progress.stop.side_effect = lambda *args, **kwargs: events.append((
+            "copy-stop",
+            args,
+            kwargs,
+        ))
 
         with (
             patch("gfal.cli.copy.Progress") as mock_progress,
@@ -1430,9 +1432,10 @@ class TestCliUsesLibraryCopy:
             patch("gfal.core.api.GfalClient.start_copy", new=_start_copy),
             patch("gfal.core.api.AsyncGfalClient._preserve_times", return_value=None),
         ):
-            mock_live_message.side_effect = lambda message: events.append(
-                ("message", message)
-            )
+            mock_live_message.side_effect = lambda message: events.append((
+                "message",
+                message,
+            ))
             cmd._do_copy(src.as_uri(), dst.as_uri(), {"timeout": 1800})
 
         mock_progress.assert_not_called()

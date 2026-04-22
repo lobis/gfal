@@ -1278,9 +1278,11 @@ class CommandCopy(base.CommandBase):
             if name in (".", ".."):
                 continue
             scanned_count += 1
-            child_entries.append(
-                (_url_path_join(src_url, name), _url_path_join(dst_url, name), entry)
-            )
+            child_entries.append((
+                _url_path_join(src_url, name),
+                _url_path_join(dst_url, name),
+                entry,
+            ))
             if scan_progress is not None and (
                 scanned_count == 1 or scanned_count % 250 == 0
             ):
