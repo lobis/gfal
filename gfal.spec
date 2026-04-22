@@ -26,9 +26,8 @@ Requires: bash-completion
 # python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
 %if 0%{?rhel} >= 10
 Requires: python3-fsspec
+Requires: python3-truststore
 %endif
-# Note: python3-truststore is intentionally not required here; truststore is
-#       an optional TLS extra in pyproject.toml rather than a base dependency.
 # Note: the fsspec-xrootd adapter is bundled below to match the base Python
 #       package metadata. Full XRootD support still requires separate xrootd
 #       Python bindings, which are not bundled here.
