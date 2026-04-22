@@ -88,6 +88,7 @@ SUBCOMMANDS = [
     "cp",
     "rm",
     "mkdir",
+    "mount",
     "stat",
     "cat",
     "save",
