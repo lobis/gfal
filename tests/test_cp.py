@@ -26,15 +26,13 @@ def _run_gfal_tty(*args, preamble=""):
 
     import pty
 
-    script = "\n".join(
-        [
-            "import sys",
-            textwrap.dedent(preamble).strip(),
-            "sys.argv=['gfal'] + sys.argv[1:]",
-            "from gfal.cli.shell import main",
-            "main()",
-        ]
-    )
+    script = "\n".join([
+        "import sys",
+        textwrap.dedent(preamble).strip(),
+        "sys.argv=['gfal'] + sys.argv[1:]",
+        "from gfal.cli.shell import main",
+        "main()",
+    ])
     env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
 
     master_fd, slave_fd = pty.openpty()
@@ -83,15 +81,13 @@ def _run_gfal_tty_with_sigint(*args, preamble="", interrupt_after=1.0, timeout=1
 
     import pty
 
-    script = "\n".join(
-        [
-            "import sys",
-            textwrap.dedent(preamble).strip(),
-            "sys.argv=['gfal'] + sys.argv[1:]",
-            "from gfal.cli.shell import main",
-            "main()",
-        ]
-    )
+    script = "\n".join([
+        "import sys",
+        textwrap.dedent(preamble).strip(),
+        "sys.argv=['gfal'] + sys.argv[1:]",
+        "from gfal.cli.shell import main",
+        "main()",
+    ])
     env = {**os.environ, "PYTHONUTF8": "1", "GFAL_CLI_GFAL2": "0", "TERM": "xterm"}
 
     master_fd, slave_fd = pty.openpty()

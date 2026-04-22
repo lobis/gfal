@@ -6,6 +6,11 @@ They are intended to be copy-pasted exactly as written, without credentials.
 The examples below use the same small PHENIX file and directory that the
 integration suite exercises in `tests/test_integration_eospublic.py`.
 
+For a medium-sized public source family, the first 37 files matching
+`DAOD_PHYSLITE.37019892.*` in
+`https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/`
+add up to about `5.0 GiB` as measured on April 22, 2026.
+
 ## Pick a Working Public Path
 
 If you want one file that is small, stable, and easy to inspect, start with:

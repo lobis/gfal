@@ -265,14 +265,12 @@ class TestDoRmErrors:
 
             from gfal.core.fs import StatInfo
 
-            fake_stat = StatInfo(
-                {
-                    "name": str(f),
-                    "size": 1,
-                    "type": "file",
-                    "mode": stat_mod.S_IFREG | 0o644,
-                }
-            )
+            fake_stat = StatInfo({
+                "name": str(f),
+                "size": 1,
+                "type": "file",
+                "mode": stat_mod.S_IFREG | 0o644,
+            })
             with patch.object(client, "stat", return_value=fake_stat):
                 cmd._do_rm(f.as_uri(), client)
 

@@ -326,15 +326,13 @@ class TestParsePropfind:
 
 class TestHttpFsOpts:
     def test_http_fs_opts_passes_ipv4_only(self):
-        opts = _http_fs_opts(
-            {
-                "ssl_verify": True,
-                "client_cert": "/tmp/cert.pem",
-                "client_key": "/tmp/key.pem",
-                "timeout": 12,
-                "ipv4_only": True,
-            }
-        )
+        opts = _http_fs_opts({
+            "ssl_verify": True,
+            "client_cert": "/tmp/cert.pem",
+            "client_key": "/tmp/key.pem",
+            "timeout": 12,
+            "ipv4_only": True,
+        })
 
         get_client = opts["get_client"]
         assert get_client.keywords["client_cert"] == "/tmp/cert.pem"
@@ -360,13 +358,11 @@ class TestSyncAiohttpSession:
             "gfal.core.webdav._make_ssl_context", lambda verify: fake_context
         )
 
-        session = _SyncAiohttpSession(
-            {
-                "ssl_verify": False,
-                "client_cert": "/tmp/usercert.pem",
-                "client_key": "/tmp/userkey.pem",
-            }
-        )
+        session = _SyncAiohttpSession({
+            "ssl_verify": False,
+            "client_cert": "/tmp/usercert.pem",
+            "client_key": "/tmp/userkey.pem",
+        })
 
         fake_context.load_cert_chain.assert_called_once_with(
             "/tmp/usercert.pem", "/tmp/userkey.pem"
@@ -376,28 +372,22 @@ class TestSyncAiohttpSession:
     def test_suppresses_connection_lost_future_warning(self):
         err = ConnectionError("Connection lost")
 
-        assert _should_suppress_loop_exception(
-            {
-                "message": "Future exception was never retrieved",
-                "exception": err,
-            }
-        )
+        assert _should_suppress_loop_exception({
+            "message": "Future exception was never retrieved",
+            "exception": err,
+        })
 
     def test_does_not_suppress_other_future_warnings(self):
-        assert not _should_suppress_loop_exception(
-            {
-                "message": "Future exception was never retrieved",
-                "exception": RuntimeError("boom"),
-            }
-        )
+        assert not _should_suppress_loop_exception({
+            "message": "Future exception was never retrieved",
+            "exception": RuntimeError("boom"),
+        })
 
     def test_does_not_suppress_other_loop_messages(self):
-        assert not _should_suppress_loop_exception(
-            {
-                "message": "Unhandled exception in event loop",
-                "exception": ConnectionError("Connection lost"),
-            }
-        )
+        assert not _should_suppress_loop_exception({
+            "message": "Unhandled exception in event loop",
+            "exception": ConnectionError("Connection lost"),
+        })
 
     def test_request_async_times_out_session_close(self, monkeypatch):
         class _FakeResponse:
@@ -514,22 +504,18 @@ class TestSyncAiohttpSession:
 
         def _fake_connector(*, ssl, enable_cleanup_closed):
             nonlocal connector_instance
-            connector_calls.append(
-                {
-                    "ssl": ssl,
-                    "enable_cleanup_closed": enable_cleanup_closed,
-                }
-            )
+            connector_calls.append({
+                "ssl": ssl,
+                "enable_cleanup_closed": enable_cleanup_closed,
+            })
             connector_instance = _FakeConnector()
             return connector_instance
 
         def _fake_session(*, connector, timeout):
-            session_calls.append(
-                {
-                    "connector": connector,
-                    "timeout": timeout,
-                }
-            )
+            session_calls.append({
+                "connector": connector,
+                "timeout": timeout,
+            })
             return _FakeSession()
 
         monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)

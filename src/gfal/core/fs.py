@@ -271,17 +271,15 @@ def url_to_fs(url, storage_options=None, **kwargs):
 
 # Options that are gfal/HTTP-specific and should not be forwarded to
 # generic fsspec backends (S3, SFTP, GCS, etc.) which do not accept them.
-_GFAL_HTTP_OPTS = frozenset(
-    {
-        "client_cert",
-        "client_key",
-        "ssl_verify",
-        "bearer_token",
-        "ipv4_only",
-        "ipv6_only",
-        "timeout",
-    }
-)
+_GFAL_HTTP_OPTS = frozenset({
+    "client_cert",
+    "client_key",
+    "ssl_verify",
+    "bearer_token",
+    "ipv4_only",
+    "ipv6_only",
+    "timeout",
+})
 
 
 def _generic_storage_opts(opts: dict) -> dict:
@@ -485,18 +483,16 @@ def xrootd_ls_enrich(fso, path):
     for item in deets:
         flags = item.statinfo.flags
         is_dir = bool(flags & StatInfoFlags.IS_DIR)
-        entries.append(
-            {
-                "name": path + "/" + item.name,
-                "size": item.statinfo.size,
-                "type": "directory" if is_dir else "file",
-                "mtime": item.statinfo.modtime,
-                "mode": _xrootd_flags_to_mode(flags),
-                "nlink": 0,
-                "uid": 0,
-                "gid": 0,
-            }
-        )
+        entries.append({
+            "name": path + "/" + item.name,
+            "size": item.statinfo.size,
+            "type": "directory" if is_dir else "file",
+            "mtime": item.statinfo.modtime,
+            "mode": _xrootd_flags_to_mode(flags),
+            "nlink": 0,
+            "uid": 0,
+            "gid": 0,
+        })
     return entries
 
 

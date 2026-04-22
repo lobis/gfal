@@ -86,9 +86,10 @@ class TestWarnRootHttpsFallback:
     """Lines 164: deduplicated warning."""
 
     def test_warns_once(self):
-        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard(
-            ("root://host//path", "https://host/path")
-        )
+        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard((
+            "root://host//path",
+            "https://host/path",
+        ))
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _warn_root_https_fallback("root://host//path", "https://host/path")
@@ -102,9 +103,10 @@ class TestWarnRootHttpsFallback:
             assert len(w) == 0
 
         # Cleanup
-        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard(
-            ("root://host//path", "https://host/path")
-        )
+        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard((
+            "root://host//path",
+            "https://host/path",
+        ))
 
 
 class TestRootUrlToHttps:

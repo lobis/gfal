@@ -469,7 +469,9 @@ proc = subprocess.run([...], capture_output=True, text=True)
 proc = subprocess.run([...], capture_output=True, text=True, encoding="utf-8")
 
 # For rich/help output that may contain unusual characters, also add errors="replace":
-proc = subprocess.run([...], capture_output=True, text=True, encoding="utf-8", errors="replace")
+proc = subprocess.run(
+    [...], capture_output=True, text=True, encoding="utf-8", errors="replace"
+)
 ```
 
 pytest test suite lives in `tests/`. Run with:

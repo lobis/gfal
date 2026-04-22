@@ -393,15 +393,13 @@ class TestRecursivePrioritization:
     def test_recursive_scan_summary_formats_checksum_deferred_work(self):
         cmd = _make_cmd()
 
-        message = cmd._recursive_scan_summary(
-            {
-                "total": 5,
-                "queued_first": 2,
-                "likely_skipped": 0,
-                "deferred_existing": 3,
-                "compare_mode": "checksum",
-            }
-        )
+        message = cmd._recursive_scan_summary({
+            "total": 5,
+            "queued_first": 2,
+            "likely_skipped": 0,
+            "deferred_existing": 3,
+            "compare_mode": "checksum",
+        })
 
         assert (
             message
@@ -454,17 +452,15 @@ class TestRecursivePrioritization:
     def test_render_recursive_scan_summary_shows_limit_and_scan_estimate(self):
         cmd = _make_cmd()
 
-        renderable = cmd._render_recursive_scan_summary(
-            {
-                "total": 45572,
-                "queued_first": 45353,
-                "likely_skipped": 219,
-                "deferred_existing": 0,
-                "compare_mode": "size",
-                "selected": 4,
-                "limited_to": 4,
-            }
-        )
+        renderable = cmd._render_recursive_scan_summary({
+            "total": 45572,
+            "queued_first": 45353,
+            "likely_skipped": 219,
+            "deferred_existing": 0,
+            "compare_mode": "size",
+            "selected": 4,
+            "limited_to": 4,
+        })
 
         output = str(renderable)
         assert "Scan complete" in output

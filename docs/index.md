@@ -14,19 +14,30 @@
     import gfal
 
     client = gfal.GfalClient()
+    phenix_file = (
+        "https://eospublic.cern.ch/eos/opendata/phenix/"
+        "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+    )
+    phenix_dir = (
+        "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/"
+    )
+    atlas_file = (
+        "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+        "DAOD_PHYSLITE.37019892._000001.pool.root.1"
+    )
 
     # Stat
-    info = client.stat("/tmp/data.txt")
+    info = client.stat(phenix_file)
     print(f"size={info.size}, is_file={info.is_file()}")
 
     # List a directory
-    for entry in client.ls("/tmp/mydir"):
+    for entry in client.ls(phenix_dir):
         print(f"{entry.size:>10}  {entry.info['name']}")
 
     # Copy with checksum verification
     client.copy(
-        "https://example.com/data.root",
-        "file:///tmp/data.root",
+        atlas_file,
+        "file:///tmp/atlas-phy.root",
         options=gfal.CopyOptions(
             overwrite=True,
             checksum=gfal.ChecksumPolicy("ADLER32"),
@@ -34,7 +45,7 @@
     )
 
     # Checksum
-    print(client.checksum("/tmp/data.root", "MD5"))
+    print(client.checksum("file:///tmp/atlas-phy.root", "MD5"))
     ```
 
 === "Asynchronous"
@@ -46,22 +57,38 @@
 
     async def main():
         client = gfal.AsyncGfalClient()
+        phenix_file = (
+            "https://eospublic.cern.ch/eos/opendata/phenix/"
+            "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+        )
+        phenix_dir = (
+            "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/"
+        )
+        atlas_file = (
+            "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+            "DAOD_PHYSLITE.37019892._000001.pool.root.1"
+        )
 
-        info = await client.stat("/tmp/data.txt")
+        info = await client.stat(phenix_file)
         print(f"size={info.size}")
 
-        entries = await client.ls("/tmp/mydir")
+        entries = await client.ls(phenix_dir)
         for entry in entries:
             print(entry.info["name"])
 
         await client.copy(
-            "root://server//eos/data/file.root",
-            "file:///tmp/file.root",
+            atlas_file,
+            "file:///tmp/atlas-phy.root",
         )
 
 
     asyncio.run(main())
     ```
+
+For a medium-sized public source family, the first 37 files matching
+`DAOD_PHYSLITE.37019892.*` in
+`https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/`
+add up to about `5.0 GiB` as measured on April 22, 2026.
 
 For the full Python API reference, see [Python API](python-api.md).
 

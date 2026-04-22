@@ -367,15 +367,13 @@ def _write_batch_sources(tmp_path):
     for name, data in _batch_copy_payloads():
         path = tmp_path / name
         path.write_bytes(data)
-        records.append(
-            {
-                "name": name,
-                "path": path,
-                "uri": path.as_uri(),
-                "data": data,
-                "adler32": _adler32_hex(data),
-            }
-        )
+        records.append({
+            "name": name,
+            "path": path,
+            "uri": path.as_uri(),
+            "data": data,
+            "adler32": _adler32_hex(data),
+        })
     return records
 
 

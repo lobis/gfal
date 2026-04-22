@@ -463,9 +463,12 @@ class TestRichProgress:
         assert ("print", "Copying example.txt [DONE]", False, False) in backend.calls
         assert ("remove_task", 0) in backend.calls
         assert backend.calls[-1] == ("stop",)
-        assert backend.calls.index(("remove_task", 0)) < backend.calls.index(
-            ("print", "Copying example.txt [DONE]", False, False)
-        )
+        assert backend.calls.index(("remove_task", 0)) < backend.calls.index((
+            "print",
+            "Copying example.txt [DONE]",
+            False,
+            False,
+        ))
 
 
 class TestRichSpinner:
