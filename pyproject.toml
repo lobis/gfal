@@ -27,7 +27,6 @@ dependencies = [
     "fsspec-xrootd>=0.5.4",
     "aiohttp>=3.8.0",
     "urllib3>=2.0.0",
-    "truststore; python_version >= '3.10'",
     "rich>=13.0.0",
     "rich-click>=1.7.0",
     "click>=8.0.0",
@@ -39,6 +38,9 @@ gfal = "gfal.cli.shell:main"
 [project.optional-dependencies]
 xrootd = [
     "xrootd>=5.7,<7",
+]
+tls = [
+    "truststore; python_version >= '3.10'",
 ]
 dev = [
     "pytest>=8.0",
