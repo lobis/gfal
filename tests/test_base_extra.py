@@ -620,8 +620,10 @@ class TestCommandBaseExecute:
         import os
         from pathlib import Path
 
-        uid = os.getuid()
+        uid = os.getpid() + 100_000
         proxy_path = Path(f"/tmp/x509up_u{uid}")
+        monkeypatch.setattr("gfal.cli.base.os.getuid", lambda: uid)
+        monkeypatch.setattr("gfal.cli.base._proxy_is_expired", lambda _path: False)
 
         monkeypatch.delenv("X509_USER_PROXY", raising=False)
         monkeypatch.delenv("X509_USER_CERT", raising=False)
@@ -652,8 +654,9 @@ class TestCommandBaseExecute:
         import os
         from pathlib import Path
 
-        uid = os.getuid()
+        uid = os.getpid() + 200_000
         proxy_path = Path(f"/tmp/x509up_u{uid}")
+        monkeypatch.setattr("gfal.cli.base.os.getuid", lambda: uid)
 
         monkeypatch.delenv("X509_USER_PROXY", raising=False)
         monkeypatch.delenv("X509_USER_CERT", raising=False)
