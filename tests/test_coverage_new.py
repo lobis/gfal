@@ -229,7 +229,7 @@ class TestEntryHelpers:
         from gfal.cli.copy import CommandCopy
 
         cmd = CommandCopy()
-        # non-dict is coerced to string via str()
+        # non-dict strings: Path(...).name extracts the basename
         result = cmd._entry_name("/some/path/file.txt")
         assert result == "file.txt"
 
@@ -475,7 +475,7 @@ class TestRenderSingleFinalSummary:
             elapsed=5.0,
             cancelled=True,
         )
-        assert "interrupted" in result.plain.lower() or "Copy" in result.plain
+        assert "Copy interrupted" in result.plain
 
     def test_completed_with_bytes(self):
         from gfal.cli.copy import CommandCopy
