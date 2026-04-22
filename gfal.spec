@@ -18,9 +18,10 @@ BuildRequires: python3-pip
 
 # Runtime dependencies available in EPEL / base RHEL
 Requires: python3-aiohttp
-Requires: python3-requests
 Requires: python3-rich
+Requires: python3-rich-click
 Requires: python3-click
+Requires: python3-urllib3
 Requires: bash-completion
 # python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
 %if 0%{?rhel} >= 10
@@ -73,6 +74,7 @@ still requires separate xrootd Python bindings in the environment.
 %{__python3} -m pip install \
     --root %{buildroot} \
     --prefix /usr \
+    --no-deps \
     --no-build-isolation \
     --no-cache-dir \
     "fsspec-xrootd>=0.5.4"
