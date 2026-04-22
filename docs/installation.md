@@ -8,19 +8,28 @@ The easiest way to install `gfal` is via `pip`:
 pip install gfal
 ```
 
-This installs the base package with local-file and HTTP/HTTPS support.
+This installs the base package with local-file, HTTP/HTTPS, and the lightweight `fsspec-xrootd` adapter.
 
 ### PyPI with XRootD support
 
-For XRootD support, install the optional extra:
+For a fully pip-managed XRootD client stack, install the optional extra:
+
+```bash
+pip install "gfal[xrootd]"
+```
+
+This adds the PyPI `xrootd` bindings on top of the base install.
+
+On grid systems where XRootD Python bindings are already available and centrally
+managed, prefer the site package manager or conda for those bindings and keep
+`gfal` itself lean. In that case, install `gfal` normally and provide the
+bindings separately:
 
 ```bash
 pip install gfal
 ```
 
-This installs the Python dependencies, including `fsspec-xrootd`. For `root://`
-support you also need XRootD bindings available in the environment. In conda
-environments, install them from conda-forge:
+In conda environments, install XRootD from conda-forge:
 
 ```bash
 conda install -c conda-forge xrootd
@@ -49,12 +58,14 @@ conda install -c conda-forge paramiko sshfs
 For pip users, the equivalent extras are:
 
 ```bash
+pip install "gfal[xrootd]"
 pip install "gfal[s3]"
 pip install "gfal[ssh]"
 ```
 
-This package depends on both `xrootd` and `fsspec-xrootd`, so `root://` support
-is available immediately after install.
+For pip users, the `xrootd` extra is optional to avoid making every base
+installation download the full XRootD client bundle while still keeping the
+small `fsspec-xrootd` adapter available by default.
 
 ---
 
@@ -73,8 +84,10 @@ curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.rep
 dnf install -y python3-gfal
 ```
 
-The RPM build is currently **HTTP/HTTPS-only**. XRootD support is not bundled in
-the EPEL package because `fsspec-xrootd` is not available in EPEL yet.
+The RPM build bundles the lightweight `fsspec-xrootd` adapter, but does not
+bundle the heavyweight XRootD client bindings. Full `root://` support therefore
+still depends on `python3-xrootd` or equivalent site-provided bindings being
+available in the environment.
 
 ---
 
@@ -92,8 +105,9 @@ If you use direct-download installs, update the version in the filename when a
 new release comes out. If you want the latest version automatically, use the
 repository configuration above instead.
 
-This RPM has the same support profile as the repository package: HTTP/HTTPS by
-default, without bundled XRootD support.
+This RPM has the same support profile as the repository package: the lightweight
+XRootD adapter is bundled, while the actual XRootD client bindings remain
+external.
 
 ## CERN CA Certificates
 
