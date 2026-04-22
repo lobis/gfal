@@ -10,20 +10,31 @@
 import gfal
 
 client = gfal.GfalClient()
+phenix_file = (
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+)
+phenix_dir = (
+    "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/"
+)
+atlas_file = (
+    "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+    "DAOD_PHYSLITE.37019892._000001.pool.root.1"
+)
 
 # stat a file
-info = client.stat("file:///tmp/data.txt")
+info = client.stat(phenix_file)
 print(f"size={info.size}, is_file={info.is_file()}")
 
 # list a directory
-for entry in client.ls("/tmp/mydir"):
+for entry in client.ls(phenix_dir):
     print(f"{entry.size:>10}  {entry.info['name']}")
 
-# copy a file
-client.copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
+# copy a file from EOS public to local storage
+client.copy(atlas_file, "file:///tmp/atlas-phy.root")
 
 # compute a checksum
-print(client.checksum("file:///tmp/data.txt", "MD5"))
+print(client.checksum("file:///tmp/atlas-phy.root", "MD5"))
 ```
 
 ### Asynchronous
@@ -35,19 +46,35 @@ import gfal
 
 async def main():
     client = gfal.AsyncGfalClient()
+    phenix_file = (
+        "https://eospublic.cern.ch/eos/opendata/phenix/"
+        "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+    )
+    phenix_dir = (
+        "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/"
+    )
+    atlas_file = (
+        "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+        "DAOD_PHYSLITE.37019892._000001.pool.root.1"
+    )
 
-    info = await client.stat("file:///tmp/data.txt")
+    info = await client.stat(phenix_file)
     print(f"size={info.size}")
 
-    entries = await client.ls("/tmp/mydir")
+    entries = await client.ls(phenix_dir)
     for entry in entries:
         print(entry.info["name"])
 
-    await client.copy("file:///tmp/src.txt", "file:///tmp/dst.txt")
+    await client.copy(atlas_file, "file:///tmp/atlas-phy.root")
 
 
 asyncio.run(main())
 ```
+
+For a medium-sized public source family, the first 37 files matching
+`DAOD_PHYSLITE.37019892.*` in
+`https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/`
+add up to about `5.0 GiB` as measured on April 22, 2026.
 
 !!! tip "Local paths"
     Both `"file:///tmp/data.txt"` and `"/tmp/data.txt"` are accepted.
@@ -61,10 +88,10 @@ Both clients accept the same parameters:
 
 ```python
 client = gfal.GfalClient(
-    cert="/path/to/cert.pem",     # X.509 client certificate
-    key="/path/to/key.pem",       # client key (defaults to cert path)
-    timeout=1800,                 # global timeout in seconds
-    ssl_verify=True,              # TLS certificate verification
+    cert="/path/to/cert.pem",  # X.509 client certificate
+    key="/path/to/key.pem",  # client key (defaults to cert path)
+    timeout=1800,  # global timeout in seconds
+    ssl_verify=True,  # TLS certificate verification
 )
 ```
 
@@ -103,7 +130,10 @@ async_client = gfal.AsyncGfalClient(config=config)
 Get POSIX-style metadata for a file or directory.
 
 ```python
-info = client.stat("root://server//eos/data/file.root")
+info = client.stat(
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+)
 print(f"Size: {info.size} bytes")
 print(f"Mode: {oct(info.mode)}")
 print(f"Is directory: {info.is_dir()}")
@@ -115,7 +145,10 @@ print(f"Modification time: {info.mtime}")
 Check whether a file or directory exists.
 
 ```python
-if client.exists("root://server//eos/data/file.root"):
+if client.exists(
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+):
     print("File exists")
 ```
 
@@ -128,14 +161,19 @@ List directory contents.
 
 ```python
 # Full details
-entries = client.ls("root://server//eos/data/")
+entries = client.ls(
+    "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/"
+)
 for entry in entries:
     kind = "d" if entry.is_dir() else "f"
     print(f"[{kind}] {entry.info['name']}  ({entry.size} bytes)")
 
 # Names only
-names = client.ls("root://server//eos/data/", detail=False)
-print(names)  # ['file1.root', 'file2.root', 'subdir']
+names = client.ls(
+    "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/",
+    detail=False,
+)
+print(names[:4])
 ```
 
 ### `open(url, mode="rb") → file-like`
@@ -144,7 +182,10 @@ Open a remote file for reading or writing. Returns a file-like object.
 
 ```python
 # Read
-with client.open("https://example.com/data.csv") as f:
+with client.open(
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C"
+) as f:
     content = f.read()
 
 # Write
@@ -157,8 +198,16 @@ with client.open("root://server//eos/output.txt", "wb") as f:
 Compute a checksum. Supported algorithms: `ADLER32`, `CRC32`, `CRC32C`, `MD5`, `SHA1`, `SHA256`, `SHA512`.
 
 ```python
-md5 = client.checksum("file:///tmp/data.root", "MD5")
-adler = client.checksum("root://server//eos/data/file.root", "ADLER32")
+md5 = client.checksum(
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C",
+    "MD5",
+)
+adler = client.checksum(
+    "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+    "DAOD_PHYSLITE.37019892._000001.pool.root.1",
+    "ADLER32",
+)
 ```
 
 ---
@@ -224,13 +273,18 @@ client.chmod("root://server//eos/data/file.root", 0o644)
 Copy a file (or directory tree with `recursive=True`) between any supported endpoints.
 
 ```python
-# Simple copy
-client.copy("file:///tmp/input.txt", "file:///tmp/output.txt")
+# Simple copy from EOS public to local storage
+client.copy(
+    "https://eospublic.cern.ch/eos/opendata/phenix/"
+    "emcal-finding-pi0s-and-photons/single_cluster_r5.C",
+    "file:///tmp/single_cluster_r5.C",
+)
 
 # Copy with overwrite and checksum verification
 client.copy(
-    "root://server//eos/data/file.root",
-    "file:///tmp/file.root",
+    "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+    "DAOD_PHYSLITE.37019892._000001.pool.root.1",
+    "file:///tmp/atlas-phy.root",
     options=gfal.CopyOptions(
         overwrite=True,
         checksum=gfal.ChecksumPolicy("ADLER32"),
@@ -239,8 +293,8 @@ client.copy(
 
 # Recursive directory copy
 client.copy(
-    "root://server//eos/data/mydir/",
-    "file:///tmp/mydir/",
+    "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/",
+    "file:///tmp/phenix-demo/",
     options=gfal.CopyOptions(recursive=True, create_parents=True),
 )
 ```
@@ -275,8 +329,8 @@ client.copy(
 
 ```python
 client.copy(
-    "root://server//eos/data/",
-    "file:///tmp/backup/",
+    "https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/",
+    "file:///tmp/phenix-demo/",
     options=gfal.CopyOptions(recursive=True, dry_run=True),
 )
 # Nothing is actually copied — preview only
@@ -304,8 +358,9 @@ Start a copy in a background thread. Returns a `TransferHandle` for monitoring.
 
 ```python
 handle = client.start_copy(
-    "root://server//eos/data/large_file.root",
-    "file:///tmp/large_file.root",
+    "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+    "DAOD_PHYSLITE.37019892._000001.pool.root.1",
+    "file:///tmp/atlas-phy.root",
     options=gfal.CopyOptions(overwrite=True),
 )
 
@@ -367,15 +422,19 @@ Both `copy()` and `start_copy()` accept optional callbacks for monitoring transf
 def on_progress(bytes_transferred: int) -> None:
     print(f"Transferred: {bytes_transferred} bytes")
 
+
 def on_start() -> None:
     print("Transfer started")
+
 
 def on_mode(mode: str) -> None:
     print(f"Transfer mode: {mode}")  # "streamed", "tpc-pull", "tpc-xrootd"
 
+
 client.copy(
-    "root://server//eos/data/file.root",
-    "file:///tmp/file.root",
+    "https://eospublic.cern.ch/eos/opendata/atlas/rucio/data16_13TeV/"
+    "DAOD_PHYSLITE.37019892._000001.pool.root.1",
+    "file:///tmp/atlas-phy.root",
     progress_callback=on_progress,
     start_callback=on_start,
     transfer_mode_callback=on_mode,
