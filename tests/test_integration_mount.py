@@ -85,4 +85,4 @@ class TestEosPublicMount:
             assert _EOSPUBLIC_FILE in entries
             data = (mountpoint / _EOSPUBLIC_FILE).read_bytes()
 
-        assert hashlib.md5(data).hexdigest() == _EOSPUBLIC_MD5
+        assert hashlib.md5(data, usedforsecurity=False).hexdigest() == _EOSPUBLIC_MD5

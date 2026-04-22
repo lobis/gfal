@@ -21,7 +21,10 @@ try:
         from mfusepy import FUSE, FuseOSError, Operations
     else:  # pragma: no cover - import is intentionally Linux-only
         raise ImportError
-except ImportError:  # pragma: no cover - exercised via tests with the fallback shim
+except (
+    ImportError,
+    OSError,
+):  # pragma: no cover - exercised via tests with the fallback shim
     FUSE = None
 
     class Operations:  # type: ignore[no-redef]
@@ -37,6 +40,7 @@ except ImportError:  # pragma: no cover - exercised via tests with the fallback 
 
 _DEFAULT_BLOCK_SIZE = 4096
 _DEFAULT_NAME_MAX = 255
+_O_ACCMODE = getattr(os, "O_ACCMODE", os.O_WRONLY | getattr(os, "O_RDWR", 2))
 
 
 def ensure_mount_supported() -> None:
@@ -57,7 +61,10 @@ def ensure_mount_supported() -> None:
 def _join_url_path(base: str, child: str) -> str:
     """Append one decoded path segment to *base*, preserving query/fragment."""
     parsed = urlparse(base)
-    new_path = parsed.path.rstrip("/") + "/" + quote(child)
+    if parsed.path == "//":
+        new_path = f"//{quote(child)}"
+    else:
+        new_path = parsed.path.rstrip("/") + "/" + quote(child)
     return urlunparse(parsed._replace(path=new_path))
 
 
@@ -169,7 +176,7 @@ class ReadOnlyFuseOperations(Operations):
         return entries
 
     def open(self, path: str, flags: int) -> int:
-        if (flags & os.O_ACCMODE) != os.O_RDONLY:
+        if (flags & _O_ACCMODE) != os.O_RDONLY:
             raise FuseOSError(errno.EROFS)
         st = self._stat_for_path(path)
         if st.is_dir():
@@ -187,10 +194,12 @@ class ReadOnlyFuseOperations(Operations):
             handle = self._handles[fh]
         except KeyError as exc:  # pragma: no cover - defensive kernel/runtime path
             raise FuseOSError(errno.EBADF) from exc
-        with contextlib.suppress(OSError, AttributeError):
+        try:
             handle.seek(offset)
-        data = handle.read(size)
-        return bytes(data) if isinstance(data, memoryview) else data
+            data = handle.read(size)
+        except Exception as exc:
+            raise self._map_error(exc) from exc
+        return data.tobytes() if isinstance(data, memoryview) else bytes(data)
 
     def flush(self, path: str | None, fh: int) -> int:
         return 0

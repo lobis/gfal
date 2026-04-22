@@ -19,7 +19,7 @@ class TestFindCommand:
         assert method.__name__ == "execute_cp"
 
     def test_mount_command(self):
-        cls, method = _find_command("mount")
+        _cls, method = _find_command("mount")
         assert method.__name__ == "execute_mount"
 
     def test_unknown_raises(self):

@@ -65,6 +65,15 @@ class TestReadOnlyFuseOperations:
 
         assert result == "https://example.org/base dir/nested/file%20name.txt"
 
+    def test_url_for_root_xrootd_mount_preserves_double_slash(self):
+        client = MagicMock()
+        client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
+        ops = ReadOnlyFuseOperations("root://example.org//", client)
+
+        result = ops._url_for_path("/child")
+
+        assert result == "root://example.org//child"
+
     def test_getattr_for_regular_file(self):
         client = MagicMock()
         client.stat.side_effect = [
@@ -76,7 +85,7 @@ class TestReadOnlyFuseOperations:
                 mtime=123.0,
             ),
         ]
-        ops = ReadOnlyFuseOperations("file:///tmp/source", client)
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
 
         attrs = ops.getattr("/file.txt")
 
@@ -89,13 +98,13 @@ class TestReadOnlyFuseOperations:
         client = MagicMock()
         client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
         client.ls.return_value = [
-            _FakeStat(mode=stat.S_IFDIR | 0o755, name="/tmp/source/subdir"),
+            _FakeStat(mode=stat.S_IFDIR | 0o755, name="/remote/source/subdir"),
             _FakeStat(
                 mode=stat.S_IFREG | 0o644,
                 name="https://example.org/base/file%20name.txt",
             ),
         ]
-        ops = ReadOnlyFuseOperations("file:///tmp/source", client)
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
 
         entries = list(ops.readdir("/", 0))
 
@@ -104,7 +113,7 @@ class TestReadOnlyFuseOperations:
     def test_open_rejects_write_flags(self):
         client = MagicMock()
         client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
-        ops = ReadOnlyFuseOperations("file:///tmp/source", client)
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
 
         with pytest.raises(FuseOSError) as excinfo:
             ops.open("/file.txt", os.O_WRONLY)
@@ -117,10 +126,10 @@ class TestReadOnlyFuseOperations:
         client = MagicMock()
         client.stat.side_effect = [
             _FakeStat(mode=stat.S_IFDIR | 0o755, name="/"),
-            _FakeStat(mode=stat.S_IFREG | 0o644, name="/tmp/source/file.txt"),
+            _FakeStat(mode=stat.S_IFREG | 0o644, name="/remote/source/file.txt"),
         ]
         client.open.return_value = handle
-        ops = ReadOnlyFuseOperations("file:///tmp/source", client)
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
 
         fh = ops.open("/file.txt", 0)
         data = ops.read("/file.txt", 5, 7, fh)
@@ -131,10 +140,23 @@ class TestReadOnlyFuseOperations:
         handle.seek.assert_called_once_with(7)
         handle.close.assert_called_once()
 
+    def test_read_seek_failure_raises_fuse_error(self):
+        handle = MagicMock()
+        handle.seek.side_effect = OSError(errno.EIO, "seek failed")
+        client = MagicMock()
+        client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
+        ops._handles[1] = handle
+
+        with pytest.raises(FuseOSError) as excinfo:
+            ops.read("/file.txt", 5, 7, 1)
+
+        assert excinfo.value.errno == errno.EIO
+
     def test_access_checks_read_only(self):
         client = MagicMock()
         client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
-        ops = ReadOnlyFuseOperations("file:///tmp/source", client)
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
 
         with pytest.raises(FuseOSError) as excinfo:
             ops.access("/", 2)
@@ -148,7 +170,7 @@ class TestExecuteMount:
         mountpoint.mkdir()
         cmd = _make_mount_cmd()
         cmd.params = _default_params(
-            source="file:///tmp/source",
+            source="file:///virtual/source",
             mountpoint=mountpoint,
         )
 
@@ -161,7 +183,7 @@ class TestExecuteMount:
         assert rc == 0
         mock_client_cls.assert_called_once()
         mock_mount.assert_called_once_with(
-            "file:///tmp/source",
+            "file:///virtual/source",
             mountpoint.expanduser(),
             mock_client_cls.return_value,
         )

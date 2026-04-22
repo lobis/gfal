@@ -151,7 +151,8 @@ def fuse_available() -> bool:
         return False
     if _find_fusermount() is None:
         return False
-    return Path("/dev/fuse").exists()
+    dev_fuse = Path("/dev/fuse")
+    return dev_fuse.exists() and os.access(dev_fuse, os.R_OK | os.W_OK)
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
@@ -339,10 +340,15 @@ def mounted_gfal(
         env=subprocess_env,
     )
 
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     ready = False
     mountpoint_cmd = _find_mountpoint()
-    while time.time() < deadline:
+    mountpoint_path = Path(mountpoint)
+    initial_dev = None
+    with contextlib.suppress(OSError):
+        initial_dev = mountpoint_path.stat().st_dev
+
+    while time.monotonic() < deadline:
         if proc.poll() is not None:
             break
         try:
@@ -354,8 +360,20 @@ def mounted_gfal(
                 )
                 ready = result.returncode == 0
             else:
-                list(Path(mountpoint).iterdir())
-                ready = True
+                mountinfo = Path("/proc/self/mountinfo")
+                mountpoint_resolved = str(mountpoint_path.resolve())
+                if mountinfo.exists():
+                    ready = any(
+                        len(parts) > 4 and parts[4] == mountpoint_resolved
+                        for parts in (
+                            line.split()
+                            for line in mountinfo.read_text(
+                                encoding="utf-8"
+                            ).splitlines()
+                        )
+                    )
+                elif initial_dev is not None:
+                    ready = mountpoint_path.stat().st_dev != initial_dev
             if ready:
                 break
         except (OSError, subprocess.TimeoutExpired):
@@ -364,7 +382,17 @@ def mounted_gfal(
 
     try:
         if not ready:
-            stdout, stderr = proc.communicate(timeout=5)
+            stdout = ""
+            stderr = ""
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    stdout, stderr = proc.communicate(timeout=5)
+                if proc.poll() is None:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
             raise RuntimeError(
                 f"gfal mount did not become ready\nstdout:\n{stdout}\nstderr:\n{stderr}"
             )
