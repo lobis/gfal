@@ -18,6 +18,10 @@ class TestFindCommand:
         cls, method = _find_command("cp")
         assert method.__name__ == "execute_cp"
 
+    def test_mount_command(self):
+        cls, method = _find_command("mount")
+        assert method.__name__ == "execute_mount"
+
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown command"):
             _find_command("nonexistent_command")

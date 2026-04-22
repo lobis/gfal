@@ -1,9 +1,11 @@
 """Shared test helpers for gfal-cli tests."""
 
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -114,6 +116,42 @@ def _find_docker() -> Optional[str]:
         if path:
             return path
     return None
+
+
+def _find_fusermount() -> Optional[str]:
+    """Return the fusermount helper path, if available."""
+    for candidate in (
+        "fusermount3",
+        "fusermount",
+        "/bin/fusermount3",
+        "/bin/fusermount",
+    ):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
+def _find_mountpoint() -> Optional[str]:
+    """Return the ``mountpoint`` helper path, if available."""
+    for candidate in ("mountpoint", "/bin/mountpoint", "/usr/bin/mountpoint"):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
+def fuse_available() -> bool:
+    """Return True when the host appears capable of running FUSE mount tests."""
+    if sys.platform != "linux":
+        return False
+    if _find_fusermount() is None:
+        return False
+    return Path("/dev/fuse").exists()
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
@@ -271,3 +309,82 @@ def run_gfal_binary(
     except subprocess.TimeoutExpired as exc:
         return _timed_out_result(exc, binary=True)
     return proc.returncode, proc.stdout, proc.stderr
+
+
+@contextlib.contextmanager
+def mounted_gfal(
+    source,
+    mountpoint,
+    *,
+    timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT,
+    env=None,
+):
+    """Run ``gfal mount`` in the background and unmount it on exit."""
+    script = (
+        "import sys; "
+        "sys.argv=['gfal', 'mount'] + sys.argv[1:]; "
+        "from gfal.cli.shell import main; "
+        "main()"
+    )
+    subprocess_env = _subprocess_env()
+    if env is not None:
+        subprocess_env = {**subprocess_env, **env}
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script, str(source), str(mountpoint)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=subprocess_env,
+    )
+
+    deadline = time.time() + timeout
+    ready = False
+    mountpoint_cmd = _find_mountpoint()
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            break
+        try:
+            if mountpoint_cmd is not None:
+                result = subprocess.run(
+                    [mountpoint_cmd, "-q", str(mountpoint)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                ready = result.returncode == 0
+            else:
+                list(Path(mountpoint).iterdir())
+                ready = True
+            if ready:
+                break
+        except (OSError, subprocess.TimeoutExpired):
+            time.sleep(0.1)
+            continue
+
+    try:
+        if not ready:
+            stdout, stderr = proc.communicate(timeout=5)
+            raise RuntimeError(
+                f"gfal mount did not become ready\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            )
+        yield proc
+    finally:
+        fusermount = _find_fusermount()
+        if fusermount is not None:
+            subprocess.run(
+                [fusermount, "-u", str(mountpoint)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=5)

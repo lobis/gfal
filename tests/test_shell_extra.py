@@ -28,6 +28,7 @@ class TestAllCommands:
             "cp",
             "stat",
             "mkdir",
+            "mount",
             "rm",
             "cat",
             "save",

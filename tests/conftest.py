@@ -43,6 +43,10 @@ def pytest_collection_modifyitems(items):
             # independent XRootD HTTPS fixtures in parallel is the main source of the
             # late-suite xdist hangs we see locally.
             item.add_marker(pytest.mark.xdist_group(name="xrootd"), append=False)
+        if item.get_closest_marker("mount"):
+            # FUSE mount tests should stay on one worker to avoid multiple mount
+            # subprocesses contending for the same runner resources.
+            item.add_marker(pytest.mark.xdist_group(name="mount"), append=False)
 
 
 # ---------------------------------------------------------------------------
