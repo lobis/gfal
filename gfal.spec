@@ -19,15 +19,17 @@ BuildRequires: python3-pip
 # Runtime dependencies available in EPEL / base RHEL
 Requires: python3-aiohttp
 Requires: python3-rich
-Requires: python3-rich-click
 Requires: python3-click
 Requires: python3-urllib3
 Requires: bash-completion
-# python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below
+# python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below.
 %if 0%{?rhel} >= 10
 Requires: python3-fsspec
-Requires: python3-truststore
 %endif
+# Note: python3-rich-click and python3-truststore are intentionally not
+#       required here. Both are optional runtime enhancements in the Python
+#       package, and gfal falls back to plain click / standard SSL behavior
+#       when they are not installed.
 # Note: the fsspec-xrootd adapter is bundled below to match the base Python
 #       package metadata. Full XRootD support still requires separate xrootd
 #       Python bindings, which are not bundled here.
