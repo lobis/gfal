@@ -1,4 +1,4 @@
-"""Linux read-only FUSE mount support built on the existing gfal/fsspec stack."""
+"""Read-only FUSE mount support built on the existing gfal/fsspec stack."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from gfal.core import fs
 from gfal.core.api import GfalClient, local_destination_path
 
 try:
-    if sys.platform == "linux":
+    if sys.platform in {"linux", "darwin"}:
         from mfusepy import FUSE, FuseOSError, Operations
-    else:  # pragma: no cover - import is intentionally Linux-only
+    else:  # pragma: no cover - import is intentionally platform-gated
         raise ImportError
 except (
     ImportError,
@@ -41,14 +41,15 @@ except (
 _DEFAULT_BLOCK_SIZE = 4096
 _DEFAULT_NAME_MAX = 255
 _O_ACCMODE = getattr(os, "O_ACCMODE", os.O_WRONLY | getattr(os, "O_RDWR", 2))
+_SUPPORTED_PLATFORMS = {"linux": "Linux", "darwin": "macOS"}
 
 
 def ensure_mount_supported() -> None:
     """Raise a user-facing error when the current environment cannot mount."""
-    if sys.platform != "linux":
+    if sys.platform not in _SUPPORTED_PLATFORMS:
         raise OSError(
             errno.EOPNOTSUPP,
-            "gfal mount is currently supported on Linux only",
+            "gfal mount is currently supported on Linux and macOS only",
         )
     if FUSE is None:
         raise OSError(
@@ -71,6 +72,18 @@ def _join_url_path(base: str, child: str) -> str:
 def _entry_name(raw_name: str) -> str:
     """Return the decoded basename for a backend entry name/path/URL."""
     return unquote(PurePosixPath(raw_name.rstrip("/")).name)
+
+
+def _darwin_fskit_mountpoint(mountpoint: Path) -> str:
+    """Return a mountpoint path acceptable to macFUSE's FSKit backend."""
+    resolved = mountpoint.resolve()
+    resolved_posix = resolved.as_posix()
+    if resolved_posix.startswith("/Volumes/") or resolved_posix == "/Volumes":
+        return str(PurePosixPath(resolved_posix))
+
+    # FSKit only mounts below /Volumes. "Macintosh HD" is a built-in symlink to
+    # "/", so this keeps the user-visible path unchanged while satisfying FSKit.
+    return str(PurePosixPath("/Volumes/Macintosh HD") / resolved_posix.lstrip("/"))
 
 
 def _stat_dict(st: Any, *, inode: int) -> dict[str, Any]:
@@ -264,13 +277,19 @@ def mount_foreground(source_url: str, mountpoint: Path, client: GfalClient) -> N
 
     operations = ReadOnlyFuseOperations(source_url, client)
     fsname = f"gfal:{urlparse(fs.normalize_url(source_url)).scheme or 'file'}"
-    FUSE(  # type: ignore[misc]
-        operations,
-        str(mountpoint),
-        foreground=True,
-        nothreads=True,
-        ro=True,
-        default_permissions=True,
-        fsname=fsname,
-        subtype="gfal",
-    )
+    fuse_mountpoint = mountpoint
+    fuse_kwargs = {
+        "foreground": True,
+        "nothreads": True,
+        "ro": True,
+        "fsname": fsname,
+    }
+    if sys.platform == "linux":
+        fuse_kwargs["default_permissions"] = True
+        fuse_kwargs["subtype"] = "gfal"
+    elif sys.platform == "darwin":
+        fuse_kwargs["backend"] = "fskit"
+        fuse_kwargs["volname"] = "gfal"
+        fuse_mountpoint = _darwin_fskit_mountpoint(mountpoint)
+
+    FUSE(operations, str(fuse_mountpoint), **fuse_kwargs)  # type: ignore[misc]

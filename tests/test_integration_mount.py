@@ -1,4 +1,4 @@
-"""Linux FUSE integration tests for ``gfal mount``."""
+"""FUSE integration tests for ``gfal mount``."""
 
 import errno
 import hashlib
@@ -30,7 +30,7 @@ def _tcp_reachable(host: str, port: int, timeout: float = 5.0) -> bool:
 
 @pytest.fixture(scope="module", autouse=True)
 def _require_fuse_support():
-    require_test_prereq(fuse_available(), "Linux FUSE support is not available")
+    require_test_prereq(fuse_available(), "FUSE mount support is not available")
 
 
 class TestLocalMount:
@@ -63,7 +63,7 @@ class TestLocalMount:
         ):
             (mountpoint / "created.txt").write_text("nope\n")
 
-        assert excinfo.value.errno in {errno.EROFS, errno.EACCES}
+        assert excinfo.value.errno in {errno.EROFS, errno.EACCES, errno.ENOSYS}
 
 
 @pytest.mark.integration
