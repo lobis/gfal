@@ -3,6 +3,7 @@
 import errno
 import os
 import stat
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -194,7 +195,8 @@ class TestReadOnlyFuseOperations:
 
         assert mock_fuse.call_args.kwargs["backend"] == "fskit"
         assert mock_fuse.call_args.kwargs["volname"] == "gfal"
-        assert str(mock_fuse.call_args.args[1]).startswith("/Volumes/Macintosh HD/")
+        fuse_path = PurePosixPath(mock_fuse.call_args.args[1])
+        assert fuse_path.parts[:3] == ("/", "Volumes", "Macintosh HD")
 
 
 class TestExecuteMount:

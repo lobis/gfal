@@ -266,15 +266,16 @@ def _unmount_gfal(mountpoint: Path) -> None:
         commands.append([diskutil, "unmount", "force", str(mountpoint)])
 
     for command in commands:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=10,
-        )
-        if result.returncode == 0:
-            break
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+            if result.returncode == 0:
+                break
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
