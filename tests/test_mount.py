@@ -181,6 +181,22 @@ class TestReadOnlyFuseOperations:
 
         assert excinfo.value.errno == errno.EROFS
 
+    def test_darwin_fskit_mountpoint_keeps_existing_volumes_path(self):
+        mountpoint = MagicMock()
+        mountpoint.resolve.return_value = PurePosixPath("/Volumes/demo")
+
+        result = mount_module._darwin_fskit_mountpoint(mountpoint)
+
+        assert result == "/Volumes/demo"
+
+    def test_darwin_fskit_mountpoint_keeps_exact_volumes_root(self):
+        mountpoint = MagicMock()
+        mountpoint.resolve.return_value = PurePosixPath("/Volumes")
+
+        result = mount_module._darwin_fskit_mountpoint(mountpoint)
+
+        assert result == "/Volumes"
+
     def test_mount_foreground_uses_fskit_alias_on_macos(self, tmp_path):
         mountpoint = tmp_path / "mnt"
         mountpoint.mkdir()
