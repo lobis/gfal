@@ -1,5 +1,6 @@
 """Unit tests for the fsspec integration layer (fs.py)."""
 
+import asyncio
 import datetime
 import stat as stat_module
 from pathlib import Path
@@ -14,6 +15,7 @@ from gfal.core.fs import (
     _generic_storage_opts,
     _root_url_to_https,
     _to_timestamp,
+    _verify_get_client,
     isdir,
     normalize_url,
     stat,
@@ -529,6 +531,48 @@ class TestBuildStorageOptionsBearerToken:
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         assert "bearer_token" not in opts
+
+
+# ---------------------------------------------------------------------------
+# fsspec HTTP client factory
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyGetClient:
+    def test_timeout_and_headers_are_forwarded_to_aiohttp(self, monkeypatch):
+        connector_calls = []
+        session_calls = []
+
+        class _FakeConnector:
+            pass
+
+        class _FakeSession:
+            pass
+
+        def _fake_connector(**kwargs):
+            connector_calls.append(kwargs)
+            return _FakeConnector()
+
+        def _fake_session(**kwargs):
+            session_calls.append(kwargs)
+            return _FakeSession()
+
+        monkeypatch.setattr("aiohttp.TCPConnector", _fake_connector)
+        monkeypatch.setattr("aiohttp.ClientSession", _fake_session)
+
+        session = asyncio.run(
+            _verify_get_client(
+                verify=True,
+                timeout=42,
+                headers={"Authorization": "Bearer abc"},
+                ipv4_only=True,
+            )
+        )
+
+        assert isinstance(session, _FakeSession)
+        assert connector_calls[0]["family"] != 0
+        assert session_calls[0]["headers"] == {"Authorization": "Bearer abc"}
+        assert session_calls[0]["timeout"].total == 42
 
 
 # ---------------------------------------------------------------------------

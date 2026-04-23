@@ -349,6 +349,20 @@ class TestHttpFsOpts:
         assert get_client.keywords["ipv4_only"] is False
         assert get_client.keywords["ipv6_only"] is True
 
+    def test_http_fs_opts_passes_bearer_header_to_http_client(self):
+        opts = _http_fs_opts({
+            "bearer_token": "token-123",
+            "timeout": 9,
+            "anon": True,
+        })
+
+        assert opts["anon"] is True
+        assert "bearer_token" not in opts
+        assert "timeout" not in opts
+        get_client = opts["get_client"]
+        assert get_client.keywords["headers"] == {"Authorization": "Bearer token-123"}
+        assert get_client.keywords["timeout"] == 9
+
 
 class TestSyncAiohttpSession:
     def test_loads_client_cert_chain_into_ssl_context(self, monkeypatch):
@@ -680,6 +694,24 @@ class TestSyncAiohttpSession:
 
         assert session._thread is None
         assert session._loop is None
+
+    def test_ensure_loop_is_shared_across_threads(self):
+        session = _SyncAiohttpSession({"ssl_verify": False, "timeout": 3})
+        ready = threading.Barrier(8)
+        loops = []
+
+        def _worker():
+            ready.wait()
+            loops.append(session._ensure_loop())
+
+        threads = [threading.Thread(target=_worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len({id(loop) for loop in loops}) == 1
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1535,6 +1567,19 @@ class TestWebDAVStreamRead:
             timeout=fs._timeout,
             stream=True,
         )
+
+    def test_open_stream_read_closes_response_on_http_error(self):
+        fs = WebDAVFileSystem()
+        response = MagicMock()
+        response.status_code = 403
+        response.headers = {}
+        response.close = MagicMock()
+        fs._session.request = MagicMock(return_value=response)
+
+        with pytest.raises(PermissionError):
+            fs.open_stream_read("https://example.org/forbidden.bin")
+
+        response.close.assert_called_once()
 
 
 class TestWebDAVChecksumFallback:
