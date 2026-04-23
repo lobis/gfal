@@ -134,6 +134,28 @@ def _find_fusermount() -> Optional[str]:
     return None
 
 
+def _find_umount() -> Optional[str]:
+    """Return the platform unmount helper path, if available."""
+    for candidate in ("umount", "/sbin/umount", "/usr/sbin/umount"):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
+def _find_diskutil() -> Optional[str]:
+    """Return the macOS ``diskutil`` path, if available."""
+    for candidate in ("diskutil", "/usr/sbin/diskutil"):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
 def _find_mountpoint() -> Optional[str]:
     """Return the ``mountpoint`` helper path, if available."""
     for candidate in ("mountpoint", "/bin/mountpoint", "/usr/bin/mountpoint"):
@@ -145,14 +167,114 @@ def _find_mountpoint() -> Optional[str]:
     return None
 
 
+def _find_mount_cmd() -> Optional[str]:
+    """Return the platform ``mount`` helper path, if available."""
+    for candidate in ("mount", "/sbin/mount", "/usr/sbin/mount"):
+        path = shutil.which(candidate) or (
+            candidate if Path(candidate).is_file() else None
+        )
+        if path:
+            return path
+    return None
+
+
 def fuse_available() -> bool:
     """Return True when the host appears capable of running FUSE mount tests."""
-    if sys.platform != "linux":
+    if sys.platform == "linux":
+        if _find_fusermount() is None:
+            return False
+        dev_fuse = Path("/dev/fuse")
+        return dev_fuse.exists() and os.access(dev_fuse, os.R_OK | os.W_OK)
+
+    if sys.platform == "darwin":
+        return Path(
+            "/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse"
+        ).is_file()
+
+    return False
+
+
+def _mount_contains_path(mountpoint: Path) -> bool:
+    """Return True when the OS mount table contains *mountpoint*."""
+    mount_cmd = _find_mount_cmd()
+    if mount_cmd is None:
         return False
-    if _find_fusermount() is None:
+
+    result = subprocess.run(
+        [mount_cmd],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+    )
+    if result.returncode != 0:
         return False
-    dev_fuse = Path("/dev/fuse")
-    return dev_fuse.exists() and os.access(dev_fuse, os.R_OK | os.W_OK)
+
+    mountpoint_resolved = str(mountpoint.resolve())
+    for line in result.stdout.splitlines():
+        if (
+            f" on {mountpoint_resolved} (" in line
+            or f" on {mountpoint_resolved} type " in line
+        ):
+            return True
+    return False
+
+
+def _mount_ready(mountpoint: Path, initial_dev: Optional[int]) -> bool:
+    """Return True when the mountpoint looks mounted."""
+    mountpoint_cmd = _find_mountpoint()
+    if mountpoint_cmd is not None:
+        result = subprocess.run(
+            [mountpoint_cmd, "-q", str(mountpoint)],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return True
+
+    if initial_dev is not None:
+        with contextlib.suppress(OSError):
+            if mountpoint.stat().st_dev != initial_dev:
+                return True
+
+    if sys.platform == "linux":
+        mountinfo = Path("/proc/self/mountinfo")
+        mountpoint_resolved = str(mountpoint.resolve())
+        if mountinfo.exists():
+            return any(
+                len(parts) > 4 and parts[4] == mountpoint_resolved
+                for parts in (
+                    line.split()
+                    for line in mountinfo.read_text(encoding="utf-8").splitlines()
+                )
+            )
+
+    return _mount_contains_path(mountpoint)
+
+
+def _unmount_gfal(mountpoint: Path) -> None:
+    """Best-effort unmount helper for Linux and macOS test cleanup."""
+    commands = []
+    fusermount = _find_fusermount()
+    if fusermount is not None:
+        commands.append([fusermount, "-u", str(mountpoint)])
+    umount = _find_umount()
+    if umount is not None:
+        commands.append([umount, str(mountpoint)])
+    diskutil = _find_diskutil()
+    if diskutil is not None:
+        commands.append([diskutil, "unmount", "force", str(mountpoint)])
+
+    for command in commands:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        if result.returncode == 0:
+            break
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
@@ -331,6 +453,7 @@ def mounted_gfal(
     if env is not None:
         subprocess_env = {**subprocess_env, **env}
 
+    mountpoint_path = Path(mountpoint)
     proc = subprocess.Popen(
         [sys.executable, "-c", script, str(source), str(mountpoint)],
         stdout=subprocess.PIPE,
@@ -342,8 +465,6 @@ def mounted_gfal(
 
     deadline = time.monotonic() + timeout
     ready = False
-    mountpoint_cmd = _find_mountpoint()
-    mountpoint_path = Path(mountpoint)
     initial_dev = None
     with contextlib.suppress(OSError):
         initial_dev = mountpoint_path.stat().st_dev
@@ -352,28 +473,7 @@ def mounted_gfal(
         if proc.poll() is not None:
             break
         try:
-            if mountpoint_cmd is not None:
-                result = subprocess.run(
-                    [mountpoint_cmd, "-q", str(mountpoint)],
-                    capture_output=True,
-                    timeout=5,
-                )
-                ready = result.returncode == 0
-            else:
-                mountinfo = Path("/proc/self/mountinfo")
-                mountpoint_resolved = str(mountpoint_path.resolve())
-                if mountinfo.exists():
-                    ready = any(
-                        len(parts) > 4 and parts[4] == mountpoint_resolved
-                        for parts in (
-                            line.split()
-                            for line in mountinfo.read_text(
-                                encoding="utf-8"
-                            ).splitlines()
-                        )
-                    )
-                elif initial_dev is not None:
-                    ready = mountpoint_path.stat().st_dev != initial_dev
+            ready = _mount_ready(mountpoint_path, initial_dev)
             if ready:
                 break
         except (OSError, subprocess.TimeoutExpired):
@@ -398,14 +498,7 @@ def mounted_gfal(
             )
         yield proc
     finally:
-        fusermount = _find_fusermount()
-        if fusermount is not None:
-            subprocess.run(
-                [fusermount, "-u", str(mountpoint)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
+        _unmount_gfal(mountpoint_path.resolve())
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=5)
         if proc.poll() is None:

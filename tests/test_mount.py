@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gfal.cli.mount import CommandMount
+from gfal.core import mount as mount_module
 from gfal.core.mount import FuseOSError, ReadOnlyFuseOperations
 
 
@@ -53,6 +54,22 @@ def _default_params(**kwargs):
 
 
 class TestReadOnlyFuseOperations:
+    def test_ensure_mount_supported_allows_macos(self):
+        with (
+            patch.object(mount_module.sys, "platform", "darwin"),
+            patch.object(mount_module, "FUSE", object()),
+        ):
+            mount_module.ensure_mount_supported()
+
+    def test_ensure_mount_supported_rejects_unsupported_platform(self):
+        with (
+            patch.object(mount_module.sys, "platform", "win32"),
+            pytest.raises(OSError) as excinfo,
+        ):
+            mount_module.ensure_mount_supported()
+
+        assert excinfo.value.errno == errno.EOPNOTSUPP
+
     def test_url_for_path_quotes_segments(self):
         client = MagicMock()
         client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
@@ -162,6 +179,22 @@ class TestReadOnlyFuseOperations:
             ops.access("/", 2)
 
         assert excinfo.value.errno == errno.EROFS
+
+    def test_mount_foreground_uses_fskit_alias_on_macos(self, tmp_path):
+        mountpoint = tmp_path / "mnt"
+        mountpoint.mkdir()
+        client = MagicMock()
+        client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
+
+        with (
+            patch.object(mount_module.sys, "platform", "darwin"),
+            patch.object(mount_module, "FUSE") as mock_fuse,
+        ):
+            mount_module.mount_foreground("file:///virtual/source", mountpoint, client)
+
+        assert mock_fuse.call_args.kwargs["backend"] == "fskit"
+        assert mock_fuse.call_args.kwargs["volname"] == "gfal"
+        assert str(mock_fuse.call_args.args[1]).startswith("/Volumes/Macintosh HD/")
 
 
 class TestExecuteMount:

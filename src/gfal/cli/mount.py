@@ -1,4 +1,4 @@
-"""Linux-only read-only FUSE mount command."""
+"""Read-only FUSE mount command."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class CommandMount(base.CommandBase):
         help="local directory where the filesystem will be mounted",
     )
     def execute_mount(self):
-        """Mount a directory read-only via FUSE (Linux only)."""
+        """Mount a directory read-only via FUSE (Linux and macOS)."""
         client = GfalClient(**base.build_client_kwargs(self.params))
         mount_foreground(
             self.params.source,
