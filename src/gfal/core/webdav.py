@@ -247,6 +247,7 @@ class _SyncAiohttpSession:
             self._ssl_context.load_cert_chain(self._cert, self._key or self._cert)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._loop_lock = threading.Lock()
         self._close_lock = threading.Lock()
         self._closed = False
 
@@ -262,41 +263,46 @@ class _SyncAiohttpSession:
             raise RuntimeError("Session is closed")
         if self._loop is not None:
             return self._loop
+        with self._loop_lock:
+            if self._closed:
+                raise RuntimeError("Session is closed")
+            if self._loop is not None:
+                return self._loop
 
-        ready = threading.Event()
+            ready = threading.Event()
 
-        def _runner() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.set_exception_handler(
-                lambda current_loop, context: (
-                    None
-                    if _should_suppress_loop_exception(context)
-                    else current_loop.default_exception_handler(context)
+            def _runner() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.set_exception_handler(
+                    lambda current_loop, context: (
+                        None
+                        if _should_suppress_loop_exception(context)
+                        else current_loop.default_exception_handler(context)
+                    )
                 )
-            )
-            self._loop = loop
-            ready.set()
-            try:
-                loop.run_forever()
-            finally:
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-                if pending:
+                self._loop = loop
+                ready.set()
+                try:
+                    loop.run_forever()
+                finally:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        with contextlib.suppress(Exception):
+                            loop.run_until_complete(
+                                asyncio.gather(*pending, return_exceptions=True)
+                            )
                     with contextlib.suppress(Exception):
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                with contextlib.suppress(Exception):
-                    loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.close()
+                        loop.run_until_complete(loop.shutdown_asyncgens())
+                    loop.close()
 
-        self._thread = threading.Thread(target=_runner, daemon=True)
-        self._thread.start()
-        ready.wait()
-        assert self._loop is not None
-        return self._loop
+            self._thread = threading.Thread(target=_runner, daemon=True)
+            self._thread.start()
+            ready.wait()
+            assert self._loop is not None
+            return self._loop
 
     def _run(self, coro):
         loop = self._ensure_loop()
@@ -709,15 +715,30 @@ def _http_fs_opts(storage_options):
 
     from gfal.core.fs import _no_verify_get_client, _verify_get_client
 
-    opts = {k: v for k, v in storage_options.items() if k != "ssl_verify"}
+    opts = {
+        k: v
+        for k, v in storage_options.items()
+        if k
+        not in {
+            "ssl_verify",
+            "client_cert",
+            "client_key",
+            "ipv4_only",
+            "ipv6_only",
+            "timeout",
+            "bearer_token",
+        }
+    }
     verify = storage_options.get("ssl_verify", True)
     ipv4_only = storage_options.get("ipv4_only", False)
     ipv6_only = storage_options.get("ipv6_only", False)
     timeout = storage_options.get("timeout")
-    # Pull client cert out of opts: we load it directly into the aiohttp SSL
-    # context via get_client so it doesn't conflict with our custom SSL context.
-    client_cert = opts.pop("client_cert", None)
-    client_key = opts.pop("client_key", None)
+    client_cert = storage_options.get("client_cert")
+    client_key = storage_options.get("client_key")
+    headers = None
+    bearer_token = storage_options.get("bearer_token")
+    if bearer_token:
+        headers = {"Authorization": f"Bearer {bearer_token}"}
 
     if not verify:
         opts["get_client"] = partial(
@@ -727,6 +748,7 @@ def _http_fs_opts(storage_options):
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
             timeout=timeout,
+            headers=headers,
         )
     else:
         opts["get_client"] = partial(
@@ -737,6 +759,7 @@ def _http_fs_opts(storage_options):
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
             timeout=timeout,
+            headers=headers,
         )
     return opts
 
@@ -1249,7 +1272,11 @@ class WebDAVFileSystem(AbstractFileSystem):
             timeout=self._timeout,
             stream=True,
         )
-        _raise_for_status(response, path)
+        try:
+            _raise_for_status(response, path)
+        except Exception:
+            response.close()
+            raise
         return _StreamingRequestsGetFile(response)
 
     def open_stream_write(self, path: str, *, content_length: int | None = None):

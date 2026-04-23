@@ -79,6 +79,8 @@ async def _verify_get_client(
     client_key=None,
     ipv4_only=False,
     ipv6_only=False,
+    timeout=None,
+    headers=None,
     **kwargs,
 ):
     """aiohttp client factory for fsspec with system trust (truststore) and IP family support."""
@@ -90,7 +92,14 @@ async def _verify_get_client(
     if client_cert:
         ctx.load_cert_chain(client_cert, client_key or client_cert)
     family = socket.AF_INET if ipv4_only else (socket.AF_INET6 if ipv6_only else 0)
-    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx, family=family))
+    session_kwargs: dict[str, Any] = {
+        "connector": aiohttp.TCPConnector(ssl=ctx, family=family),
+    }
+    if timeout is not None:
+        session_kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout)
+    if headers:
+        session_kwargs["headers"] = headers
+    return aiohttp.ClientSession(**session_kwargs)
 
 
 # ---------------------------------------------------------------------------
