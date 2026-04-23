@@ -74,15 +74,16 @@ def _entry_name(raw_name: str) -> str:
     return unquote(PurePosixPath(raw_name.rstrip("/")).name)
 
 
-def _darwin_fskit_mountpoint(mountpoint: Path) -> Path:
+def _darwin_fskit_mountpoint(mountpoint: Path) -> str:
     """Return a mountpoint path acceptable to macFUSE's FSKit backend."""
     resolved = mountpoint.resolve()
-    if resolved.is_relative_to("/Volumes"):
-        return resolved
+    resolved_posix = resolved.as_posix()
+    if resolved_posix.startswith("/Volumes/") or resolved_posix == "/Volumes":
+        return str(PurePosixPath(resolved_posix))
 
     # FSKit only mounts below /Volumes. "Macintosh HD" is a built-in symlink to
     # "/", so this keeps the user-visible path unchanged while satisfying FSKit.
-    return Path("/Volumes/Macintosh HD") / resolved.relative_to("/")
+    return str(PurePosixPath("/Volumes/Macintosh HD") / resolved_posix.lstrip("/"))
 
 
 def _stat_dict(st: Any, *, inode: int) -> dict[str, Any]:
