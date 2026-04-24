@@ -1,4 +1,3 @@
-import builtins
 import socket
 from unittest.mock import ANY, MagicMock, patch
 
@@ -132,59 +131,19 @@ async def test_aiohttp_connector_family():
         mock_connector.assert_called_with(ssl=ANY, family=0)
 
 
-def test_urllib3_patching():
-    """Verify that CommandBase.execute patches urllib3 globally."""
-
-    class DummyCommand(CommandBase):
-        def execute_test(self):
-            return 0
-
-    cmd = DummyCommand()
-    cmd.parse(cmd.execute_test, ["gfal-test", "-4"])
-
-    import urllib3.util.connection as nsock
-
-    # Record the original function
-    original_gai = nsock.allowed_gai_family
-
-    try:
-        # We need to mock the Thread behavior because execute() starts a thread.
-        # For testing, we just want to see if the patch is applied.
-        with patch("gfal.cli.base.Thread"):
-            cmd.execute(cmd.execute_test)
-            # The lambda should have been assigned
-            assert nsock.allowed_gai_family() == socket.AF_INET
-    finally:
-        # Restore
-        nsock.allowed_gai_family = original_gai
-
-    # Test IPv6
-    cmd.parse(cmd.execute_test, ["gfal-test", "-6"])
-    try:
-        with patch("gfal.cli.base.Thread"):
-            cmd.execute(cmd.execute_test)
-            assert nsock.allowed_gai_family() == socket.AF_INET6
-    finally:
-        nsock.allowed_gai_family = original_gai
-
-
-def test_urllib3_patching_is_optional():
-    """The CLI should not require urllib3 just to accept -4/-6."""
+def test_execute_accepts_ipv_flags_without_global_patch():
+    """The CLI accepts -4/-6 without requiring any urllib3 hook."""
 
     class DummyCommand(CommandBase):
         def execute_test(self, _command):
             return 0
 
     DummyCommand.execute_test.is_interactive = True
+
     cmd = DummyCommand()
     cmd.parse(cmd.execute_test, ["gfal-test", "-4"])
+    assert cmd.execute(cmd.execute_test) == 0
 
-    original_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name.startswith("urllib3"):
-            raise ImportError("urllib3 intentionally unavailable")
-        return original_import(name, *args, **kwargs)
-
-    with patch("builtins.__import__", side_effect=fake_import):
-        assert cmd.execute(cmd.execute_test) == 0
+    cmd = DummyCommand()
+    cmd.parse(cmd.execute_test, ["gfal-test", "-6"])
+    assert cmd.execute(cmd.execute_test) == 0

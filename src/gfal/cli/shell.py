@@ -223,14 +223,6 @@ _gfal_completion_setup;
 def main(argv=None):
     _ensure_xrootd_dylib_path()
 
-    # Native SSL support (macOS/Windows) via truststore
-    try:
-        import truststore
-
-        truststore.inject_into_urllib3()
-    except (ImportError, AttributeError):
-        pass
-
     if argv is None:
         argv = sys.argv
 
