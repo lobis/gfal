@@ -1,3 +1,4 @@
+import builtins
 import socket
 from unittest.mock import ANY, MagicMock, patch
 
@@ -165,3 +166,25 @@ def test_urllib3_patching():
             assert nsock.allowed_gai_family() == socket.AF_INET6
     finally:
         nsock.allowed_gai_family = original_gai
+
+
+def test_urllib3_patching_is_optional():
+    """The CLI should not require urllib3 just to accept -4/-6."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self, _command):
+            return 0
+
+    DummyCommand.execute_test.is_interactive = True
+    cmd = DummyCommand()
+    cmd.parse(cmd.execute_test, ["gfal-test", "-4"])
+
+    original_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("urllib3"):
+            raise ImportError("urllib3 intentionally unavailable")
+        return original_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        assert cmd.execute(cmd.execute_test) == 0

@@ -20,7 +20,6 @@ BuildRequires: python3-pip
 Requires: python3-aiohttp
 Requires: python3-rich
 Requires: python3-click
-Requires: python3-urllib3
 Requires: bash-completion
 # python3-fsspec is available in EPEL 10+ but not EPEL 9 — handled conditionally below.
 %if 0%{?rhel} >= 10

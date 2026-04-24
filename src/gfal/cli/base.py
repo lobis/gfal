@@ -1113,10 +1113,11 @@ class CommandBase:
         if ipv4_only or ipv6_only:
             import socket
 
-            import urllib3.util.connection as nsock
+            with contextlib.suppress(ImportError):
+                import urllib3.util.connection as nsock
 
-            family = socket.AF_INET if ipv4_only else socket.AF_INET6
-            nsock.allowed_gai_family = lambda: family
+                family = socket.AF_INET if ipv4_only else socket.AF_INET6
+                nsock.allowed_gai_family = lambda: family
 
         # Apply cert/key to environment (XRootD reads X509_* env vars)
         if self.params.cert:
