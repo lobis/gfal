@@ -62,7 +62,7 @@ S3 and SSH support are intentionally **not** included in the base conda package 
 
 Because `gfal` is built on `fsspec`, many other `fsspec`-supported protocols can also work with the same CLI and Python API once their backend library is installed. The project currently tests HTTP/HTTPS, XRootD, S3, and SSH/SFTP most explicitly, but adding support for other `fsspec` backends is generally straightforward when needed.
 
-See the [installation docs](https://lobis.github.io/gfal/installation/) for RPM packages, native repositories, and CERN CA certificate setup.
+See the [installation docs](https://lobis.github.io/gfal/installation/) for RPM packages, native repositories, and CERN HTTPS options. On systems that do not trust CERN CAs by default, either install the CERN Root CA for verified `https://` access, use matching `root://` URLs where possible, or pass `--no-verify` for an insecure smoke test.
 
 ## Python library
 
@@ -312,6 +312,10 @@ Other `fsspec` protocols such as `gs://`, `abfs://`, or similar backends may als
 | `--key KEY` | Path to client key (PEM) |
 | `--no-verify` | Disable TLS certificate verification |
 | `--log-file FILE` | Write log output to a file |
+
+For CERN HTTPS endpoints that fail certificate verification, install the CERN
+Root CA for normal verified use, use `root://` where possible to avoid HTTPS,
+or pass `--no-verify` only for an explicit insecure test.
 
 ### `gfal ls`
 

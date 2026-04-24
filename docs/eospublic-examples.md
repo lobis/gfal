@@ -43,6 +43,12 @@ If you installed only `pip install gfal`, use the `https://` examples first.
 `root://` requires XRootD support in the environment, for example via
 `pip install "gfal[xrootd]"` or `conda install -c conda-forge xrootd`.
 
+If HTTPS fails with an SSL certificate verification error on a minimal or older
+system, either install the CERN Root CA as described in
+[Installation](installation.md#cern-https-and-cern-ca-certificates), use the
+matching `root://` URL where possible, or add `--no-verify` for a quick
+insecure smoke test.
+
 ## Quick Smoke Tests
 
 Show metadata for the public file:
@@ -104,8 +110,11 @@ You should see entries including:
 Both schemes point at the same public EOS content, but they are useful for
 slightly different first steps:
 
-- Use `https://` for the easiest no-credentials demos: `stat`, `cat`, `sum`, and `cp` to a local file.
+- Use `https://` for no-credentials demos such as `stat`, `cat`, `sum`, and
+  `cp` to a local file when the CERN CA is trusted locally.
 - Use `root://` when you want XRootD-native access or directory listing examples.
+- Use `--no-verify` with HTTPS only as an explicit insecure workaround for
+  local testing when the CERN CA is not installed.
 - Remember that absolute XRootD paths need a double slash after the host:
   `root://eospublic.cern.ch//eos/...`
 
