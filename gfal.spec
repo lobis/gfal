@@ -25,10 +25,9 @@ Requires: bash-completion
 %if 0%{?rhel} >= 10
 Requires: python3-fsspec
 %endif
-# Note: python3-rich-click and python3-truststore are intentionally not
-#       required here. Both are optional runtime enhancements in the Python
-#       package, and gfal falls back to plain click / standard SSL behavior
-#       when they are not installed.
+# Note: python3-rich-click is intentionally not required here. It is an
+#       optional runtime enhancement in the Python package, and gfal falls
+#       back to plain click when it is not installed.
 # Note: the fsspec-xrootd adapter is bundled below to match the base Python
 #       package metadata. Full XRootD support still requires separate xrootd
 #       Python bindings, which are not bundled here.
