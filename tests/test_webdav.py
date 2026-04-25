@@ -492,6 +492,7 @@ class TestSyncAiohttpSession:
             {
                 "ssl": session._ssl_context,
                 "enable_cleanup_closed": True,
+                "family": 0,
                 "ssl_shutdown_timeout": 0,
             }
         ]
@@ -516,11 +517,12 @@ class TestSyncAiohttpSession:
         class _FakeSession:
             pass
 
-        def _fake_connector(*, ssl, enable_cleanup_closed):
+        def _fake_connector(*, ssl, enable_cleanup_closed, family):
             nonlocal connector_instance
             connector_calls.append({
                 "ssl": ssl,
                 "enable_cleanup_closed": enable_cleanup_closed,
+                "family": family,
             })
             connector_instance = _FakeConnector()
             return connector_instance
@@ -544,12 +546,63 @@ class TestSyncAiohttpSession:
             {
                 "ssl": session._ssl_context,
                 "enable_cleanup_closed": True,
+                "family": 0,
             }
         ]
         assert session_calls == [
             {
                 "connector": connector_instance,
                 "timeout": client_timeout,
+            }
+        ]
+
+    def test_make_connector_uses_ipv4_family(self, monkeypatch):
+        connector_calls = []
+
+        class _FakeConnector:
+            pass
+
+        def _fake_connector(**kwargs):
+            connector_calls.append(kwargs)
+            return _FakeConnector()
+
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "ipv4_only": True})
+        created = session._make_connector()
+
+        assert isinstance(created, _FakeConnector)
+        assert connector_calls == [
+            {
+                "ssl": session._ssl_context,
+                "enable_cleanup_closed": True,
+                "family": socket.AF_INET,
+                "ssl_shutdown_timeout": 0,
+            }
+        ]
+
+    def test_make_connector_uses_ipv6_family(self, monkeypatch):
+        connector_calls = []
+
+        class _FakeConnector:
+            pass
+
+        def _fake_connector(**kwargs):
+            connector_calls.append(kwargs)
+            return _FakeConnector()
+
+        monkeypatch.setattr("gfal.core.webdav.aiohttp.TCPConnector", _fake_connector)
+
+        session = _SyncAiohttpSession({"ssl_verify": False, "ipv6_only": True})
+        created = session._make_connector()
+
+        assert isinstance(created, _FakeConnector)
+        assert connector_calls == [
+            {
+                "ssl": session._ssl_context,
+                "enable_cleanup_closed": True,
+                "family": socket.AF_INET6,
+                "ssl_shutdown_timeout": 0,
             }
         ]
 

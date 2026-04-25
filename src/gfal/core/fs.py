@@ -40,11 +40,7 @@ def _fix_xrootd_plugin_path():
 
 
 def get_ssl_context(verify=True):
-    """Return an ssl.SSLContext.
-
-    Uses the `truststore` library (if available) to leverage the system
-    trust store on macOS and Windows for verified connections.
-    """
+    """Return an ssl.SSLContext."""
     import ssl
 
     if not verify:
@@ -52,12 +48,7 @@ def get_ssl_context(verify=True):
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     else:
-        try:
-            import truststore
-
-            ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        except (ImportError, AttributeError):
-            ctx = ssl.create_default_context()
+        ctx = ssl.create_default_context()
 
     # Python 3.12 raises SSLEOFError when a server closes the TLS connection
     # without sending close_notify (EOS does this after large PUT uploads).
@@ -83,7 +74,7 @@ async def _verify_get_client(
     headers=None,
     **kwargs,
 ):
-    """aiohttp client factory for fsspec with system trust (truststore) and IP family support."""
+    """aiohttp client factory for fsspec with SSL verification and IP family support."""
     import socket
 
     import aiohttp

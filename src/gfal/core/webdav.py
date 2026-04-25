@@ -19,6 +19,7 @@ import inspect
 import io
 import queue
 import re
+import socket
 import ssl
 import stat as stat_module
 import tempfile
@@ -243,6 +244,8 @@ class _SyncAiohttpSession:
         self._timeout = storage_options.get("timeout")
         self._cert = storage_options.get("client_cert")
         self._key = storage_options.get("client_key")
+        self._ipv4_only = storage_options.get("ipv4_only", False)
+        self._ipv6_only = storage_options.get("ipv6_only", False)
         if self._cert:
             self._ssl_context.load_cert_chain(self._cert, self._key or self._cert)
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -322,9 +325,17 @@ class _SyncAiohttpSession:
         return arg_name in signature.parameters
 
     def _make_connector(self) -> aiohttp.TCPConnector:
+        family = (
+            socket.AF_INET
+            if self._ipv4_only
+            else socket.AF_INET6
+            if self._ipv6_only
+            else 0
+        )
         connector_kwargs: dict[str, Any] = {
             "ssl": self._ssl_context,
             "enable_cleanup_closed": True,
+            "family": family,
         }
         if self._supports_kwarg(aiohttp.TCPConnector, "ssl_shutdown_timeout"):
             connector_kwargs["ssl_shutdown_timeout"] = 0

@@ -109,9 +109,36 @@ This RPM has the same support profile as the repository package: the lightweight
 XRootD adapter is bundled, while the actual XRootD client bindings remain
 external.
 
-## CERN CA Certificates
+## CERN HTTPS and CERN CA Certificates
 
-To access CERN resources via HTTPS (like `eospublic.cern.ch:8444`) without the `--no-verify` flag, you must install the CERN Root CA 2 certificate.
+Many CERN HTTPS endpoints are not signed by a CA that is present in every
+minimal OS or Python installation. If you see an SSL certificate verification
+error for hosts such as `eospublic.cern.ch` or `eospilot.cern.ch`, choose one
+of these approaches:
+
+- Prefer `root://...` URLs when HTTPS is not required. This avoids HTTPS
+  certificate validation entirely and uses XRootD instead, for example:
+
+  ```bash
+  gfal stat root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
+  ```
+
+  XRootD support requires the XRootD Python bindings, for example
+  `pip install "gfal[xrootd]"` or `conda install -c conda-forge xrootd`.
+
+- For quick tests against trusted CERN endpoints, pass `--no-verify` to disable
+  TLS certificate verification:
+
+  ```bash
+  gfal stat --no-verify https://eospublic.cern.ch/eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
+  ```
+
+  This is intentionally insecure: it confirms the connection can be made, but
+  it does not verify the server identity.
+
+- For normal verified HTTPS usage, install the CERN Root CA 2 certificate into
+  the system trust store. After this, plain `https://...` commands should work
+  without `--no-verify`.
 
 ### Linux (RHEL / AlmaLinux / Fedora)
 

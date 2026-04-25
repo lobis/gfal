@@ -1105,19 +1105,6 @@ class CommandBase:
                 self._print_error(e)
 
     def execute(self, func):
-        # Forced IP family (IPv4/v6)
-        # This affects urllib3-based transports globally for the duration
-        # of the command.
-        ipv4_only = getattr(self.params, "ipv4_only", False)
-        ipv6_only = getattr(self.params, "ipv6_only", False)
-        if ipv4_only or ipv6_only:
-            import socket
-
-            import urllib3.util.connection as nsock
-
-            family = socket.AF_INET if ipv4_only else socket.AF_INET6
-            nsock.allowed_gai_family = lambda: family
-
         # Apply cert/key to environment (XRootD reads X509_* env vars)
         if self.params.cert:
             key = self.params.key or self.params.cert
