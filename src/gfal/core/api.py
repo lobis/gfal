@@ -1295,7 +1295,7 @@ class AsyncGfalClient:
 
     @staticmethod
     def _redact_authz(message: str) -> str:
-        return re.sub(r"([?&]authz=)[^\s'\"),]+", r"\1<redacted>", message)
+        return re.sub(r"([?&]authz=)[^\s'\"),&#]+", r"\1<redacted>", message)
 
     def _map_error(self, e: Exception, url: str) -> GfalError:
         if isinstance(e, GfalError):

@@ -558,6 +558,18 @@ class TestGfalClientMapError:
         assert isinstance(result, GfalError)
         assert "(Exception)" in str(result)
 
+    def test_authz_redaction_preserves_other_query_params(self):
+        message = (
+            "failed root://eospilot.cern.ch//eos/file?"
+            "authz=zteos64:abc&eos.app=gfal#frag"
+        )
+
+        result = self.client._map_error(Exception(message), "file:///test")
+
+        assert "authz=<redacted>" in str(result)
+        assert "eos.app=gfal#frag" in str(result)
+        assert "zteos64:abc" not in str(result)
+
     def test_generic_exception_with_errno(self):
         e = OSError(errno.EACCES, "permission denied")
         result = self.client._map_error(e, "file:///test")
