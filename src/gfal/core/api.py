@@ -52,7 +52,6 @@ class ClientConfig:
     ipv4_only: bool = False
     ipv6_only: bool = False
     authz_token: str | None = None
-    authz_token_file: str | None = None
     app: Optional[str] = None
 
 
@@ -208,14 +207,11 @@ class AsyncGfalClient:
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
-        authz_token_file: str | None = None,
+        authz_token: str | None = None,
         config: ClientConfig | None = None,
         app: str = "python3-gfal-async",
     ):
         if config is None:
-            authz_token = (
-                fs.read_authz_token_file(authz_token_file) if authz_token_file else None
-            )
             config = ClientConfig(
                 cert=cert,
                 key=key or cert,
@@ -224,20 +220,7 @@ class AsyncGfalClient:
                 ipv4_only=ipv4_only,
                 ipv6_only=ipv6_only,
                 authz_token=authz_token,
-                authz_token_file=authz_token_file,
                 app=app,
-            )
-        elif config.authz_token_file and not config.authz_token:
-            config = ClientConfig(
-                cert=config.cert,
-                key=config.key,
-                timeout=config.timeout,
-                ssl_verify=config.ssl_verify,
-                ipv4_only=config.ipv4_only,
-                ipv6_only=config.ipv6_only,
-                authz_token=fs.read_authz_token_file(config.authz_token_file),
-                authz_token_file=config.authz_token_file,
-                app=config.app,
             )
         self.config = config
 
@@ -250,7 +233,6 @@ class AsyncGfalClient:
         self.ipv4_only = config.ipv4_only
         self.ipv6_only = config.ipv6_only
         self.authz_token = config.authz_token
-        self.authz_token_file = config.authz_token_file
         self.app = config.app
 
     @property
@@ -268,13 +250,20 @@ class AsyncGfalClient:
             )
         )
 
+    def _authz_token(self) -> str | None:
+        return (
+            self.authz_token
+            or os.environ.get("EOSAUTHZ")
+            or os.environ.get("GFAL_AUTHZ_TOKEN")
+        )
+
     def _url(self, url: str) -> str:
         """Return *url* with EOS query parameters injected when applicable."""
         if not self.app or url == "-":
             with_app = url
         else:
             with_app = eos_app_url(url, self.app) or url
-        return fs.eos_authz_url(with_app, self.authz_token) or with_app
+        return fs.eos_authz_url(with_app, self._authz_token()) or with_app
 
     def _copy_url(self, url: str) -> str:
         """Return the transfer URL used by copy operations.
@@ -287,7 +276,7 @@ class AsyncGfalClient:
         """
         normalized = fs.normalize_url(url)
         if urlparse(normalized).scheme.lower() in {"http", "https"}:
-            return fs.eos_authz_url(normalized, self.authz_token) or normalized
+            return fs.eos_authz_url(normalized, self._authz_token()) or normalized
         return self._url(url)
 
     @staticmethod
@@ -1394,7 +1383,7 @@ class GfalClient:
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
-        authz_token_file: str | None = None,
+        authz_token: str | None = None,
         config: ClientConfig | None = None,
         app: str = "python3-gfal-sync",
     ):
@@ -1405,7 +1394,7 @@ class GfalClient:
             ssl_verify=ssl_verify,
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
-            authz_token_file=authz_token_file,
+            authz_token=authz_token,
             config=config,
             app=app,
         )
@@ -1417,7 +1406,6 @@ class GfalClient:
         self.ipv4_only = self._async_client.ipv4_only
         self.ipv6_only = self._async_client.ipv6_only
         self.authz_token = self._async_client.authz_token
-        self.authz_token_file = self._async_client.authz_token_file
         self.app = self._async_client.app
 
     @property

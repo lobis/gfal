@@ -8,11 +8,9 @@ the EOS Pilot token workflow used by this fsspec-based implementation.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
 from gfal.cli import base  # noqa: E402
@@ -59,16 +57,6 @@ def _derive_ssh_host(ssh_host: str | None, eos_instance: str) -> str:
     if _is_eos_pilot_host(parsed.hostname):
         return "eospilot"
     raise ValueError("--ssh-host is required when --eos-instance is not EOS Pilot")
-
-
-def _write_token_file(path: str, token: str) -> None:
-    output_path = Path(path).expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(token)
-        fh.write("\n")
-    output_path.chmod(0o600)
 
 
 def _extract_token(stdout: str) -> str:
@@ -209,13 +197,6 @@ class CommandTape(base.CommandBase):
         help="request a token for only the exact path",
     )
     @base.arg(
-        "--output-file",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="write the token to PATH with 0600 permissions instead of stdout",
-    )
-    @base.arg(
         "--issuer",
         type=str,
         default=None,
@@ -278,12 +259,8 @@ class CommandTape(base.CommandBase):
                 return proc.returncode or 1
 
             token = _extract_token(proc.stdout)
-            output_file = getattr(self.params, "output_file", None)
-            if output_file:
-                _write_token_file(output_file, token)
-            else:
-                sys.stdout.write(token)
-                sys.stdout.write("\n")
+            sys.stdout.write(token)
+            sys.stdout.write("\n")
             return 0
         except Exception as exc:
             sys.stderr.write(f"{self.prog}: {exc}\n")

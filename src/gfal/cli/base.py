@@ -264,7 +264,7 @@ def build_client_kwargs(params):
         "ssl_verify": getattr(params, "ssl_verify", True),
         "ipv4_only": getattr(params, "ipv4_only", False),
         "ipv6_only": getattr(params, "ipv6_only", False),
-        "authz_token_file": getattr(params, "authz_token_file", None),
+        "authz_token": getattr(params, "authz_token", None),
         "app": "python3-gfal-cli",
     }
 
@@ -486,7 +486,7 @@ _COMMON_GENERAL_OPTS = [
     "--timeout",
     "--log-file",
 ]
-_COMMON_AUTH_OPTS = ["--cert", "--key", "--authz-token-file", "--no-verify"]
+_COMMON_AUTH_OPTS = ["--cert", "--key", "--authz-token", "--no-verify"]
 _COMMON_COMPAT_OPTS = ["--definition", "--client-info", "--ipv4", "--ipv6"]
 
 # Per-command option groups: maps a command suffix (e.g. "cp") to a list of
@@ -719,10 +719,10 @@ def _build_common_params():
             help="User private key (defaults to --cert if omitted).",
         ),
         click.Option(
-            ["--authz-token-file"],
+            ["--authz-token"],
             type=str,
             default=None,
-            help="Read an EOS authz token from this file and append it to EOS URLs.",
+            help="Append this EOS authz token to EOS URLs.",
         ),
         click.Option(
             ["--log-file"],

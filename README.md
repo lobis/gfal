@@ -310,7 +310,7 @@ Other `fsspec` protocols such as `gs://`, `abfs://`, or similar backends may als
 | `-t N` / `--timeout N` | Global timeout in seconds (default: 1800) |
 | `-E CERT` / `--cert CERT` | Path to client certificate (PEM) |
 | `--key KEY` | Path to client key (PEM) |
-| `--authz-token-file FILE` | Read an EOS `authz` token from a file |
+| `--authz-token TOKEN` | Append an EOS `authz` token to EOS URLs |
 | `--no-verify` | Disable TLS certificate verification |
 | `--log-file FILE` | Write log output to a file |
 
@@ -318,9 +318,9 @@ For CERN HTTPS endpoints that fail certificate verification, install the CERN
 Root CA for normal verified use, use `root://` where possible to avoid HTTPS,
 or pass `--no-verify` only for an explicit insecure test.
 
-For EOS Pilot scoped access, use `gfal token --output-file ...` to generate a
-local token file, then pass it to copy/read/mount commands with
-`--authz-token-file`. See [EOS Pilot token workflow](docs/eospilot-token-workflow.md).
+For EOS Pilot scoped access, use `gfal token` to generate a token, then pass it
+with `--authz-token` or export it as `EOSAUTHZ`. See
+[EOS Pilot token workflow](docs/eospilot-token-workflow.md).
 
 ### `gfal ls`
 

@@ -167,8 +167,6 @@ class TestToken:
             "root://eospilot.cern.ch",
             "--tree",
             "--no-tree",
-            "--output-file",
-            str(tmp_path / "token"),
             f.as_uri(),
         )
         assert "unrecognised" not in err
@@ -176,5 +174,5 @@ class TestToken:
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("token", "--help")
         assert rc == 0
-        assert "--authz-token-file" in out
-        assert "--output-file" in out
+        assert "--authz-token" in out
+        assert "--ssh-host" in out

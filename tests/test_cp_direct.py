@@ -49,7 +49,7 @@ def _default_params(**kwargs):
         "verbose": 0,
         "quiet": False,
         "log_file": None,
-        "authz_token_file": None,
+        "authz_token": None,
         "force": False,
         "parent": False,
         "checksum": None,
@@ -925,14 +925,14 @@ class TestCliUsesLibraryCopy:
         assert callable(kwargs["start_callback"])
         assert kwargs["cancel_event"] is cmd._cancel_event
 
-    def test_build_client_forwards_authz_token_file(self):
+    def test_build_client_forwards_authz_token(self):
         cmd = _make_cmd()
-        cmd.params = _default_params(authz_token_file="/tmp/eos.token")
+        cmd.params = _default_params(authz_token="zteos64:abc")
 
         with patch("gfal.cli.copy.GfalClient") as mock_client_cls:
             cmd._build_client()
 
-        assert mock_client_cls.call_args.kwargs["authz_token_file"] == "/tmp/eos.token"
+        assert mock_client_cls.call_args.kwargs["authz_token"] == "zteos64:abc"
 
     def test_do_copy_with_compare_none_delegates_correct_options(self, tmp_path):
         """--compare none should be forwarded as CopyOptions(compare='none')."""

@@ -527,41 +527,69 @@ class TestBuildStorageOptionsBearerToken:
 
 
 class TestEosAuthzToken:
-    def test_authz_token_file_added_to_storage_options(self, tmp_path):
+    def test_authz_token_param_added_to_storage_options(self):
         from types import SimpleNamespace
 
         from gfal.core.fs import build_storage_options
-
-        token_file = tmp_path / "eos.token"
-        token_file.write_text("zteos64:abc\n", encoding="utf-8")
 
         params = SimpleNamespace(
             cert=None,
             key=None,
             ssl_verify=True,
-            authz_token_file=str(token_file),
+            authz_token="zteos64:abc",
         )
         opts = build_storage_options(params)
 
         assert opts["authz_token"] == "zteos64:abc"
         assert "bearer_token" not in opts
 
-    def test_missing_authz_token_file_raises(self, tmp_path):
+    def test_eosauthz_env_added_to_storage_options(self, monkeypatch):
         from types import SimpleNamespace
 
-        import pytest
-
         from gfal.core.fs import build_storage_options
+
+        monkeypatch.setenv("EOSAUTHZ", "zteos64:env")
+        monkeypatch.delenv("GFAL_AUTHZ_TOKEN", raising=False)
 
         params = SimpleNamespace(
             cert=None,
             key=None,
             ssl_verify=True,
-            authz_token_file=str(tmp_path / "missing.token"),
+            authz_token=None,
         )
+        opts = build_storage_options(params)
 
-        with pytest.raises(FileNotFoundError):
-            build_storage_options(params)
+        assert opts["authz_token"] == "zteos64:env"
+
+    def test_authz_cli_param_takes_priority_over_env(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        monkeypatch.setenv("EOSAUTHZ", "zteos64:env")
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token="zteos64:cli",
+        )
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:cli"
+
+    def test_gfal_authz_token_env_fallback(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        monkeypatch.delenv("EOSAUTHZ", raising=False)
+        monkeypatch.setenv("GFAL_AUTHZ_TOKEN", "zteos64:gfal")
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:gfal"
 
     def test_eos_authz_url_for_root_preserves_query(self):
         from gfal.core.fs import eos_authz_url

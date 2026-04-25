@@ -4,7 +4,6 @@ These tests call execute_* methods directly (no subprocess) to improve coverage
 of the lines that currently aren't reached (the return 1 lines).
 """
 
-import stat
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -134,7 +133,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=False,
             no_tree=False,
-            output_file=None,
             issuer=None,
             activities=[],
         )
@@ -153,7 +151,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=False,
             no_tree=False,
-            output_file=None,
             issuer=None,
             activities=[],
         )
@@ -173,7 +170,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=True,
             no_tree=False,
-            output_file=None,
             issuer=None,
             activities=[],
         )
@@ -223,7 +219,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=False,
             no_tree=False,
-            output_file=None,
             issuer=None,
             activities=[],
         )
@@ -256,7 +251,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=False,
             no_tree=True,
-            output_file=None,
             issuer=None,
             activities=[],
         )
@@ -272,8 +266,7 @@ class TestExecuteToken:
         assert rc == 0
         assert "--tree" not in mock_run.call_args.args[0]
 
-    def test_output_file_contains_only_token_and_is_private(self, tmp_path):
-        output_file = tmp_path / "token"
+    def test_stdout_contains_only_first_token_line(self, capsys):
         cmd = _make_cmd("gfal-token")
         cmd.params = _default_params(
             path="/eos/pilot/test/lobisapa/iaxo/",
@@ -283,7 +276,6 @@ class TestExecuteToken:
             eos_instance="root://eospilot.cern.ch",
             tree=True,
             no_tree=False,
-            output_file=str(output_file),
             issuer=None,
             activities=[],
         )
@@ -297,5 +289,4 @@ class TestExecuteToken:
             rc = cmd.execute_token()
 
         assert rc == 0
-        assert output_file.read_text(encoding="utf-8") == "zteos64:PRIVATE\n"
-        assert stat.S_IMODE(output_file.stat().st_mode) == 0o600
+        assert capsys.readouterr().out == "zteos64:PRIVATE\n"

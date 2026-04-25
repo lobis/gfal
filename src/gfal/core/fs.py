@@ -6,7 +6,6 @@ and a stat-like wrapper around fsspec info() dicts.
 import atexit
 import contextlib
 import datetime
-import errno
 import hashlib
 import os
 import stat as stat_module
@@ -15,7 +14,7 @@ import threading
 import warnings
 import zlib
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import fsspec
@@ -121,14 +120,14 @@ def normalize_url(url):
     return url
 
 
-def _is_eos_host(hostname: str | None) -> bool:
+def _is_eos_host(hostname: Optional[str]) -> bool:
     if not hostname:
         return False
     h = hostname.lower()
     return h.startswith("eos") and h.endswith(".cern.ch")
 
 
-def eos_authz_url(url: str, token: str | None) -> str | None:
+def eos_authz_url(url: str, token: Optional[str]) -> Optional[str]:
     """Return *url* with an EOS ``authz`` query parameter added.
 
     The token form is specific to EOS endpoints and is separate from WLCG
@@ -146,21 +145,6 @@ def eos_authz_url(url: str, token: str | None) -> str | None:
     if "authz" not in params:
         params["authz"] = token
     return urlunparse(parsed._replace(query=urlencode(params)))
-
-
-def read_authz_token_file(path: Union[str, os.PathLike[str]]) -> str:
-    token_path = Path(path).expanduser()
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise FileNotFoundError(
-            exc.errno or errno.ENOENT,
-            f"cannot read authz token file: {token_path}",
-            str(token_path),
-        ) from exc
-    if not token:
-        raise ValueError(f"authz token file is empty: {token_path}")
-    return token
 
 
 class RootProtocolFallbackWarning(UserWarning):
@@ -374,9 +358,8 @@ def build_storage_options(params):
     if token:
         opts["bearer_token"] = token
     authz_token = getattr(params, "authz_token", None)
-    authz_token_file = getattr(params, "authz_token_file", None)
-    if authz_token_file and not authz_token:
-        authz_token = read_authz_token_file(authz_token_file)
+    if not authz_token:
+        authz_token = os.environ.get("EOSAUTHZ") or os.environ.get("GFAL_AUTHZ_TOKEN")
     if authz_token:
         opts["authz_token"] = authz_token
     return opts
