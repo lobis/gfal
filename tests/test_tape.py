@@ -1,7 +1,7 @@
-"""Tests for tape stub commands: bringonline, archivepoll, evict, token.
+"""Tests for tape stub commands and EOS token CLI parsing.
 
-All of these require the native gfal2 C library and are not supported in this
-fsspec-based implementation.  Each command must:
+The tape/staging commands require the native gfal2 C library and are not
+supported in this fsspec-based implementation.  Each command must:
   - exit with a non-zero return code (1)
   - print a message to stderr explaining the limitation
   - accept its documented CLI flags without error (backwards compatibility)
@@ -134,7 +134,7 @@ class TestToken:
         f = tmp_path / "file.txt"
         f.write_text("x")
         rc, out, err = run_gfal("token", f.as_uri())
-        assert "not supported" in err.lower() or "gfal2" in err.lower()
+        assert "eos token path" in err.lower() or "unsupported eos token path" in err
 
     def test_write_flag_accepted(self, tmp_path):
         f = tmp_path / "file.txt"
@@ -156,6 +156,25 @@ class TestToken:
         )
         assert "unrecognised" not in err
 
+    def test_eos_token_options_accepted(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal(
+            "token",
+            "--ssh-host",
+            "eospilot",
+            "--eos-instance",
+            "root://eospilot.cern.ch",
+            "--tree",
+            "--no-tree",
+            "--output-file",
+            str(tmp_path / "token"),
+            f.as_uri(),
+        )
+        assert "unrecognised" not in err
+
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("token", "--help")
         assert rc == 0
+        assert "--authz-token-file" in out
+        assert "--output-file" in out

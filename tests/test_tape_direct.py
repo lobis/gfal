@@ -1,10 +1,12 @@
-"""Direct unit tests for tape stub commands (src/gfal/cli/tape.py).
+"""Direct unit tests for tape/token commands (src/gfal/cli/tape.py).
 
 These tests call execute_* methods directly (no subprocess) to improve coverage
 of the lines that currently aren't reached (the return 1 lines).
 """
 
+import stat
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from gfal.cli.tape import CommandTape
 
@@ -120,33 +122,180 @@ class TestExecuteEvict:
 
 
 class TestExecuteToken:
-    def test_returns_one(self, tmp_path):
+    def test_unsupported_non_eos_path_returns_one(self, tmp_path):
         f = tmp_path / "file.txt"
         f.write_text("x")
         cmd = _make_cmd("gfal-token")
         cmd.params = _default_params(
             path=f.as_uri(),
             write=False,
-            validity=None,
+            validity=720,
+            ssh_host=None,
+            eos_instance="root://eospilot.cern.ch",
+            tree=False,
+            no_tree=False,
+            output_file=None,
             issuer=None,
             activities=[],
         )
         rc = cmd.execute_token()
         assert rc == 1
 
-    def test_writes_not_supported_to_stderr(self, tmp_path, capsys):
+    def test_unsupported_non_eos_path_reports_clear_error(self, tmp_path, capsys):
         f = tmp_path / "file.txt"
         f.write_text("x")
         cmd = _make_cmd("gfal-token")
         cmd.params = _default_params(
             path=f.as_uri(),
             write=False,
-            validity=None,
+            validity=720,
+            ssh_host=None,
+            eos_instance="root://eospilot.cern.ch",
+            tree=False,
+            no_tree=False,
+            output_file=None,
             issuer=None,
             activities=[],
         )
         cmd.execute_token()
         captured = capsys.readouterr()
-        assert (
-            "not supported" in captured.err.lower() or "gfal2" in captured.err.lower()
+        assert "eos token path" in captured.err.lower() or (
+            "unsupported eos token path" in captured.err.lower()
         )
+
+    def test_generates_write_tree_token_over_ssh(self, capsys):
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path="root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/",
+            write=True,
+            validity=720,
+            ssh_host="eospilot",
+            eos_instance="root://eospilot.cern.ch",
+            tree=True,
+            no_tree=False,
+            output_file=None,
+            issuer=None,
+            activities=[],
+        )
+
+        with (
+            patch("gfal.cli.tape.time.time", return_value=1_700_000_000),
+            patch("gfal.cli.tape.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = SimpleNamespace(
+                returncode=0,
+                stdout="zteos64:TOKEN\n",
+                stderr="",
+            )
+            rc = cmd.execute_token()
+
+        assert rc == 0
+        assert capsys.readouterr().out == "zteos64:TOKEN\n"
+        mock_run.assert_called_once_with(
+            [
+                "ssh",
+                "eospilot",
+                "eos",
+                "root://eospilot.cern.ch",
+                "token",
+                "--path",
+                "/eos/pilot/test/lobisapa/iaxo/",
+                "--permission",
+                "rwx",
+                "--expires",
+                str(1_700_000_000 + 720 * 60),
+                "--tree",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    def test_default_read_token_uses_rx_and_auto_tree_for_directory(self):
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path="/eos/pilot/test/lobisapa/iaxo/",
+            write=False,
+            validity=60,
+            ssh_host=None,
+            eos_instance="root://eospilot.cern.ch",
+            tree=False,
+            no_tree=False,
+            output_file=None,
+            issuer=None,
+            activities=[],
+        )
+
+        with (
+            patch("gfal.cli.tape.time.time", return_value=10),
+            patch("gfal.cli.tape.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = SimpleNamespace(
+                returncode=0,
+                stdout="zteos64:READ\n",
+                stderr="",
+            )
+            rc = cmd.execute_token()
+
+        assert rc == 0
+        argv = mock_run.call_args.args[0]
+        assert argv[1] == "eospilot"
+        assert argv[argv.index("--permission") + 1] == "rx"
+        assert str(10 + 60 * 60) == argv[argv.index("--expires") + 1]
+        assert "--tree" in argv
+
+    def test_no_tree_suppresses_directory_tree_flag(self):
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path="/eos/pilot/test/lobisapa/iaxo/",
+            write=False,
+            validity=60,
+            ssh_host="eospilot",
+            eos_instance="root://eospilot.cern.ch",
+            tree=False,
+            no_tree=True,
+            output_file=None,
+            issuer=None,
+            activities=[],
+        )
+
+        with patch("gfal.cli.tape.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(
+                returncode=0,
+                stdout="zteos64:READ\n",
+                stderr="",
+            )
+            rc = cmd.execute_token()
+
+        assert rc == 0
+        assert "--tree" not in mock_run.call_args.args[0]
+
+    def test_output_file_contains_only_token_and_is_private(self, tmp_path):
+        output_file = tmp_path / "token"
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path="/eos/pilot/test/lobisapa/iaxo/",
+            write=True,
+            validity=720,
+            ssh_host="eospilot",
+            eos_instance="root://eospilot.cern.ch",
+            tree=True,
+            no_tree=False,
+            output_file=str(output_file),
+            issuer=None,
+            activities=[],
+        )
+
+        with patch("gfal.cli.tape.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(
+                returncode=0,
+                stdout="zteos64:PRIVATE\nextra noise\n",
+                stderr="",
+            )
+            rc = cmd.execute_token()
+
+        assert rc == 0
+        assert output_file.read_text(encoding="utf-8") == "zteos64:PRIVATE\n"
+        assert stat.S_IMODE(output_file.stat().st_mode) == 0o600

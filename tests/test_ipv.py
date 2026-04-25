@@ -144,12 +144,14 @@ def test_build_client_kwargs_ipv():
     params.ssl_verify = True
     params.ipv4_only = True
     params.ipv6_only = False
+    params.authz_token_file = "/tmp/eos.token"
 
     kwargs = build_client_kwargs(params)
 
     assert kwargs["timeout"] == 30
     assert kwargs["ipv4_only"] is True
     assert kwargs["ipv6_only"] is False
+    assert kwargs["authz_token_file"] == "/tmp/eos.token"
 
 
 def test_build_client_kwargs_sets_cli_app():
@@ -161,10 +163,24 @@ def test_build_client_kwargs_sets_cli_app():
     params.ssl_verify = True
     params.ipv4_only = False
     params.ipv6_only = False
+    params.authz_token_file = None
 
     kwargs = build_client_kwargs(params)
 
     assert kwargs["app"] == "python3-gfal-cli"
+
+
+def test_authz_token_file_common_arg_parsing():
+    """Verify that --authz-token-file is parsed as a common option."""
+
+    class DummyCommand(CommandBase):
+        def execute_test(self):
+            return 0
+
+    cmd = DummyCommand()
+    cmd.parse(cmd.execute_test, ["gfal-test", "--authz-token-file", "/tmp/token"])
+
+    assert cmd.params.authz_token_file == "/tmp/token"
 
 
 @pytest.mark.asyncio

@@ -520,6 +520,92 @@ class TestBuildStorageOptionsBearerToken:
         opts = build_storage_options(params)
         assert "bearer_token" not in opts
 
+
+# ---------------------------------------------------------------------------
+# EOS authz token support
+# ---------------------------------------------------------------------------
+
+
+class TestEosAuthzToken:
+    def test_authz_token_file_added_to_storage_options(self, tmp_path):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        token_file = tmp_path / "eos.token"
+        token_file.write_text("zteos64:abc\n", encoding="utf-8")
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token_file=str(token_file),
+        )
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:abc"
+        assert "bearer_token" not in opts
+
+    def test_missing_authz_token_file_raises(self, tmp_path):
+        from types import SimpleNamespace
+
+        import pytest
+
+        from gfal.core.fs import build_storage_options
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token_file=str(tmp_path / "missing.token"),
+        )
+
+        with pytest.raises(FileNotFoundError):
+            build_storage_options(params)
+
+    def test_eos_authz_url_for_root_preserves_query(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=gfal",
+            "zteos64:abc",
+        )
+
+        assert url is not None
+        assert url.startswith("root://eospilot.cern.ch//eos/pilot/test/file.txt?")
+        assert "eos.app=gfal" in url
+        assert "authz=zteos64%3Aabc" in url
+
+    def test_eos_authz_url_for_https(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            "zteos64:abc",
+        )
+
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?authz=zteos64%3Aabc"
+        )
+
+    def test_eos_authz_url_does_not_override_existing_authz(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?authz=old",
+            "zteos64:new",
+        )
+
+        assert url is not None
+        assert "authz=old" in url
+        assert "new" not in url
+
+    def test_eos_authz_url_ignores_non_eos_and_local_paths(self):
+        from gfal.core.fs import eos_authz_url
+
+        assert eos_authz_url("root://example.org//eos/file", "tok") is None
+        assert eos_authz_url("/tmp/local-file", "tok") is None
+
     def test_bearer_token_file_missing_ignored(self, monkeypatch):
         from types import SimpleNamespace
 

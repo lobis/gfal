@@ -41,6 +41,17 @@ class TestGfalClientInit:
         assert client.ssl_verify is True
         assert client.ipv4_only is False
         assert client.ipv6_only is False
+        assert client.authz_token is None
+
+    def test_authz_token_file_is_read_at_client_construction(self, tmp_path):
+        token_file = tmp_path / "token"
+        token_file.write_text("zteos64:abc\n", encoding="utf-8")
+
+        client = GfalClient(authz_token_file=str(token_file))
+        token_file.write_text("zteos64:changed\n", encoding="utf-8")
+
+        assert client.authz_token == "zteos64:abc"
+        assert client.storage_options["authz_token"] == "zteos64:abc"
 
     def test_default_app_sync(self):
         client = GfalClient()
@@ -1134,6 +1145,31 @@ class TestGfalClientLibraryHelpers:
         )
 
         assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
+    def test_copy_url_adds_authz_for_https_without_eos_app(self, tmp_path):
+        token_file = tmp_path / "token"
+        token_file.write_text("zteos64:abc\n", encoding="utf-8")
+        client = GfalClient(app="python3-gfal-cli", authz_token_file=str(token_file))
+
+        url = client._async_client._copy_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?authz=zteos64%3Aabc"
+        )
+
+    def test_url_adds_eos_app_and_authz_for_root(self, tmp_path):
+        token_file = tmp_path / "token"
+        token_file.write_text("zteos64:abc\n", encoding="utf-8")
+        client = GfalClient(app="python3-gfal-cli", authz_token_file=str(token_file))
+
+        url = client._async_client._url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert "eos.app=python3-gfal-cli" in url
+        assert "authz=zteos64%3Aabc" in url
 
 
 class TestAsyncGfalClient:

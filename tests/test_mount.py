@@ -49,6 +49,7 @@ def _default_params(**kwargs):
         "log_file": None,
         "ipv4_only": False,
         "ipv6_only": False,
+        "authz_token_file": None,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -232,9 +233,37 @@ class TestExecuteMount:
             rc = cmd.execute_mount()
 
         assert rc == 0
-        mock_client_cls.assert_called_once()
+        mock_client_cls.assert_called_once_with(
+            cert=None,
+            key=None,
+            timeout=1800,
+            ssl_verify=True,
+            ipv4_only=False,
+            ipv6_only=False,
+            authz_token_file=None,
+            app="python3-gfal-cli",
+        )
         mock_mount.assert_called_once_with(
             "file:///virtual/source",
             mountpoint.expanduser(),
             mock_client_cls.return_value,
         )
+
+    def test_mount_forwards_authz_token_file_to_client(self, tmp_path):
+        mountpoint = tmp_path / "mnt"
+        mountpoint.mkdir()
+        cmd = _make_mount_cmd()
+        cmd.params = _default_params(
+            source="root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/",
+            mountpoint=mountpoint,
+            authz_token_file="/tmp/eos.token",
+        )
+
+        with (
+            patch("gfal.cli.mount.GfalClient") as mock_client_cls,
+            patch("gfal.cli.mount.mount_foreground"),
+        ):
+            rc = cmd.execute_mount()
+
+        assert rc == 0
+        assert mock_client_cls.call_args.kwargs["authz_token_file"] == "/tmp/eos.token"
