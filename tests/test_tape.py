@@ -1,4 +1,4 @@
-"""Tests for tape stub commands and EOS token CLI parsing.
+"""Tests for tape stub commands.
 
 The tape/staging commands require the native gfal2 C library and are not
 supported in this fsspec-based implementation.  Each command must:
@@ -116,63 +116,3 @@ class TestEvict:
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("evict", "--help")
         assert rc == 0
-
-
-# ---------------------------------------------------------------------------
-# token
-# ---------------------------------------------------------------------------
-
-
-class TestToken:
-    def test_exits_nonzero(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal("token", f.as_uri())
-        assert rc != 0
-
-    def test_prints_not_supported(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal("token", f.as_uri())
-        assert "eos token path" in err.lower() or "unsupported eos token path" in err
-
-    def test_write_flag_accepted(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal("token", "--write", f.as_uri())
-        assert "unrecognised" not in err
-
-    def test_validity_accepted(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal("token", "--validity", "60", f.as_uri())
-        assert "unrecognised" not in err
-
-    def test_issuer_accepted(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal(
-            "token", "--issuer", "https://issuer.example", f.as_uri()
-        )
-        assert "unrecognised" not in err
-
-    def test_eos_token_options_accepted(self, tmp_path):
-        f = tmp_path / "file.txt"
-        f.write_text("x")
-        rc, out, err = run_gfal(
-            "token",
-            "--ssh-host",
-            "eospilot",
-            "--eos-instance",
-            "root://eospilot.cern.ch",
-            "--tree",
-            "--no-tree",
-            f.as_uri(),
-        )
-        assert "unrecognised" not in err
-
-    def test_help_exits_zero(self):
-        rc, out, err = run_gfal("token", "--help")
-        assert rc == 0
-        assert "--authz-token" in out
-        assert "--ssh-host" in out

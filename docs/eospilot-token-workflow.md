@@ -1,19 +1,20 @@
 # EOS Pilot token workflow
 
 EOS can issue scoped `zteos64:` tokens for a path or directory tree. `gfal`
-can generate one on EOS Pilot over SSH and pass it back to EOS URLs as the
-`authz` query parameter.
+does not generate these tokens itself. Generate them with the EOS tools, then
+pass them to `gfal`; it appends the token to EOS URLs as the `authz` query
+parameter.
 
-Generate a read/write token for a directory tree:
+Generate a read/write token for a directory tree with 12 hours of validity:
 
 ```bash
-TOKEN=$(gfal token \
-  --ssh-host eospilot \
-  --eos-instance root://eospilot.cern.ch \
-  --write \
+EXPIRES=$(($(date +%s) + 12 * 60 * 60))
+TOKEN=$(ssh eospilot \
+  eos root://eospilot.cern.ch token \
+  --path /eos/pilot/test/lobisapa/iaxo/ \
+  --permission rwx \
   --tree \
-  --validity 720 \
-  root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/)
+  --expires "$EXPIRES")
 ```
 
 Use the token explicitly for copies:

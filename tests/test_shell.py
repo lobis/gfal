@@ -26,6 +26,10 @@ class TestFindCommand:
         with pytest.raises(ValueError, match="Unknown command"):
             _find_command("nonexistent_command")
 
+    def test_token_command_removed(self):
+        with pytest.raises(ValueError, match="Unknown command"):
+            _find_command("token")
+
 
 # ---------------------------------------------------------------------------
 # main() via subprocess
