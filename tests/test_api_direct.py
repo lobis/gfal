@@ -41,6 +41,13 @@ class TestGfalClientInit:
         assert client.ssl_verify is True
         assert client.ipv4_only is False
         assert client.ipv6_only is False
+        assert client.authz_token is None
+
+    def test_authz_token_stored_at_client_construction(self):
+        client = GfalClient(authz_token="zteos64:abc")
+
+        assert client.authz_token == "zteos64:abc"
+        assert client.storage_options["authz_token"] == "zteos64:abc"
 
     def test_default_app_sync(self):
         client = GfalClient()
@@ -550,6 +557,18 @@ class TestGfalClientMapError:
         result = self.client._map_error(e, "file:///test")
         assert isinstance(result, GfalError)
         assert "(Exception)" in str(result)
+
+    def test_authz_redaction_preserves_other_query_params(self):
+        message = (
+            "failed root://eospilot.cern.ch//eos/file?"
+            "authz=zteos64:abc&eos.app=gfal#frag"
+        )
+
+        result = self.client._map_error(Exception(message), "file:///test")
+
+        assert "authz=<redacted>" in str(result)
+        assert "eos.app=gfal#frag" in str(result)
+        assert "zteos64:abc" not in str(result)
 
     def test_generic_exception_with_errno(self):
         e = OSError(errno.EACCES, "permission denied")
@@ -1134,6 +1153,40 @@ class TestGfalClientLibraryHelpers:
         )
 
         assert url == "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+
+    def test_copy_url_adds_authz_for_https_without_eos_app(self):
+        client = GfalClient(app="python3-gfal-cli", authz_token="zteos64:abc")
+
+        url = client._async_client._copy_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?authz=zteos64%3Aabc"
+        )
+
+    def test_copy_url_uses_eosauthz_env(self, monkeypatch):
+        monkeypatch.setenv("EOSAUTHZ", "zteos64:env")
+        monkeypatch.delenv("GFAL_AUTHZ_TOKEN", raising=False)
+        client = GfalClient(app="python3-gfal-cli")
+
+        url = client._async_client._copy_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?authz=zteos64%3Aenv"
+        )
+
+    def test_url_adds_eos_app_and_authz_for_root(self):
+        client = GfalClient(app="python3-gfal-cli", authz_token="zteos64:abc")
+
+        url = client._async_client._url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt"
+        )
+
+        assert "eos.app=python3-gfal-cli" in url
+        assert "authz=zteos64%3Aabc" in url
 
 
 class TestAsyncGfalClient:

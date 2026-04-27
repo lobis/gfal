@@ -738,6 +738,7 @@ def _http_fs_opts(storage_options):
             "ipv6_only",
             "timeout",
             "bearer_token",
+            "authz_token",
         }
     }
     verify = storage_options.get("ssl_verify", True)

@@ -14,8 +14,8 @@ import threading
 import warnings
 import zlib
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse, urlunparse
+from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import fsspec
 
@@ -118,6 +118,39 @@ def normalize_url(url):
     if scheme == "davs":
         return urlunparse(parsed._replace(scheme="https"))
     return url
+
+
+def _is_eos_host(hostname: Optional[str]) -> bool:
+    """Return True if *hostname* looks like an EOS endpoint.
+
+    Any hostname starting with ``eos`` (case-insensitive) is treated as EOS so
+    non-CERN EOS deployments (e.g. ``eos.example.org``) also receive the
+    ``authz=`` decoration. Hostnames that merely contain ``eos`` later in the
+    name (e.g. ``myeos.example.org``) are intentionally excluded.
+    """
+    if not hostname:
+        return False
+    return hostname.lower().startswith("eos")
+
+
+def eos_authz_url(url: str, token: Optional[str]) -> Optional[str]:
+    """Return *url* with an EOS ``authz`` query parameter added.
+
+    The token form is specific to EOS endpoints and is separate from WLCG
+    bearer-token authentication.
+    """
+    if not token or url == "-":
+        return None
+    normalized = normalize_url(url)
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https", "root", "xroot"}:
+        return None
+    if not _is_eos_host(parsed.hostname):
+        return None
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "authz" not in params:
+        params["authz"] = token
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 class RootProtocolFallbackWarning(UserWarning):
@@ -228,6 +261,10 @@ def url_to_fs(url, storage_options=None, **kwargs):
 
     storage_options.update(kwargs)
 
+    authz_token = storage_options.pop("authz_token", None)
+    if authz_token:
+        url = eos_authz_url(url, authz_token) or url
+
     url = normalize_url(url)
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
@@ -276,6 +313,7 @@ _GFAL_HTTP_OPTS = frozenset({
     "client_key",
     "ssl_verify",
     "bearer_token",
+    "authz_token",
     "ipv4_only",
     "ipv6_only",
     "timeout",
@@ -325,6 +363,11 @@ def build_storage_options(params):
                 token = Path(token_file).read_text().strip()
     if token:
         opts["bearer_token"] = token
+    authz_token = getattr(params, "authz_token", None)
+    if not authz_token:
+        authz_token = os.environ.get("EOSAUTHZ") or os.environ.get("GFAL_AUTHZ_TOKEN")
+    if authz_token:
+        opts["authz_token"] = authz_token
     return opts
 
 

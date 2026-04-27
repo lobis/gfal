@@ -520,6 +520,128 @@ class TestBuildStorageOptionsBearerToken:
         opts = build_storage_options(params)
         assert "bearer_token" not in opts
 
+
+# ---------------------------------------------------------------------------
+# EOS authz token support
+# ---------------------------------------------------------------------------
+
+
+class TestEosAuthzToken:
+    def test_authz_token_param_added_to_storage_options(self):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token="zteos64:abc",
+        )
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:abc"
+        assert "bearer_token" not in opts
+
+    def test_eosauthz_env_added_to_storage_options(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        monkeypatch.setenv("EOSAUTHZ", "zteos64:env")
+        monkeypatch.delenv("GFAL_AUTHZ_TOKEN", raising=False)
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token=None,
+        )
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:env"
+
+    def test_authz_cli_param_takes_priority_over_env(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        monkeypatch.setenv("EOSAUTHZ", "zteos64:env")
+
+        params = SimpleNamespace(
+            cert=None,
+            key=None,
+            ssl_verify=True,
+            authz_token="zteos64:cli",
+        )
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:cli"
+
+    def test_gfal_authz_token_env_fallback(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from gfal.core.fs import build_storage_options
+
+        monkeypatch.delenv("EOSAUTHZ", raising=False)
+        monkeypatch.setenv("GFAL_AUTHZ_TOKEN", "zteos64:gfal")
+
+        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
+        opts = build_storage_options(params)
+
+        assert opts["authz_token"] == "zteos64:gfal"
+
+    def test_eos_authz_url_for_root_preserves_query(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?eos.app=gfal",
+            "zteos64:abc",
+        )
+
+        assert url is not None
+        assert url.startswith("root://eospilot.cern.ch//eos/pilot/test/file.txt?")
+        assert "eos.app=gfal" in url
+        assert "authz=zteos64%3Aabc" in url
+
+    def test_eos_authz_url_for_https(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt",
+            "zteos64:abc",
+        )
+
+        assert url == (
+            "https://eospilot.cern.ch//eos/pilot/test/file.txt?authz=zteos64%3Aabc"
+        )
+
+    def test_eos_authz_url_does_not_override_existing_authz(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url(
+            "root://eospilot.cern.ch//eos/pilot/test/file.txt?authz=old",
+            "zteos64:new",
+        )
+
+        assert url is not None
+        assert "authz=old" in url
+        assert "new" not in url
+
+    def test_eos_authz_url_ignores_non_eos_and_local_paths(self):
+        from gfal.core.fs import eos_authz_url
+
+        assert eos_authz_url("root://example.org//some/file", "tok") is None
+        assert eos_authz_url("https://myeos.example.org//file", "tok") is None
+        assert eos_authz_url("/tmp/local-file", "tok") is None
+
+    def test_eos_authz_url_accepts_non_cern_eos_hosts(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url("root://eos.example.org//eos/foo/file", "tok")
+        assert url is not None
+        assert "authz=tok" in url
+
     def test_bearer_token_file_missing_ignored(self, monkeypatch):
         from types import SimpleNamespace
 

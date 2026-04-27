@@ -47,4 +47,5 @@ nav:
   - Installation: installation.md
   - Python API: python-api.md
   - EOS Public Examples: eospublic-examples.md
+  - EOS authz tokens: eos-token-workflow.md
   - CLI Reference: reference.md

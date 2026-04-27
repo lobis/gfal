@@ -6,6 +6,7 @@ import errno
 import hashlib
 import inspect
 import os
+import re
 import stat
 import threading
 import time
@@ -50,6 +51,7 @@ class ClientConfig:
     ssl_verify: bool = True
     ipv4_only: bool = False
     ipv6_only: bool = False
+    authz_token: str | None = None
     app: Optional[str] = None
 
 
@@ -205,6 +207,7 @@ class AsyncGfalClient:
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
+        authz_token: str | None = None,
         config: ClientConfig | None = None,
         app: str = "python3-gfal-async",
     ):
@@ -216,6 +219,7 @@ class AsyncGfalClient:
                 ssl_verify=ssl_verify,
                 ipv4_only=ipv4_only,
                 ipv6_only=ipv6_only,
+                authz_token=authz_token,
                 app=app,
             )
         self.config = config
@@ -228,6 +232,7 @@ class AsyncGfalClient:
         self.ssl_verify = config.ssl_verify
         self.ipv4_only = config.ipv4_only
         self.ipv6_only = config.ipv6_only
+        self.authz_token = config.authz_token
         self.app = config.app
 
     @property
@@ -241,14 +246,24 @@ class AsyncGfalClient:
                 ssl_verify=self.ssl_verify,
                 ipv4_only=self.ipv4_only,
                 ipv6_only=self.ipv6_only,
+                authz_token=self.authz_token,
             )
         )
 
+    def _authz_token(self) -> str | None:
+        return (
+            self.authz_token
+            or os.environ.get("EOSAUTHZ")
+            or os.environ.get("GFAL_AUTHZ_TOKEN")
+        )
+
     def _url(self, url: str) -> str:
-        """Return *url* with ``eos.app`` injected when it targets an EOS endpoint."""
+        """Return *url* with EOS query parameters injected when applicable."""
         if not self.app or url == "-":
-            return url
-        return eos_app_url(url, self.app) or url
+            with_app = url
+        else:
+            with_app = eos_app_url(url, self.app) or url
+        return fs.eos_authz_url(with_app, self._authz_token()) or with_app
 
     def _copy_url(self, url: str) -> str:
         """Return the transfer URL used by copy operations.
@@ -261,7 +276,7 @@ class AsyncGfalClient:
         """
         normalized = fs.normalize_url(url)
         if urlparse(normalized).scheme.lower() in {"http", "https"}:
-            return normalized
+            return fs.eos_authz_url(normalized, self._authz_token()) or normalized
         return self._url(url)
 
     @staticmethod
@@ -1278,11 +1293,15 @@ class AsyncGfalClient:
             if warn_callback is not None:
                 warn_callback(f"could not preserve times for {dst_url}: {e}")
 
+    @staticmethod
+    def _redact_authz(message: str) -> str:
+        return re.sub(r"([?&]authz=)[^\s'\"),&#]+", r"\1<redacted>", message)
+
     def _map_error(self, e: Exception, url: str) -> GfalError:
         if isinstance(e, GfalError):
             return e
 
-        msg = str(e) or f"({type(e).__name__})"
+        msg = self._redact_authz(str(e) or f"({type(e).__name__})")
 
         # Walk the exception cause/context chain to find aiohttp connection errors
         # that fsspec wraps in FileNotFoundError or other generic exceptions.
@@ -1364,6 +1383,7 @@ class GfalClient:
         ssl_verify: bool = True,
         ipv4_only: bool = False,
         ipv6_only: bool = False,
+        authz_token: str | None = None,
         config: ClientConfig | None = None,
         app: str = "python3-gfal-sync",
     ):
@@ -1374,6 +1394,7 @@ class GfalClient:
             ssl_verify=ssl_verify,
             ipv4_only=ipv4_only,
             ipv6_only=ipv6_only,
+            authz_token=authz_token,
             config=config,
             app=app,
         )
@@ -1384,6 +1405,7 @@ class GfalClient:
         self.ssl_verify = self._async_client.ssl_verify
         self.ipv4_only = self._async_client.ipv4_only
         self.ipv6_only = self._async_client.ipv6_only
+        self.authz_token = self._async_client.authz_token
         self.app = self._async_client.app
 
     @property
@@ -1628,17 +1650,17 @@ def split_timestamp_ns(timestamp: float) -> tuple[int, int]:
 
 
 def _is_eos_host(hostname: str | None) -> bool:
-    """Return True if *hostname* matches an EOS endpoint (``eos*.cern.ch``).
+    """Return True if *hostname* looks like an EOS endpoint.
 
-    The glob pattern ``eos*.cern.ch`` is matched literally: the hostname must
-    start with ``eos`` and end with ``.cern.ch``.  Both ``eos.cern.ch`` and
-    ``eospilot.cern.ch`` are valid EOS hostnames.  Hostnames that merely contain
-    "eos" (e.g. ``myeos.example.org``) are intentionally excluded.
+    Any hostname starting with ``eos`` (case-insensitive) is treated as EOS so
+    non-CERN EOS deployments (e.g. ``eos.example.org``) also receive EOS-only
+    query annotations like ``eos.app=`` and ``authz=``. Hostnames that merely
+    contain ``eos`` later in the name (e.g. ``myeos.example.org``) are
+    intentionally excluded.
     """
     if not hostname:
         return False
-    h = hostname.lower()
-    return h.startswith("eos") and h.endswith(".cern.ch")
+    return hostname.lower().startswith("eos")
 
 
 def eos_app_url(url: str, app: str) -> str | None:
@@ -1646,7 +1668,7 @@ def eos_app_url(url: str, app: str) -> str | None:
 
     :param url: The URL to annotate.  Must use one of the ``http``, ``https``,
         ``root``, or ``xroot`` schemes and target an EOS endpoint
-        (hostname matching ``eos*.cern.ch``).
+        (hostname starting with ``eos``).
     :param app: The application name to set, e.g. ``python3-gfal-cli``.
 
     Returns ``None`` when the URL does not point to an EOS endpoint.
@@ -1662,6 +1684,11 @@ def eos_app_url(url: str, app: str) -> str | None:
     if "eos.app" not in params:
         params["eos.app"] = app
     return urlunparse(parsed._replace(query=urlencode(params)))
+
+
+def eos_authz_url(url: str, token: str | None) -> str | None:
+    """Return *url* with an EOS authz token query parameter added."""
+    return fs.eos_authz_url(url, token)
 
 
 def eos_mtime_url(url: str, timestamp: float) -> str | None:

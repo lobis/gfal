@@ -310,12 +310,19 @@ Other `fsspec` protocols such as `gs://`, `abfs://`, or similar backends may als
 | `-t N` / `--timeout N` | Global timeout in seconds (default: 1800) |
 | `-E CERT` / `--cert CERT` | Path to client certificate (PEM) |
 | `--key KEY` | Path to client key (PEM) |
+| `--authz-token TOKEN` | Append an EOS `authz` token to EOS URLs |
 | `--no-verify` | Disable TLS certificate verification |
 | `--log-file FILE` | Write log output to a file |
 
 For CERN HTTPS endpoints that fail certificate verification, install the CERN
 Root CA for normal verified use, use `root://` where possible to avoid HTTPS,
 or pass `--no-verify` only for an explicit insecure test.
+
+For scoped EOS access (any EOS instance — `eospublic`, `eospilot`, `eosatlas`,
+…), generate a `zteos64:` token on the EOS side with `eos token` and pass it
+to `gfal` with `--authz-token` or export it as `EOSAUTHZ`. See
+[EOS authz token workflow](docs/eos-token-workflow.md) for the full recipe,
+including how to mint the token and which endpoint to use.
 
 ### `gfal ls`
 
