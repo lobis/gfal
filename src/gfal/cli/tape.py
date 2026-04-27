@@ -1,8 +1,8 @@
 """
-Tape / staging commands: bringonline, archivepoll, evict.
+Tape / staging commands: bringonline, archivepoll, evict, token.
 
 These commands require the native gfal2 C library (via python-gfal2) which is
-not available in this fsspec-based reimplementation. The CLI interface is
+not available in this fsspec-based reimplementation.  The CLI interface is
 preserved for backwards compatibility; each command prints a clear
 "not supported" message and exits with code 1.
 """
@@ -101,5 +101,41 @@ class CommandTape(base.CommandBase):
     @base.arg("file", type=base.surl, help="URI of the file to evict")
     def execute_evict(self):
         """Evict a file from a disk buffer (not supported)."""
+        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
+        return 1
+
+    # ------------------------------------------------------------------
+    # token
+    # ------------------------------------------------------------------
+
+    @base.arg(
+        "-w",
+        "--write",
+        action="store_true",
+        help="request a write-access token",
+    )
+    @base.arg(
+        "--validity",
+        type=int,
+        default=None,
+        metavar="MINUTES",
+        help="token validity in minutes",
+    )
+    @base.arg(
+        "--issuer",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="token issuer URL",
+    )
+    @base.arg(
+        "activities",
+        nargs="*",
+        type=str,
+        help="activities for macaroon request",
+    )
+    @base.arg("path", type=base.surl, help="URI to request token for")
+    def execute_token(self):
+        """Retrieve a storage-element issued token (not supported)."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1

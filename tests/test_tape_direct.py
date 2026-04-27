@@ -1,4 +1,4 @@
-"""Direct unit tests for tape commands (src/gfal/cli/tape.py).
+"""Direct unit tests for tape stub commands (src/gfal/cli/tape.py).
 
 These tests call execute_* methods directly (no subprocess) to improve coverage
 of the lines that currently aren't reached (the return 1 lines).
@@ -113,6 +113,39 @@ class TestExecuteEvict:
             token=None,
         )
         cmd.execute_evict()
+        captured = capsys.readouterr()
+        assert (
+            "not supported" in captured.err.lower() or "gfal2" in captured.err.lower()
+        )
+
+
+class TestExecuteToken:
+    def test_returns_one(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path=f.as_uri(),
+            write=False,
+            validity=None,
+            issuer=None,
+            activities=[],
+        )
+        rc = cmd.execute_token()
+        assert rc == 1
+
+    def test_writes_not_supported_to_stderr(self, tmp_path, capsys):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        cmd = _make_cmd("gfal-token")
+        cmd.params = _default_params(
+            path=f.as_uri(),
+            write=False,
+            validity=None,
+            issuer=None,
+            activities=[],
+        )
+        cmd.execute_token()
         captured = capsys.readouterr()
         assert (
             "not supported" in captured.err.lower() or "gfal2" in captured.err.lower()

@@ -15,7 +15,7 @@ from gfal.cli import (
     ls,  # noqa: F401  – registers CommandLs subclass
     mount,  # noqa: F401  – registers CommandMount subclass
     rm,  # noqa: F401  – registers CommandRm subclass
-    tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict)
+    tape,  # noqa: F401  – registers CommandTape subclass (bringonline/archivepoll/evict/token)
 )
 
 

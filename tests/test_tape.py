@@ -1,7 +1,7 @@
-"""Tests for tape stub commands.
+"""Tests for tape stub commands: bringonline, archivepoll, evict, token.
 
-The tape/staging commands require the native gfal2 C library and are not
-supported in this fsspec-based implementation.  Each command must:
+All of these require the native gfal2 C library and are not supported in this
+fsspec-based implementation.  Each command must:
   - exit with a non-zero return code (1)
   - print a message to stderr explaining the limitation
   - accept its documented CLI flags without error (backwards compatibility)
@@ -115,4 +115,47 @@ class TestEvict:
 
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("evict", "--help")
+        assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# token
+# ---------------------------------------------------------------------------
+
+
+class TestToken:
+    def test_exits_nonzero(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("token", f.as_uri())
+        assert rc != 0
+
+    def test_prints_not_supported(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("token", f.as_uri())
+        assert "not supported" in err.lower() or "gfal2" in err.lower()
+
+    def test_write_flag_accepted(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("token", "--write", f.as_uri())
+        assert "unrecognised" not in err
+
+    def test_validity_accepted(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("token", "--validity", "60", f.as_uri())
+        assert "unrecognised" not in err
+
+    def test_issuer_accepted(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal(
+            "token", "--issuer", "https://issuer.example", f.as_uri()
+        )
+        assert "unrecognised" not in err
+
+    def test_help_exits_zero(self):
+        rc, out, err = run_gfal("token", "--help")
         assert rc == 0
