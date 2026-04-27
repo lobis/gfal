@@ -608,10 +608,20 @@ class TestEosAppUrl:
             _eos_app_url("https://lxplus.cern.ch/some/path", "python3-gfal-cli") is None
         )
 
-    def test_eos_app_url_ignores_non_cern_hosts(self):
-        # EOS-like hostname but not cern.ch
+    def test_eos_app_url_accepts_non_cern_eos_hosts(self):
+        # Non-CERN EOS deployments are also annotated with eos.app
+        url = _eos_app_url(
+            "root://eos.example.org//store/file.root", "python3-gfal-cli"
+        )
+        assert url is not None
+        assert "eos.app=python3-gfal-cli" in url
+
+    def test_eos_app_url_ignores_non_eos_hosts(self):
+        # Hostname that merely contains "eos" later is still excluded
         assert (
-            _eos_app_url("root://eos.example.org//store/file.root", "python3-gfal-cli")
+            _eos_app_url(
+                "root://myeos.example.org//store/file.root", "python3-gfal-cli"
+            )
             is None
         )
 

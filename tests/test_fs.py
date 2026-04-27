@@ -631,8 +631,16 @@ class TestEosAuthzToken:
     def test_eos_authz_url_ignores_non_eos_and_local_paths(self):
         from gfal.core.fs import eos_authz_url
 
-        assert eos_authz_url("root://example.org//eos/file", "tok") is None
+        assert eos_authz_url("root://example.org//some/file", "tok") is None
+        assert eos_authz_url("https://myeos.example.org//file", "tok") is None
         assert eos_authz_url("/tmp/local-file", "tok") is None
+
+    def test_eos_authz_url_accepts_non_cern_eos_hosts(self):
+        from gfal.core.fs import eos_authz_url
+
+        url = eos_authz_url("root://eos.example.org//eos/foo/file", "tok")
+        assert url is not None
+        assert "authz=tok" in url
 
     def test_bearer_token_file_missing_ignored(self, monkeypatch):
         from types import SimpleNamespace

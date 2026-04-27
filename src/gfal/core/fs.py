@@ -121,10 +121,16 @@ def normalize_url(url):
 
 
 def _is_eos_host(hostname: Optional[str]) -> bool:
+    """Return True if *hostname* looks like an EOS endpoint.
+
+    Any hostname starting with ``eos`` (case-insensitive) is treated as EOS so
+    non-CERN EOS deployments (e.g. ``eos.example.org``) also receive the
+    ``authz=`` decoration. Hostnames that merely contain ``eos`` later in the
+    name (e.g. ``myeos.example.org``) are intentionally excluded.
+    """
     if not hostname:
         return False
-    h = hostname.lower()
-    return h.startswith("eos") and h.endswith(".cern.ch")
+    return hostname.lower().startswith("eos")
 
 
 def eos_authz_url(url: str, token: Optional[str]) -> Optional[str]:
