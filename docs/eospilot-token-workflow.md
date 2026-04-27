@@ -10,22 +10,23 @@ Generate a read/write token for a directory tree with 12 hours of validity:
 ```bash
 EXPIRES=$(($(date +%s) + 12 * 60 * 60))
 TOKEN=$(ssh eospilot \
-  eos root://eospilot.cern.ch token \
+  eos token \
   --path /eos/pilot/test/lobisapa/iaxo/ \
   --permission rwx \
   --tree \
   --expires "$EXPIRES")
 ```
 
-Use the token explicitly for copies:
+Use the HTTPS/WebDAV endpoint for token-authenticated transfers. If the CERN
+CA is not installed locally, add `--no-verify` only for an explicit insecure
+test:
 
 ```bash
-gfal cp --authz-token "$TOKEN" \
-  ./file.dat root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/file.dat
+gfal cp --authz-token "$TOKEN" --no-verify \
+  ./file.dat https://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/file.dat
 ```
 
-Use the HTTPS/WebDAV endpoint for token-authenticated deletes. If the CERN CA
-is not installed locally, add `--no-verify` only for an explicit insecure test:
+The same endpoint handles token-authenticated deletes:
 
 ```bash
 gfal rm --authz-token "$TOKEN" --no-verify \
@@ -45,15 +46,21 @@ EOS-native environment variable instead:
 ```bash
 export EOSAUTHZ="$TOKEN"
 
-gfal cp ./file.dat root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/file.dat
+gfal cp --no-verify ./file.dat https://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/file.dat
 gfal mount root://eospilot.cern.ch//eos/pilot/test/lobisapa/iaxo/ /tmp/iaxo
 ```
 
 `gfal` also accepts `GFAL_AUTHZ_TOKEN` as a gfal-specific fallback. An explicit
 `--authz-token` option takes priority over both environment variables.
 
+> **Note on Kerberos / X509:** if you already have a valid CERN Kerberos
+> ticket (`klist` shows a TGT) or an X509 proxy at `/tmp/x509up_u<uid>`, the
+> XRootD client may authenticate you that way and silently ignore the `authz`
+> token in the URL. The HTTPS endpoint does not have this ambiguity — it
+> uses the token directly.
+
 The mount command is currently read-only. A read/write token allows upload and
-delete operations through commands such as `gfal cp` and HTTPS `gfal rm`, but it
-does not make the FUSE mount writable. In live EOS Pilot testing, XRootD reads
-and uploads accepted `authz` query tokens, while token-authenticated deletion
-worked reliably through the HTTPS/WebDAV endpoint.
+delete operations through commands such as `gfal cp` and `gfal rm` over HTTPS,
+but it does not make the FUSE mount writable. In live EOS Pilot testing,
+HTTPS/WebDAV accepted `authz` query tokens reliably for reads, uploads, and
+deletes; XRootD also accepts them but can be shadowed by other auth methods.
