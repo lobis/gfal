@@ -198,9 +198,11 @@ For CERN HTTPS endpoints that fail certificate verification, install the CERN
 Root CA for normal verified use, use `root://` where possible to avoid HTTPS,
 or pass `--no-verify` only for an explicit insecure test.
 
-For EOS Pilot scoped access, generate a scoped token with the EOS tools, then
-pass it with `--authz-token` or export it as `EOSAUTHZ`. See
-[EOS Pilot token workflow](eospilot-token-workflow.md).
+For scoped EOS access (any EOS instance — `eospublic`, `eospilot`, `eosatlas`,
+…), generate a `zteos64:` token on the EOS side with `eos token` and pass it
+to `gfal` with `--authz-token` or export it as `EOSAUTHZ`. See
+[EOS authz token workflow](eos-token-workflow.md) for the full recipe,
+including how to mint the token and which endpoint to use.
 
 ## Command reference
 
