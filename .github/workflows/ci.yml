@@ -85,7 +85,7 @@ jobs:
       with:
         path: ${{ runner.temp }}/conda_pkgs_dir
         key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
-    - uses: conda-incubator/setup-miniconda@v3
+    - uses: conda-incubator/setup-miniconda@v4
       with:
         activate-environment: xrootd-test
         auto-activate-base: false
@@ -201,7 +201,7 @@ jobs:
         key: ${{ runner.os }}-conda-eos-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-conda-eos-
-    - uses: conda-incubator/setup-miniconda@v3
+    - uses: conda-incubator/setup-miniconda@v4
       with:
         activate-environment: eos-integration
         auto-activate-base: false
@@ -931,7 +931,7 @@ jobs:
       with:
         path: ${{ runner.temp }}/conda_pkgs_dir
         key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
-    - uses: conda-incubator/setup-miniconda@v3
+    - uses: conda-incubator/setup-miniconda@v4
       with:
         activate-environment: conda-build
         auto-activate-base: false
@@ -1025,7 +1025,7 @@ jobs:
       with:
         path: ${{ runner.temp }}/conda_pkgs_dir
         key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
-    - uses: conda-incubator/setup-miniconda@v3
+    - uses: conda-incubator/setup-miniconda@v4
       with:
         activate-environment: conda-test
         auto-activate-base: false
@@ -1164,7 +1164,7 @@ jobs:
       with:
         path: ${{ runner.temp }}/conda_pkgs_dir
         key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
-    - uses: conda-incubator/setup-miniconda@v3
+    - uses: conda-incubator/setup-miniconda@v4
       with:
         activate-environment: conda-publish
         auto-activate-base: false
