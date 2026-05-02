@@ -129,6 +129,28 @@ class TestReadOnlyFuseOperations:
 
         assert entries == [".", "..", "subdir", "file name.txt"]
 
+    def test_readdir_caches_child_attrs_for_getattr(self):
+        client = MagicMock()
+        client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
+        client.ls.return_value = [
+            _FakeStat(
+                mode=stat.S_IFREG | 0o644,
+                size=42,
+                name="/remote/source/file.txt",
+                mtime=456.0,
+            ),
+        ]
+        ops = ReadOnlyFuseOperations("file:///virtual/source", client)
+
+        entries = list(ops.readdir("/", 0))
+        stat_calls_after_readdir = client.stat.call_count
+        attrs = ops.getattr("/file.txt")
+
+        assert entries == [".", "..", "file.txt"]
+        assert attrs["st_size"] == 42
+        assert attrs["st_mtime"] == 456.0
+        assert client.stat.call_count == stat_calls_after_readdir
+
     def test_open_rejects_write_flags(self):
         client = MagicMock()
         client.stat.return_value = _FakeStat(mode=stat.S_IFDIR | 0o755, name="/")
