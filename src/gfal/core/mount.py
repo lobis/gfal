@@ -122,6 +122,9 @@ class ReadOnlyFuseOperations(Operations):
             )
         self._handles: dict[int, Any] = {}
         self._next_handle = itertools.count(1)
+        self._attr_cache: dict[str, dict[str, Any]] = {
+            "/": _stat_dict(root_stat, inode=self._inode_for_path("/"))
+        }
 
     @staticmethod
     def _inode_for_path(path: str) -> int:
@@ -170,8 +173,12 @@ class ReadOnlyFuseOperations(Operations):
         return 0
 
     def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:
+        if path in self._attr_cache:
+            return dict(self._attr_cache[path])
         st = self._stat_for_path(path)
-        return _stat_dict(st, inode=self._inode_for_path(path))
+        attrs = _stat_dict(st, inode=self._inode_for_path(path))
+        self._attr_cache[path] = attrs
+        return dict(attrs)
 
     def readdir(self, path: str, fh: int) -> Iterable[str]:
         st = self._stat_for_path(path)
@@ -184,6 +191,12 @@ class ReadOnlyFuseOperations(Operations):
                 name = _entry_name(raw_name)
                 if name and name not in entries:
                     entries.append(name)
+                    child_path = str(PurePosixPath(path) / name)
+                    if not child_path.startswith("/"):
+                        child_path = f"/{child_path}"
+                    self._attr_cache[child_path] = _stat_dict(
+                        entry, inode=self._inode_for_path(child_path)
+                    )
         except Exception as exc:
             raise self._map_error(exc) from exc
         return entries
