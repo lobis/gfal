@@ -27,7 +27,7 @@ import threading
 import warnings
 import zlib
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import unquote, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
@@ -39,7 +39,7 @@ from yarl import URL
 _DAV = "{DAV:}"
 
 
-def _norm_url(url: str) -> Literal[b""]:
+def _norm_url(url: str) -> str:
     """Normalize a URL for comparison by collapsing repeated slashes in the path.
 
     EOS WebDAV returns hrefs with a single leading slash (e.g. /eos/...)
@@ -47,9 +47,19 @@ def _norm_url(url: str) -> Literal[b""]:
 
     Stripping trailing slashes and collapsing ``//`` \u2192 ``/`` in the path
     component ensures the self-entry is always identified correctly in ls().
+    Query parameters such as EOS ``authz`` tokens are ignored for resource
+    identity comparisons.
     """
-    p = urlparse(url.rstrip("/"))
-    return urlunparse(p._replace(path=re.sub(r"/+", "/", p.path)))
+    p = urlparse(url)
+    path = re.sub(r"/+", "/", p.path.rstrip("/"))
+    return urlunparse(p._replace(path=path, query="", fragment=""))
+
+
+def _ensure_collection_url(url: str) -> str:
+    """Return *url* with a trailing slash in the URL path component."""
+    p = urlparse(url)
+    path = p.path.rstrip("/") + "/"
+    return urlunparse(p._replace(path=path))
 
 
 _PROPFIND_BODY = (
@@ -816,7 +826,9 @@ def _parse_propfind(xml_bytes: bytes, base_url: str) -> list[dict]:
         if href.startswith(("http://", "https://")):
             entry_url = href
         else:
-            entry_url = urlunparse(parsed_base._replace(path=href))
+            entry_url = urlunparse(
+                parsed_base._replace(path=href, query="", fragment="")
+            )
 
         # Directory?
         rt = prop.find(f"{_DAV}resourcetype")
@@ -1126,8 +1138,9 @@ class WebDAVFileSystem(AbstractFileSystem):
 
     def ls(self, path: str, detail: bool = True):
         """List directory contents via PROPFIND Depth:1."""
-        # Use a trailing slash so the server knows we mean the collection
-        url = path.rstrip("/") + "/"
+        # Use a trailing slash so the server knows we mean the collection.
+        # Preserve query parameters such as EOS authz tokens unchanged.
+        url = _ensure_collection_url(path)
         try:
             entries = self._propfind(url, depth=1)
         except (NotImplementedError, FileNotFoundError):
