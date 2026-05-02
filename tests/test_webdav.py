@@ -27,7 +27,9 @@ import pytest
 from gfal.core.webdav import (
     _STREAM_EOF,
     WebDAVFileSystem,
+    _ensure_collection_url,
     _http_fs_opts,
+    _norm_url,
     _parse_propfind,
     _should_suppress_loop_exception,
     _StreamingRequestsGetFile,
@@ -268,6 +270,28 @@ def reset_vfs():
 
 
 class TestParsePropfind:
+    def test_relative_href_does_not_inherit_authz_query(self):
+        xml = b"""\
+<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/eos/pilot/test/file.txt</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:getcontentlength>1234</D:getcontentlength>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+        entries = _parse_propfind(
+            xml, "https://eospilot.cern.ch//eos/pilot/test/?authz=zteos64%3Aabc"
+        )
+
+        assert entries[0]["name"] == "https://eospilot.cern.ch/eos/pilot/test/file.txt"
+
     def test_file_entry(self):
         xml = b"""\
 <?xml version="1.0"?>
@@ -322,6 +346,20 @@ class TestParsePropfind:
   </D:response>
 </D:multistatus>"""
         assert _parse_propfind(xml, "http://server/") == []
+
+
+class TestWebDAVUrlHelpers:
+    def test_ensure_collection_url_preserves_authz_query(self):
+        url = "https://eospilot.cern.ch//eos/pilot/test?authz=zteos64%3Aabc"
+
+        result = _ensure_collection_url(url)
+
+        assert result == "https://eospilot.cern.ch//eos/pilot/test/?authz=zteos64%3Aabc"
+
+    def test_norm_url_ignores_authz_query_for_identity(self):
+        assert _norm_url(
+            "https://eospilot.cern.ch//eos/pilot/test/?authz=zteos64%3Aabc"
+        ) == _norm_url("https://eospilot.cern.ch/eos/pilot/test/")
 
 
 class TestHttpFsOpts:
