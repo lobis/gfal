@@ -589,8 +589,51 @@ class AsyncGfalClient:
         dst_url = self._copy_url(dst_url)
         opts = self.storage_options
 
-        src_fs, src_path = fs.url_to_fs(src_url, opts)
-        dst_fs, dst_path = fs.url_to_fs(dst_url, opts)
+        tokenized_http_tpc = False
+        source_read_token = None
+        if options.tpc != "never" and options.tpc_direction == "pull":
+            from gfal.core import tpc as tpc_module  # noqa: PLC0415
+
+            tokenized_http_tpc = tpc_module.should_use_http_tpc_tokens(
+                src_url,
+                dst_url,
+                opts,
+            )
+
+        dst_opts = opts
+        dst_fs = dst_path = None
+        dst_st: StatResult | None = None
+        dst_exists = False
+        dst_isdir = False
+        destination_probed = False
+        if destination_info is _INFO_UNSET and tokenized_http_tpc:
+            from gfal.core import tpc as tpc_module  # noqa: PLC0415
+
+            dst_opts, _destination_read_token = tpc_module.http_tpc_read_token_options(
+                dst_url,
+                opts,
+                operation="read",
+            )
+            dst_fs, dst_path = fs.url_to_fs(dst_url, dst_opts)
+            dst_st = self._probe_destination_info(dst_fs, dst_path)
+            destination_probed = True
+            if dst_st is not None:
+                dst_exists = True
+                dst_isdir = dst_st.is_dir()
+
+        src_opts = opts
+        if source_info is _INFO_UNSET and tokenized_http_tpc:
+            from gfal.core import tpc as tpc_module  # noqa: PLC0415
+
+            src_opts, source_read_token = tpc_module.http_tpc_read_token_options(
+                src_url,
+                opts,
+                operation="read",
+            )
+
+        src_fs, src_path = fs.url_to_fs(src_url, src_opts)
+        if dst_fs is None or dst_path is None:
+            dst_fs, dst_path = fs.url_to_fs(dst_url, dst_opts)
 
         if source_info is _INFO_UNSET:
             src_info = src_fs.info(src_path)
@@ -607,14 +650,12 @@ class AsyncGfalClient:
                 f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
             )
 
-        dst_exists = False
-        dst_isdir = False
-        dst_st: StatResult | None = None
         if destination_info is _INFO_UNSET:
-            dst_st = self._probe_destination_info(dst_fs, dst_path)
-            if dst_st is not None:
-                dst_exists = True
-                dst_isdir = dst_st.is_dir()
+            if not destination_probed:
+                dst_st = self._probe_destination_info(dst_fs, dst_path)
+                if dst_st is not None:
+                    dst_exists = True
+                    dst_isdir = dst_st.is_dir()
         elif destination_info is not None:
             dst_st = self._coerce_stat_result(destination_info)
             dst_exists = True
@@ -729,10 +770,14 @@ class AsyncGfalClient:
 
                 if transfer_mode_callback is not None:
                     transfer_mode_callback(transfer_mode)
+                tpc_opts = opts
+                if tokenized_http_tpc and source_read_token:
+                    tpc_opts = dict(opts)
+                    tpc_opts["transfer_bearer_token"] = source_read_token
                 tpc_module.do_tpc(
                     src_url,
                     tpc_dst_url,
-                    opts,
+                    tpc_opts,
                     mode=options.tpc_direction,
                     timeout=options.timeout,
                     verbose=False,

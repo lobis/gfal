@@ -12,13 +12,20 @@ import sys
 
 from gfal.cli import base  # noqa: E402
 from gfal.core.fs import build_storage_options
-from gfal.core.token import DEFAULT_TOKEN_VALIDITY, retrieve_token
+from gfal.core.token_defaults import DEFAULT_TOKEN_VALIDITY
 
 _NOT_SUPPORTED_MSG = (
     "{prog}: this command requires the native gfal2 C library and is not "
     "supported in this fsspec-based implementation.\n"
     "Use the original gfal2-util package for tape/staging operations.\n"
 )
+
+
+def retrieve_token(*args, **kwargs):
+    """Import the HTTP token implementation only when ``gfal token`` runs."""
+    from gfal.core.token import retrieve_token as _retrieve_token
+
+    return _retrieve_token(*args, **kwargs)
 
 
 class CommandTape(base.CommandBase):
@@ -95,13 +102,13 @@ class CommandTape(base.CommandBase):
     # evict
     # ------------------------------------------------------------------
 
+    @base.arg("file", type=base.surl, help="URI of the file to evict")
     @base.arg(
         "token",
         nargs="?",
         type=str,
         help="token from the bring-online request",
     )
-    @base.arg("file", type=base.surl, help="URI of the file to evict")
     def execute_evict(self):
         """Evict a file from a disk buffer (not supported)."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
@@ -131,13 +138,13 @@ class CommandTape(base.CommandBase):
         metavar="URL",
         help="token issuer URL",
     )
+    @base.arg("path", type=base.surl, help="URI to request token for")
     @base.arg(
         "activities",
         nargs="*",
         type=str,
         help="activities for macaroon request",
     )
-    @base.arg("path", type=base.surl, help="URI to request token for")
     def execute_token(self):
         """Retrieve a storage-element issued token."""
         if self.params.validity < 0:

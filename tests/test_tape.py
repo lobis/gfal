@@ -119,6 +119,9 @@ class TestEvict:
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("evict", "--help")
         assert rc == 0
+        assert "FILE" in out
+        assert "TOKEN" in out
+        assert out.index("FILE") < out.index("TOKEN")
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +171,39 @@ class TestToken:
         )
         assert "unrecognised" not in err
 
+    def test_custom_activities_are_after_path(self, monkeypatch, capsys):
+        from gfal.cli import tape
+        from gfal.cli.tape import CommandTape
+
+        calls = []
+        monkeypatch.setattr(
+            tape,
+            "retrieve_token",
+            lambda *args, **kwargs: calls.append((args, kwargs)) or "token",
+        )
+
+        cmd = CommandTape()
+        cmd.parse(
+            cmd.execute_token,
+            [
+                "gfal-token",
+                "https://storage.example/eos/file",
+                "DOWNLOAD",
+                "LIST",
+            ],
+        )
+        rc = cmd.execute_token()
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out == "token\n"
+        assert captured.err == ""
+        assert calls[0][0] == ("https://storage.example/eos/file",)
+        assert calls[0][1]["activities"] == ["DOWNLOAD", "LIST"]
+
     def test_help_exits_zero(self):
         rc, out, err = run_gfal("token", "--help")
         assert rc == 0
+        assert "PATH" in out
+        assert "ACTIVITIES" in out
+        assert out.index("PATH") < out.index("ACTIVITIES")

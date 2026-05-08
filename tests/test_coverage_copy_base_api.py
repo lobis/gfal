@@ -72,6 +72,23 @@ def _default_params(**kwargs):
     return SimpleNamespace(**defaults)
 
 
+class _CopyTraceFS:
+    def __init__(self, kind, token, calls):
+        self.kind = kind
+        self.token = token
+        self.calls = calls
+
+    def info(self, path):
+        self.calls.append((self.kind, "info", self.token))
+        if self.kind == "dst":
+            raise FileNotFoundError(path)
+        return {
+            "name": path,
+            "size": 128 * 1024 * 1024,
+            "type": "file",
+        }
+
+
 # ===================================================================
 # copy.py: _TransferDisplay
 # ===================================================================
@@ -588,6 +605,105 @@ class TestPredictedTransferMode:
         cmd.argv = []
         mode = cmd._predicted_transfer_mode("file:///a", "file:///b")
         assert mode == "streamed"
+
+
+class TestHttpTpcTokenTraceOrder:
+    def test_cli_defers_http_tpc_metadata_probes_to_library(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        cmd.argv = []
+        client = MagicMock()
+
+        with (
+            patch.object(cmd, "_build_client", return_value=client),
+            patch("gfal.core.tpc.should_use_http_tpc_tokens", return_value=True),
+        ):
+            cmd._do_copy(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                {"ssl_verify": False},
+            )
+
+        client.stat.assert_not_called()
+        client.copy.assert_called_once()
+
+    def test_copy_uses_gfal2_like_read_tokens_before_tpc_copy(self):
+        fs_calls = []
+        token_calls = []
+
+        def fake_url_to_fs(url, storage_options=None, **kwargs):
+            del kwargs
+            token = (storage_options or {}).get("bearer_token")
+            kind = "dst" if url.split("?", 1)[0].endswith("/dst") else "src"
+            return _CopyTraceFS(kind, token, fs_calls), f"/{kind}"
+
+        def fake_retrieve_token(url, **kwargs):
+            write = kwargs.get("write_access", False)
+            if url.endswith("/dst") and not write:
+                token = "destination-read-token"
+            elif url.endswith("/src") and not write:
+                token = "source-read-token"
+            elif url.endswith("/dst") and write:
+                token = "destination-write-token"
+            else:  # pragma: no cover - would indicate a wrong trace sequence
+                raise AssertionError(f"unexpected token request: {url} {kwargs}")
+            token_calls.append((url, kwargs.get("operation"), write, token))
+            return token
+
+        response = MagicMock()
+        response.status_code = 201
+        response.iter_lines.return_value = iter(["success: Created"])
+        session = MagicMock()
+        session.headers = {"Authorization": "Bearer destination-write-token"}
+        session.request.return_value = response
+
+        client = GfalClient(ssl_verify=False)
+        with (
+            patch("gfal.core.fs.url_to_fs", side_effect=fake_url_to_fs),
+            patch("gfal.core.tpc.retrieve_token", side_effect=fake_retrieve_token),
+            patch("gfal.core.tpc._build_session", return_value=session) as build,
+        ):
+            client.copy(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                options=CopyOptions(tpc="smart"),
+            )
+
+        assert token_calls == [
+            (
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                "read",
+                False,
+                "destination-read-token",
+            ),
+            (
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "read",
+                False,
+                "source-read-token",
+            ),
+            (
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                "write",
+                True,
+                "destination-write-token",
+            ),
+        ]
+        assert fs_calls == [
+            ("dst", "info", "destination-read-token"),
+            ("src", "info", "source-read-token"),
+        ]
+        session_opts = build.call_args.args[0]
+        assert session_opts["bearer_token"] == "destination-write-token"
+        assert session_opts["transfer_bearer_token"] == "source-read-token"
+        _, kwargs = session.request.call_args
+        assert kwargs["headers"]["Credential"] == "none"
+        assert kwargs["headers"]["RequireChecksumVerification"] == "false"
+        assert kwargs["headers"]["X-Number-Of-Streams"] == "0"
+        assert kwargs["headers"]["Secure-Redirection"] == "1"
+        assert kwargs["headers"]["TransferHeaderAuthorization"] == (
+            "Bearer source-read-token"
+        )
 
 
 # ===================================================================
