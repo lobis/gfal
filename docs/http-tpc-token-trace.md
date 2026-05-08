@@ -76,37 +76,63 @@ RequireChecksumVerification: false
 It did not first obtain SE-issued bearer tokens for the source and destination,
 and it did not send the source token as `TransferHeaderAuthorization`.
 
-## Current gfal tokenized trace
+## Current gfal tokenized trace after comparison
 
-After adding automatic tokenized EOS HTTPS TPC, `gfal cp -vvv` emits a
-gfal2-comparable token and COPY sequence:
+After the 2026-05-08 follow-up comparison, `gfal cp -vvv` emits the same
+critical token/probe/COPY ordering as native gfal2 for EOS HTTPS pull-mode TPC.
+This local trace was captured without a usable lxplus X.509 identity, so the
+final COPY returned `403`; the ordering before that failure is the compatibility
+signal.
 
 ```text
+INFO gfal.core.tpc: Using client X509 for HTTPS session authorization
+INFO gfal.core.token: Davix: > POST //eos/pilot/test/lobisapa/layout-erasure/tmp/destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual HTTP/1.1
+INFO gfal.core.token: > Content-Type: application/macaroon-request
+INFO gfal.core.token: > Content-Length: 61
+INFO gfal.core.token: Davix: < HTTP/1.1 200
+DEBUG gfal.core.token: (SEToken) Set bearer token in credential_map[https://.../destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual] (access=read) (validity=180)
+INFO gfal.core.tpc: Using bearer token for HTTPS request authorization
+
+DEBUG fsspec.http: Retrieve file size for https://.../destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual
+aiohttp.client_exceptions.ClientResponseError: 404, message='NOT_FOUND'
+
+INFO gfal.core.tpc: Using client X509 for HTTPS session authorization
 INFO gfal.core.token: Davix: > POST //eos/pilot/test/lobisapa/layout-erasure/traffic-shaping-files/source_1 HTTP/1.1
 INFO gfal.core.token: > Content-Type: application/macaroon-request
 INFO gfal.core.token: > Content-Length: 61
 INFO gfal.core.token: Davix: < HTTP/1.1 200
 DEBUG gfal.core.token: (SEToken) Set bearer token in credential_map[https://.../source_1] (access=read) (validity=180)
+INFO gfal.core.tpc: Using bearer token for HTTPS request authorization
 
-INFO gfal.core.token: Davix: > POST //eos/pilot/test/lobisapa/layout-erasure/tmp/destination_1778240871_gfal3_final?eos.app=traffic-shaping-benchmark-fts-manual HTTP/1.1
+INFO gfal.core.tpc: Using client X509 for HTTPS session authorization
+INFO gfal.core.token: Davix: > POST //eos/pilot/test/lobisapa/layout-erasure/tmp/destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual HTTP/1.1
 INFO gfal.core.token: > Content-Type: application/macaroon-request
 INFO gfal.core.token: > Content-Length: 82
 INFO gfal.core.token: Davix: < HTTP/1.1 200
-DEBUG gfal.core.token: (SEToken) Set bearer token in credential_map[https://.../destination_1778240871_gfal3_final?eos.app=traffic-shaping-benchmark-fts-manual] (access=write) (validity=130)
+DEBUG gfal.core.token: (SEToken) Set bearer token in credential_map[https://.../destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual] (access=write) (validity=130)
 
 INFO gfal.core.tpc: Using bearer token for HTTPS request authorization
-INFO gfal.core.tpc: Davix: > COPY //eos/pilot/test/lobisapa/layout-erasure/tmp/destination_1778240871_gfal3_final?eos.app=traffic-shaping-benchmark-fts-manual HTTP/1.1
+INFO gfal.core.tpc: Davix: > COPY //eos/pilot/test/lobisapa/layout-erasure/tmp/destination_1778245015_gfal3_compare_headers?eos.app=traffic-shaping-benchmark-fts-manual HTTP/1.1
 INFO gfal.core.tpc: > Content-Length: 0
+INFO gfal.core.tpc: > X-Number-Of-Streams: 0
+INFO gfal.core.tpc: > Secure-Redirection: 1
+INFO gfal.core.tpc: > RequireChecksumVerification: false
 INFO gfal.core.tpc: > Source: https://eospilot.cern.ch//eos/pilot/test/lobisapa/layout-erasure/traffic-shaping-files/source_1
 INFO gfal.core.tpc: > TransferHeaderAuthorization: <redacted bearer token>
 INFO gfal.core.tpc: > Credential: none
 INFO gfal.core.tpc: > Authorization: <redacted bearer token>
 ```
 
-On the local macOS machine used for this trace, the final COPY still returned
-`403 Permission denied` because no X.509 proxy or `~/.globus` certificate was
-available. The token/COPY sequence now matches the critical gfal2 header flow;
-validate final success in an environment with a usable CERN X.509 identity.
+The local macOS run ended with:
+
+```text
+INFO gfal.core.tpc: Davix: < HTTP/1.1 403
+gfal cp: 403, message='HTTP error', url='https://.../destination_1778245015_gfal3_compare_headers?...': Permission denied
+```
+
+This differs from the lxplus gfal2 run because lxplus has the CERN certificate
+material needed to mint an authorized destination write token. The request
+sequence and headers now match the critical gfal2 behavior.
 
 ## gfal2 successful result
 
@@ -262,21 +288,25 @@ INFO Copy succeeded using mode 3rd pull
 The Python HTTP TPC pull path now implements the critical tokenized COPY
 sequence for EOS HTTPS URLs:
 
-- it retrieves a source read token with 180 minutes of validity
-- it retrieves a destination write token with 130 minutes of validity
-- it sends the destination write token as `Authorization: Bearer ...` on the
-  `COPY` request
-- it sends the source read token as `TransferHeaderAuthorization: Bearer ...`
+- it retrieves a destination read token with 180 minutes of validity before
+  destination existence probes
+- it retrieves a source read token with 180 minutes of validity before source
+  metadata probes
+- it reuses the source read token as `TransferHeaderAuthorization: Bearer ...`
   on the `COPY` request
+- it retrieves a destination write token with 130 minutes of validity before
+  the final `COPY`
+- it sends the destination write token as `Authorization: Bearer ...`
 - it keeps `Credential: none`
+- it sends gfal2-compatible passive TPC headers:
+  `X-Number-Of-Streams: 0`, `Secure-Redirection: 1`, and
+  `RequireChecksumVerification: false`
 - it preserves `eos.app=traffic-shaping-benchmark-fts-manual` on destination
-  token and COPY URLs
+  token, probe, and COPY URLs
 
 Remaining gfal2 parity work:
 
-1. Retrieve a source read token before source stat/TPC.
-2. Retrieve a destination read token for destination probes.
-3. Preserve bearer authorization on redirected COPY requests if a server
+1. Preserve bearer authorization on redirected COPY requests if a server
    redirects to a different host and the HTTP client strips `Authorization`.
 
 The implemented `gfal-token` command provides the direct macaroon POST

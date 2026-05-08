@@ -133,6 +133,13 @@ def _is_eos_https_url(url: str) -> bool:
     return parsed.scheme.lower() == "https" and fs._is_eos_host(parsed.hostname)
 
 
+def should_use_http_tpc_tokens(src_url: str, dst_url: str, opts: dict) -> bool:
+    """Return True when gfal2-style SE-issued tokens apply to HTTP TPC."""
+    if opts.get("bearer_token"):
+        return False
+    return _is_eos_https_url(src_url) and _is_eos_https_url(dst_url)
+
+
 def _bearer_header(token: str) -> str:
     return token if token.lower().startswith("bearer ") else f"Bearer {token}"
 
@@ -151,13 +158,7 @@ def _request_target(url: str) -> str:
     return target
 
 
-def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
-    """Return TPC options augmented with gfal2-style SE-issued tokens."""
-    if opts.get("transfer_bearer_token") or opts.get("bearer_token"):
-        return dict(opts)
-    if not (_is_eos_https_url(src_url) and _is_eos_https_url(dst_url)):
-        return dict(opts)
-
+def _http_tpc_token_base_options(opts: dict) -> dict:
     token_base_opts = dict(opts)
     if "client_cert" not in token_base_opts:
         default_cert_pair = fs._default_globus_cert_pair()
@@ -166,15 +167,49 @@ def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
             token_base_opts["client_cert"] = default_cert
             token_base_opts["client_key"] = default_key or default_cert
 
+    return token_base_opts
+
+
+def http_tpc_read_token_options(
+    url: str,
+    opts: dict,
+    *,
+    operation: str = "read",
+) -> tuple[dict, str]:
+    """Return storage options using an EOS HTTP TPC read bearer token."""
+    token_base_opts = _http_tpc_token_base_options(opts)
     log.info("Using client X509 for HTTPS session authorization")
-    source_token = retrieve_token(
+    token = retrieve_token(
+        url,
+        validity=_HTTP_TPC_READ_TOKEN_VALIDITY,
+        write_access=False,
+        storage_options=token_base_opts,
+        operation=operation,
+    )
+    log.info("Using bearer token for HTTPS request authorization")
+
+    token_opts = dict(opts)
+    token_opts["bearer_token"] = token
+    return token_opts, token
+
+
+def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
+    """Return TPC options augmented with gfal2-style SE-issued tokens."""
+    if opts.get("bearer_token") and opts.get("transfer_bearer_token"):
+        return dict(opts)
+    if not should_use_http_tpc_tokens(src_url, dst_url, opts):
+        return dict(opts)
+
+    token_base_opts = _http_tpc_token_base_options(opts)
+    log.info("Using client X509 for HTTPS session authorization")
+    source_token = opts.get("transfer_bearer_token") or retrieve_token(
         src_url,
         validity=_HTTP_TPC_READ_TOKEN_VALIDITY,
         write_access=False,
         storage_options=token_base_opts,
         operation="read",
     )
-    destination_token = retrieve_token(
+    destination_token = opts.get("bearer_token") or retrieve_token(
         dst_url,
         validity=_HTTP_TPC_WRITE_TOKEN_VALIDITY,
         write_access=True,
@@ -312,6 +347,9 @@ def _http_tpc(
     headers = {
         "Overwrite": "T",
         "Content-Length": "0",
+        "X-Number-Of-Streams": "0",
+        "Secure-Redirection": "1",
+        "RequireChecksumVerification": "false",
     }
     if scitag is not None:
         headers["SciTag"] = str(scitag)

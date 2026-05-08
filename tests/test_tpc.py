@@ -244,7 +244,9 @@ class TestHttpTpc:
         assert "Source" in kwargs["headers"]
         assert kwargs["headers"]["Source"] == "https://src.example.com/file"
         assert kwargs["headers"]["Credential"] == "none"
-        assert "RequireChecksumVerification" not in kwargs["headers"]
+        assert kwargs["headers"]["RequireChecksumVerification"] == "false"
+        assert kwargs["headers"]["X-Number-Of-Streams"] == "0"
+        assert kwargs["headers"]["Secure-Redirection"] == "1"
 
     def test_eos_pull_mints_tokens_and_sets_transfer_headers(self):
         session, _ = self._make_session(201)
@@ -327,6 +329,50 @@ class TestHttpTpc:
             )
 
         retrieve.assert_not_called()
+
+    def test_existing_transfer_token_is_reused_for_source(self):
+        session, _ = self._make_session(201)
+
+        def fake_retrieve_token(url, **kwargs):
+            assert url == "https://eospilot.cern.ch//eos/pilot/dst"
+            assert kwargs["write_access"] is True
+            return "destination-write-token"
+
+        with (
+            patch.object(tpc_mod, "_build_session", return_value=session) as build,
+            patch.object(tpc_mod, "retrieve_token", side_effect=fake_retrieve_token),
+        ):
+            tpc_mod._http_tpc(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                {
+                    "ssl_verify": False,
+                    "transfer_bearer_token": "source-read-token",
+                },
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+            )
+
+        session_opts = build.call_args.args[0]
+        assert session_opts["bearer_token"] == "destination-write-token"
+        assert session_opts["transfer_bearer_token"] == "source-read-token"
+        _, kwargs = session.request.call_args
+        assert kwargs["headers"]["TransferHeaderAuthorization"] == (
+            "Bearer source-read-token"
+        )
+
+    def test_read_token_options_return_bearer_storage_options(self):
+        with patch.object(tpc_mod, "retrieve_token", return_value="read-token") as mint:
+            opts, minted = tpc_mod.http_tpc_read_token_options(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                {"ssl_verify": False},
+            )
+
+        assert minted == "read-token"
+        assert opts["bearer_token"] == "read-token"
+        mint.assert_called_once()
 
     def test_push_uses_copy_on_src(self):
         session, _ = self._make_session(201)

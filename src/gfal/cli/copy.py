@@ -1581,6 +1581,7 @@ class CommandCopy(base.CommandBase):
     def _do_copy(self, src_url, dst_url, opts):
         """High-level copy wrapper over the library client."""
         client = self._build_client()
+        copy_options = self._build_copy_options()
 
         if self.params.dry_run:
             src_st = client.stat(src_url)
@@ -1605,18 +1606,29 @@ class CommandCopy(base.CommandBase):
                 f"TPC not supported for {src_scheme}:// -> {dst_scheme}://"
             )
 
+        tokenized_http_tpc = False
+        if copy_options.tpc != "never" and copy_options.tpc_direction == "pull":
+            from gfal.core import tpc as tpc_module  # noqa: PLC0415
+
+            tokenized_http_tpc = tpc_module.should_use_http_tpc_tokens(
+                src_url,
+                dst_url,
+                opts,
+            )
+
         src_st = None
-        try:
-            src_st = client.stat(src_url)
-            dst_st = client.stat(dst_url)
-            if src_st.is_dir() and not dst_st.is_dir():
-                raise IsADirectoryError("Cannot copy a directory over a file")
-        except IsADirectoryError:
-            raise
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
+        if not tokenized_http_tpc:
+            try:
+                src_st = client.stat(src_url)
+                dst_st = client.stat(dst_url)
+                if src_st.is_dir() and not dst_st.is_dir():
+                    raise IsADirectoryError("Cannot copy a directory over a file")
+            except IsADirectoryError:
+                raise
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
 
         if src_st is not None and src_st.is_dir() and self.params.recursive:
             self._copy_directory_parallel(client, src_url, dst_url, opts, src_st)
@@ -1641,8 +1653,9 @@ class CommandCopy(base.CommandBase):
         if display.show_progress:
             display.start()
         self.progress_bar = display.progress_bar
-        with contextlib.suppress(Exception):
-            display.set_total_size(client.stat(src_url).st_size)
+        if not tokenized_http_tpc:
+            with contextlib.suppress(Exception):
+                display.set_total_size(client.stat(src_url).st_size)
 
         def _handle_warn(message):
             if self._handle_skip_warn(message, display):
@@ -1655,7 +1668,7 @@ class CommandCopy(base.CommandBase):
             client.copy(
                 src_url,
                 dst_url,
-                options=self._build_copy_options(),
+                options=copy_options,
                 progress_callback=display.update,
                 start_callback=display.start,
                 warn_callback=_handle_warn,
