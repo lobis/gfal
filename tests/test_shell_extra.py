@@ -126,11 +126,27 @@ class TestMain:
         rc = self._run_main("gfal", "ls", tmp_path.as_uri())
         assert rc == 0
 
-    def test_gfal_hyphenated_ls_is_rejected(self, capsys):
+    def test_gfal_hyphenated_ls_dispatches_ok(self, tmp_path):
+        (tmp_path / "hello.txt").write_text("hi")
+        rc = self._run_main("gfal-ls", tmp_path.as_uri())
+        assert rc == 0
+
+    def test_gfal_hyphenated_copy_dispatches_ok(self, tmp_path):
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        src.write_bytes(b"hello")
+        rc = self._run_main("gfal-copy", src.as_uri(), dst.as_uri())
+        assert rc == 0
+        assert dst.read_bytes() == b"hello"
+
+    def test_unknown_hyphenated_command_exits_nonzero(self, capsys):
         rc = self._run_main("gfal-ls", "/tmp")
+        assert rc == 0
+
+        rc = self._run_main("gfal-unknown-command")
         assert rc == 1
         captured = capsys.readouterr()
-        assert "gfal <command>" in captured.err
+        assert "Unknown command" in captured.err
 
     def test_unknown_command_exits_nonzero(self, capsys):
         rc = self._run_main("gfal", "unknown_cmd_xyz_abc")

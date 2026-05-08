@@ -95,13 +95,13 @@ class CommandTape(base.CommandBase):
     # evict
     # ------------------------------------------------------------------
 
+    @base.arg("file", type=base.surl, help="URI of the file to evict")
     @base.arg(
         "token",
         nargs="?",
         type=str,
         help="token from the bring-online request",
     )
-    @base.arg("file", type=base.surl, help="URI of the file to evict")
     def execute_evict(self):
         """Evict a file from a disk buffer (not supported)."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
@@ -131,13 +131,13 @@ class CommandTape(base.CommandBase):
         metavar="URL",
         help="token issuer URL",
     )
+    @base.arg("path", type=base.surl, help="URI to request token for")
     @base.arg(
         "activities",
         nargs="*",
         type=str,
         help="activities for macaroon request",
     )
-    @base.arg("path", type=base.surl, help="URI to request token for")
     def execute_token(self):
         """Retrieve a storage-element issued token."""
         if self.params.validity < 0:

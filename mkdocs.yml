@@ -49,4 +49,5 @@ nav:
   - EOS Public Examples: eospublic-examples.md
   - EOS authz tokens: eos-token-workflow.md
   - HTTP TPC token trace: http-tpc-token-trace.md
+  - gfal2 command compatibility audit: gfal2-command-compatibility-audit.md
   - CLI Reference: reference.md

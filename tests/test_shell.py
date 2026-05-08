@@ -2,7 +2,7 @@
 
 import pytest
 
-from gfal.cli.shell import _find_command
+from gfal.cli.shell import _find_command, _legacy_command_from_prog
 
 # ---------------------------------------------------------------------------
 # _find_command
@@ -16,6 +16,10 @@ class TestFindCommand:
 
     def test_cp_command(self):
         cls, method = _find_command("cp")
+        assert method.__name__ == "execute_cp"
+
+    def test_copy_alias(self):
+        cls, method = _find_command("copy")
         assert method.__name__ == "execute_cp"
 
     def test_mount_command(self):
@@ -61,14 +65,14 @@ class TestMainEntrypoint:
         assert proc.returncode != 0
         assert "Unknown command" in proc.stderr
 
-    def test_hyphenated_entrypoint_is_rejected(self):
+    def test_hyphenated_entrypoint_dispatches(self):
         import subprocess
         import sys
 
         from helpers import _subprocess_env
 
         script = (
-            "import sys; sys.argv=['gfal-ls', '/tmp'];"
+            "import sys; sys.argv=['gfal-ls', '--help'];"
             "from gfal.cli.shell import main; main()"
         )
         proc = subprocess.run(
@@ -78,8 +82,42 @@ class TestMainEntrypoint:
             encoding="utf-8",
             env=_subprocess_env(),
         )
-        assert proc.returncode != 0
-        assert "gfal <command>" in proc.stderr
+        assert proc.returncode == 0
+        assert "Usage: gfal-ls" in proc.stdout
+
+    def test_gfal_copy_entrypoint_aliases_cp(self):
+        import subprocess
+        import sys
+
+        from helpers import _subprocess_env
+
+        script = (
+            "import sys; sys.argv=['gfal-copy', '--help'];"
+            "from gfal.cli.shell import main; main()"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_subprocess_env(),
+        )
+        assert proc.returncode == 0
+        assert "Usage: gfal-copy" in proc.stdout
+
+
+class TestLegacyCommandFromProg:
+    def test_maps_gfal_copy_to_cp(self):
+        assert _legacy_command_from_prog("gfal-copy") == "cp"
+
+    def test_maps_gfal_cp_to_cp(self):
+        assert _legacy_command_from_prog("gfal-cp") == "cp"
+
+    def test_maps_other_hyphenated_commands(self):
+        assert _legacy_command_from_prog("gfal-token") == "token"
+
+    def test_ignores_parent_command(self):
+        assert _legacy_command_from_prog("gfal") is None
 
 
 # ---------------------------------------------------------------------------
