@@ -23,6 +23,8 @@ CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
 _EMITTED_ROOT_HTTPS_FALLBACKS: set[tuple[str, str]] = set()
 _WEBDAV_FS_CACHE_LOCK = threading.Lock()
 _WEBDAV_FS_CACHE: dict[tuple[Any, ...], Any] = {}
+_ROOT_XROOTD_BACKEND_ENV = "GFAL_XROOTD_BACKEND"
+_HTTPS_BACKEND_ENV = "GFAL_HTTPS_BACKEND"
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +251,33 @@ def _clear_cached_webdav_filesystems() -> None:
 atexit.register(_clear_cached_webdav_filesystems)
 
 
+def _backend_env(name: str) -> str:
+    return os.environ.get(name, "").strip().lower()
+
+
+def _root_uses_native_xrootd(storage_options: dict[str, Any]) -> bool:
+    backend = str(
+        storage_options.get("xrootd_backend") or _backend_env(_ROOT_XROOTD_BACKEND_ENV)
+    ).lower()
+    return backend == "native"
+
+
+def _https_uses_native_xrootd(storage_options: dict[str, Any]) -> bool:
+    backend = str(
+        storage_options.get("https_backend") or _backend_env(_HTTPS_BACKEND_ENV)
+    ).lower()
+    return backend == "xrootd"
+
+
+def _native_xrootd_url_to_fs(url: str, storage_options: dict[str, Any]):
+    from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+    return XRootDNativeFileSystem.from_url(
+        url,
+        storage_options,
+    )
+
+
 def url_to_fs(url, storage_options=None, **kwargs):
     """
     Return (AbstractFileSystem, path) for a URL.
@@ -269,11 +298,24 @@ def url_to_fs(url, storage_options=None, **kwargs):
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
 
+    if scheme == "https" and _https_uses_native_xrootd(storage_options):
+        _fix_xrootd_plugin_path()
+        return _native_xrootd_url_to_fs(url, storage_options)
+
     if scheme in ("http", "https"):
         return _get_cached_webdav_fs(storage_options), url
 
     if scheme in ("root", "xroot"):
         _fix_xrootd_plugin_path()
+        if _root_uses_native_xrootd(storage_options):
+            try:
+                return _native_xrootd_url_to_fs(url, storage_options)
+            except Exception as e:
+                if _is_missing_xrootd_dependency(e):
+                    https_url = _root_url_to_https(url)
+                    _warn_root_https_fallback(url, https_url)
+                    return _get_cached_webdav_fs(storage_options), https_url
+                raise
         try:
             fs, path = fsspec.url_to_fs(url, **storage_options)
         except Exception as e:
@@ -317,6 +359,8 @@ _GFAL_HTTP_OPTS = frozenset({
     "ipv4_only",
     "ipv6_only",
     "timeout",
+    "https_backend",
+    "xrootd_backend",
 })
 
 
