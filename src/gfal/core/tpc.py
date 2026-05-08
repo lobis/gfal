@@ -24,11 +24,19 @@ XRootD
 """
 
 import contextlib
+import logging
 import sys
 import threading
 from urllib.parse import urlparse
 
+from gfal.core import fs
+from gfal.core.token import retrieve_token
+
+log = logging.getLogger(__name__)
+
 _HTTP_TPC_SUBMIT_AHEAD_DELAY = 0.35
+_HTTP_TPC_READ_TOKEN_VALIDITY = 180
+_HTTP_TPC_WRITE_TOKEN_VALIDITY = 130
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -118,6 +126,67 @@ def _build_session(opts):
     from gfal.core.webdav import _make_session
 
     return _make_session(opts)
+
+
+def _is_eos_https_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme.lower() == "https" and fs._is_eos_host(parsed.hostname)
+
+
+def _bearer_header(token: str) -> str:
+    return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+
+def _redacted_header(value: str) -> str:
+    if not value:
+        return ""
+    return "<redacted bearer token>"
+
+
+def _request_target(url: str) -> str:
+    parsed = urlparse(url)
+    target = parsed.path or "/"
+    if parsed.query:
+        target += f"?{parsed.query}"
+    return target
+
+
+def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
+    """Return TPC options augmented with gfal2-style SE-issued tokens."""
+    if opts.get("transfer_bearer_token") or opts.get("bearer_token"):
+        return dict(opts)
+    if not (_is_eos_https_url(src_url) and _is_eos_https_url(dst_url)):
+        return dict(opts)
+
+    token_base_opts = dict(opts)
+    if "client_cert" not in token_base_opts:
+        default_cert_pair = fs._default_globus_cert_pair()
+        if default_cert_pair:
+            default_cert, default_key = default_cert_pair
+            token_base_opts["client_cert"] = default_cert
+            token_base_opts["client_key"] = default_key or default_cert
+
+    log.info("Using client X509 for HTTPS session authorization")
+    source_token = retrieve_token(
+        src_url,
+        validity=_HTTP_TPC_READ_TOKEN_VALIDITY,
+        write_access=False,
+        storage_options=token_base_opts,
+        operation="read",
+    )
+    destination_token = retrieve_token(
+        dst_url,
+        validity=_HTTP_TPC_WRITE_TOKEN_VALIDITY,
+        write_access=True,
+        storage_options=token_base_opts,
+        operation="write",
+    )
+    log.info("Using bearer token for HTTPS request authorization")
+
+    token_opts = dict(opts)
+    token_opts["bearer_token"] = destination_token
+    token_opts["transfer_bearer_token"] = source_token
+    return token_opts
 
 
 def _parse_tpc_body(
@@ -237,6 +306,9 @@ def _http_tpc(
     submission_ready_callback=None,
 ):
     """Send a WebDAV COPY request to initiate an HTTP TPC transfer."""
+    if mode == "pull":
+        opts = _with_http_tpc_token_auth(src_url, dst_url, opts)
+
     headers = {
         "Overwrite": "T",
         "Content-Length": "0",
@@ -254,17 +326,13 @@ def _http_tpc(
         # Destination server pulls from source (default / "pull")
         url = dst_url
         headers["Source"] = src_url
-        # We do not implement GridSite delegation today. For pull-mode TPC
-        # from public HTTP/WebDAV sources, explicitly opting out of delegation
-        # avoids a 403 on EOS/dCache and matches the successful curl pattern
-        # documented by dCache/WLCG. This is harmless when the source is public
-        # and does not worsen the current behaviour for delegated cases that we
-        # do not support yet.
+        transfer_token = opts.get("transfer_bearer_token")
+        if transfer_token:
+            headers["TransferHeaderAuthorization"] = _bearer_header(transfer_token)
+        # Match gfal2's token-based passive TPC mode: the destination receives
+        # a write bearer token as Authorization, and the source read token is
+        # forwarded via TransferHeaderAuthorization.
         headers["Credential"] = "none"
-        if no_delegation:
-            headers["RequireChecksumVerification"] = "false"
-        else:
-            headers["RequireChecksumVerification"] = "false"
         if verbose:
             sys.stderr.write(f"[TPC pull] {dst_url} <- {src_url}\n")
 
@@ -273,6 +341,14 @@ def _http_tpc(
     try:
         if start_callback is not None:
             start_callback()
+        log.info("Davix: > COPY %s HTTP/1.1", _request_target(url))
+        for name, value in headers.items():
+            if name.lower() == "transferheaderauthorization":
+                value = _redacted_header(value)
+            log.info("> %s: %s", name, value)
+        authorization = getattr(session, "headers", {}).get("Authorization")
+        if authorization:
+            log.info("> Authorization: %s", _redacted_header(authorization))
         resp = session.request(
             "COPY",
             url,
@@ -280,6 +356,7 @@ def _http_tpc(
             timeout=request_timeout,
             stream=True,
         )
+        log.info("Davix: < HTTP/1.1 %s", resp.status_code)
         _parse_tpc_body(
             resp,
             progress_callback=progress_callback,

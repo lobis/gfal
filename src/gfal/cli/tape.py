@@ -2,14 +2,17 @@
 Tape / staging commands: bringonline, archivepoll, evict, token.
 
 These commands require the native gfal2 C library (via python-gfal2) which is
-not available in this fsspec-based reimplementation.  The CLI interface is
-preserved for backwards compatibility; each command prints a clear
-"not supported" message and exits with code 1.
+not available in this fsspec-based reimplementation.  The tape/staging CLI
+interfaces are preserved for backwards compatibility; those commands print a
+clear "not supported" message and exit with code 1.  The HTTP token command is
+implemented directly.
 """
 
 import sys
 
 from gfal.cli import base  # noqa: E402
+from gfal.core.fs import build_storage_options
+from gfal.core.token import DEFAULT_TOKEN_VALIDITY, retrieve_token
 
 _NOT_SUPPORTED_MSG = (
     "{prog}: this command requires the native gfal2 C library and is not "
@@ -117,7 +120,7 @@ class CommandTape(base.CommandBase):
     @base.arg(
         "--validity",
         type=int,
-        default=None,
+        default=DEFAULT_TOKEN_VALIDITY,
         metavar="MINUTES",
         help="token validity in minutes",
     )
@@ -136,6 +139,26 @@ class CommandTape(base.CommandBase):
     )
     @base.arg("path", type=base.surl, help="URI to request token for")
     def execute_token(self):
-        """Retrieve a storage-element issued token (not supported)."""
-        sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
-        return 1
+        """Retrieve a storage-element issued token."""
+        if self.params.validity < 0:
+            sys.stderr.write("Validity must be a number >= 0\n")
+            return 1
+
+        activities = self.params.activities
+        if self.params.verbose:
+            if activities:
+                print("Will use user-provided activities")
+            else:
+                access = "write" if self.params.write else "read"
+                print(f"Will use default activities for {access} access")
+
+        token = retrieve_token(
+            self.params.path,
+            issuer=self.params.issuer,
+            validity=self.params.validity,
+            write_access=self.params.write,
+            activities=activities or None,
+            storage_options=build_storage_options(self.params),
+        )
+        sys.stdout.write(token + "\n")
+        return 0

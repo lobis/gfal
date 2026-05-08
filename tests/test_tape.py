@@ -1,10 +1,13 @@
-"""Tests for tape stub commands: bringonline, archivepoll, evict, token.
+"""Tests for tape/staging commands: bringonline, archivepoll, evict, token.
 
-All of these require the native gfal2 C library and are not supported in this
-fsspec-based implementation.  Each command must:
+The tape/staging commands require the native gfal2 C library and are not
+supported in this fsspec-based implementation.  Each of those commands must:
   - exit with a non-zero return code (1)
   - print a message to stderr explaining the limitation
   - accept its documented CLI flags without error (backwards compatibility)
+
+``gfal-token`` is implemented for HTTPS endpoints; these CLI-level tests cover
+argument compatibility without making real network calls.
 """
 
 from helpers import run_gfal
@@ -130,11 +133,12 @@ class TestToken:
         rc, out, err = run_gfal("token", f.as_uri())
         assert rc != 0
 
-    def test_prints_not_supported(self, tmp_path):
+    def test_rejects_non_https_urls(self, tmp_path):
         f = tmp_path / "file.txt"
         f.write_text("x")
         rc, out, err = run_gfal("token", f.as_uri())
-        assert "not supported" in err.lower() or "gfal2" in err.lower()
+        assert rc != 0
+        assert "https" in err.lower()
 
     def test_write_flag_accepted(self, tmp_path):
         f = tmp_path / "file.txt"
@@ -147,6 +151,14 @@ class TestToken:
         f.write_text("x")
         rc, out, err = run_gfal("token", "--validity", "60", f.as_uri())
         assert "unrecognised" not in err
+
+    def test_negative_validity_fails_before_network(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rc, out, err = run_gfal("token", "--validity", "-1", f.as_uri())
+        assert rc == 1
+        assert out == ""
+        assert "validity must be a number >= 0" in err.lower()
 
     def test_issuer_accepted(self, tmp_path):
         f = tmp_path / "file.txt"

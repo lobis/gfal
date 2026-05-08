@@ -99,7 +99,7 @@ src/gfal/
     ls.py          gfal ls (CommandLs)
     copy.py        gfal cp (CommandCopy)
     rm.py          gfal rm (CommandRm)
-    tape.py        tape/SRM stubs (bringonline, archivepoll, evict, token)
+    tape.py        tape/SRM stubs (bringonline, archivepoll, evict) + token CLI
     progress.py    Terminal progress bar for copy operations
   tui/
     __init__.py    GfalTui Textual app + CommandTui registration
@@ -380,6 +380,22 @@ with contextlib.suppress(ValueError, OSError):
 
 **Fallback logic**: `NotImplementedError` from `do_tpc` is caught in `_do_copy`; unless `--tpc-only` was set the copy continues with client-side streaming. Any other exception propagates as a real error.
 
+## Storage-issued tokens (`token.py`)
+
+`gfal-token` is implemented for HTTPS/DAVS endpoints. It mirrors gfal2's HTTP
+plugin token flow:
+
+- without `--issuer`, POST directly to the target URL with
+  `Content-Type: application/macaroon-request`
+- with `--issuer`, first try SciTokens-style discovery and
+  `grant_type=client_credentials`, then fall back to OAuth-style macaroon
+  discovery, then finally to direct macaroon POST against the target URL
+- default read activities are `LIST,DOWNLOAD`
+- `--write` default activities are `LIST,DOWNLOAD,MANAGE,UPLOAD,DELETE`
+- explicit positional activities override the read/write defaults
+- macaroon request JSON spacing intentionally matches gfal2 because some tests
+  assert the exact request body
+
 ## SSH / remote command policy
 
 The reference system for gfal2-util CLI compatibility is `lxplus.cern.ch`.
@@ -419,7 +435,6 @@ compatibility.  Each stub prints a clear "not supported" message and exits 1.
 | `gfal-bringonline` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
 | `gfal-archivepoll` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
 | `gfal-evict` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
-| `gfal-token` | Requires gfal2 macaroon/token support | CLI stub in `tape.py` |
 | `gfal-legacy-*` | Legacy LFC commands; no active users | Not implemented |
 | `-D`/`--definition` | gfal2 parameter override; no gfal2 | Accepted, ignored (common args) |
 | `-C`/`--client-info` | gfal2 client metadata; no gfal2 | Accepted, ignored (common args) |

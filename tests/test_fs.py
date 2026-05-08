@@ -345,11 +345,13 @@ class TestIsDir:
 
 
 class TestBuildStorageOptions:
-    def test_no_cert(self):
+    def test_no_cert(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
         from gfal.core.fs import build_storage_options
 
+        monkeypatch.delenv("X509_USER_PROXY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         assert opts == {}
@@ -436,30 +438,49 @@ class TestBuildStorageOptions:
         # The proxy path must NOT appear
         assert opts.get("client_cert") != str(proxy)
 
-    def test_x509_proxy_nonexistent_path_ignored(self, monkeypatch):
+    def test_x509_proxy_nonexistent_path_ignored(self, monkeypatch, tmp_path):
         """A non-existent path in X509_USER_PROXY is silently ignored."""
         from types import SimpleNamespace
 
         from gfal.core.fs import build_storage_options
 
         monkeypatch.setenv("X509_USER_PROXY", "/tmp/this_does_not_exist_gfal_test.pem")
+        monkeypatch.setenv("HOME", str(tmp_path))
 
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         # A non-existent proxy file must not be forwarded as client_cert
         assert "client_cert" not in opts
 
-    def test_x509_proxy_empty_string_ignored(self, monkeypatch):
+    def test_x509_proxy_empty_string_ignored(self, monkeypatch, tmp_path):
         """An empty X509_USER_PROXY is silently ignored."""
         from types import SimpleNamespace
 
         from gfal.core.fs import build_storage_options
 
         monkeypatch.setenv("X509_USER_PROXY", "")
+        monkeypatch.setenv("HOME", str(tmp_path))
 
         params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
         opts = build_storage_options(params)
         assert opts == {}
+
+    def test_default_globus_cert_pair_helper_uses_home(self, monkeypatch, tmp_path):
+        from gfal.core.fs import _default_globus_cert_pair
+
+        globus = tmp_path / ".globus"
+        globus.mkdir()
+        cert = globus / "usercert.pem"
+        key = globus / "userkey.pem"
+        cert.write_text("cert")
+        key.write_text("key")
+        monkeypatch.delenv("X509_USER_PROXY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        default_cert, default_key = _default_globus_cert_pair()
+
+        assert default_cert == str(cert)
+        assert default_key == str(key)
 
 
 # ---------------------------------------------------------------------------
