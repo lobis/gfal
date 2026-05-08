@@ -948,14 +948,26 @@ jobs:
       run: |
         export PKG_VERSION="$(conda run -n gfal-conda-build python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
+        export PKG_OUTPUT="$(
+          conda run -n gfal-conda-build \
+            python -m conda_build.cli.main_build \
+            --override-channels -c conda-forge --output recipe | tail -n 1
+        )"
+        echo "Conda package output: $PKG_OUTPUT"
+        test -f "$PKG_OUTPUT"
         conda run --no-capture-output -n gfal-conda-build \
           python -m conda_build.cli.main_build \
-          --override-channels -c conda-forge recipe --output-folder conda-dist
+          --override-channels -c conda-forge recipe
+        mkdir -p conda-dist/noarch
+        cp "$PKG_OUTPUT" conda-dist/noarch/
+        find conda-dist -maxdepth 3 -type f -print
+        test -n "$(find conda-dist/noarch -maxdepth 1 -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) -print -quit)"
     - name: Store conda package
       uses: actions/upload-artifact@v7
       with:
         name: conda-package-distributions
         path: conda-dist/noarch/*
+        if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # 3. Validation & Repository Update
