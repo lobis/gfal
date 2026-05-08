@@ -48,4 +48,5 @@ nav:
   - Python API: python-api.md
   - EOS Public Examples: eospublic-examples.md
   - EOS authz tokens: eos-token-workflow.md
+  - HTTP TPC token trace: http-tpc-token-trace.md
   - CLI Reference: reference.md

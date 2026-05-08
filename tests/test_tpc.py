@@ -244,7 +244,56 @@ class TestHttpTpc:
         assert "Source" in kwargs["headers"]
         assert kwargs["headers"]["Source"] == "https://src.example.com/file"
         assert kwargs["headers"]["Credential"] == "none"
-        assert kwargs["headers"]["RequireChecksumVerification"] == "false"
+        assert "RequireChecksumVerification" not in kwargs["headers"]
+
+    def test_eos_pull_mints_tokens_and_sets_transfer_headers(self):
+        session, _ = self._make_session(201)
+        tokens = ["source-read-token", "destination-write-token"]
+
+        def fake_retrieve_token(url, **kwargs):
+            assert url.startswith("https://eospilot.cern.ch/")
+            return tokens.pop(0)
+
+        with (
+            patch.object(tpc_mod, "_build_session", return_value=session) as build,
+            patch.object(tpc_mod, "retrieve_token", side_effect=fake_retrieve_token),
+        ):
+            tpc_mod._http_tpc(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                {"ssl_verify": False},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+            )
+
+        build.assert_called_once()
+        session_opts = build.call_args.args[0]
+        assert session_opts["bearer_token"] == "destination-write-token"
+        assert session_opts["transfer_bearer_token"] == "source-read-token"
+        _, kwargs = session.request.call_args
+        assert kwargs["headers"]["TransferHeaderAuthorization"] == (
+            "Bearer source-read-token"
+        )
+
+    def test_existing_bearer_token_skips_auto_token_retrieval(self):
+        session, _ = self._make_session(201)
+        with (
+            patch.object(tpc_mod, "_build_session", return_value=session),
+            patch.object(tpc_mod, "retrieve_token") as retrieve,
+        ):
+            tpc_mod._http_tpc(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                {"bearer_token": "existing-token"},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+            )
+
+        retrieve.assert_not_called()
 
     def test_push_uses_copy_on_src(self):
         session, _ = self._make_session(201)

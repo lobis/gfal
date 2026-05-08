@@ -341,6 +341,12 @@ def build_storage_options(params):
         if proxy and Path(proxy).is_file():
             cert = proxy
             key = proxy
+    if not cert:
+        default_cert = Path.home() / ".globus" / "usercert.pem"
+        default_key = Path.home() / ".globus" / "userkey.pem"
+        if default_cert.is_file() and default_key.is_file():
+            cert = str(default_cert)
+            key = str(default_key)
     if cert:
         opts["client_cert"] = cert
         opts["client_key"] = key or cert
