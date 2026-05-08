@@ -949,13 +949,12 @@ jobs:
         set -euxo pipefail
         export PKG_VERSION="$(conda run -n gfal-conda-build python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
-        export CONDA_BLD_DIR="$PWD/conda-bld"
+        export CONDA_BLD_DIR="${RUNNER_TEMP:-/tmp}/conda-bld"
         export CONDA_ARTIFACT_DIR="$PWD/conda-dist/noarch"
         rm -rf "$CONDA_BLD_DIR" conda-dist
         mkdir -p "$CONDA_BLD_DIR" "$CONDA_ARTIFACT_DIR"
         conda run --no-capture-output -n gfal-conda-build \
-          python -m conda_build.cli.main_build \
-          --override-channels -c conda-forge --no-anaconda-upload \
+          conda-build --override-channels -c conda-forge --no-anaconda-upload \
           --croot "$CONDA_BLD_DIR" recipe
         find "$CONDA_BLD_DIR" -maxdepth 5 -type f -print
         PKG_OUTPUT="$(
