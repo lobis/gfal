@@ -948,18 +948,22 @@ jobs:
       run: |
         export PKG_VERSION="$(conda run -n gfal-conda-build python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
-        export PKG_OUTPUT="$(
-          conda run -n gfal-conda-build \
-            python -m conda_build.cli.main_build \
-            --override-channels -c conda-forge --output recipe | tail -n 1
+        rm -rf conda-dist
+        conda run --no-capture-output -n gfal-conda-build \
+          python -m conda_build.cli.main_build \
+          --override-channels -c conda-forge recipe --output-folder conda-dist
+        find conda-dist -maxdepth 5 -type f -print
+        PKG_OUTPUT="$(
+          find conda-dist -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) \
+            | sort \
+            | head -n 1
         )"
         echo "Conda package output: $PKG_OUTPUT"
         test -f "$PKG_OUTPUT"
-        conda run --no-capture-output -n gfal-conda-build \
-          python -m conda_build.cli.main_build \
-          --override-channels -c conda-forge recipe
         mkdir -p conda-dist/noarch
-        cp "$PKG_OUTPUT" conda-dist/noarch/
+        if [ "$(dirname "$PKG_OUTPUT")" != "conda-dist/noarch" ]; then
+          cp "$PKG_OUTPUT" conda-dist/noarch/
+        fi
         find conda-dist -maxdepth 3 -type f -print
         test -n "$(find conda-dist/noarch -maxdepth 1 -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) -print -quit)"
     - name: Store conda package
