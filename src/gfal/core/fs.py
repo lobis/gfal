@@ -342,8 +342,9 @@ def build_storage_options(params):
             cert = proxy
             key = proxy
     if not cert:
-        default_cert = Path.home() / ".globus" / "usercert.pem"
-        default_key = Path.home() / ".globus" / "userkey.pem"
+        home = Path(os.environ.get("HOME") or str(Path.home()))
+        default_cert = home / ".globus" / "usercert.pem"
+        default_key = home / ".globus" / "userkey.pem"
         if default_cert.is_file() and default_key.is_file():
             cert = str(default_cert)
             key = str(default_key)
