@@ -160,8 +160,9 @@ def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
 
     token_base_opts = dict(opts)
     if "client_cert" not in token_base_opts:
-        default_cert, default_key = fs._default_globus_cert_pair()
-        if default_cert:
+        default_cert_pair = fs._default_globus_cert_pair()
+        if default_cert_pair:
+            default_cert, default_key = default_cert_pair
             token_base_opts["client_cert"] = default_cert
             token_base_opts["client_key"] = default_key or default_cert
 
