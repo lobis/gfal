@@ -12,13 +12,20 @@ import sys
 
 from gfal.cli import base  # noqa: E402
 from gfal.core.fs import build_storage_options
-from gfal.core.token import DEFAULT_TOKEN_VALIDITY, retrieve_token
+from gfal.core.token_defaults import DEFAULT_TOKEN_VALIDITY
 
 _NOT_SUPPORTED_MSG = (
     "{prog}: this command requires the native gfal2 C library and is not "
     "supported in this fsspec-based implementation.\n"
     "Use the original gfal2-util package for tape/staging operations.\n"
 )
+
+
+def retrieve_token(*args, **kwargs):
+    """Import the HTTP token implementation only when ``gfal token`` runs."""
+    from gfal.core.token import retrieve_token as _retrieve_token
+
+    return _retrieve_token(*args, **kwargs)
 
 
 class CommandTape(base.CommandBase):
