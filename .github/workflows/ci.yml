@@ -946,24 +946,26 @@ jobs:
     - name: Build conda package
       shell: bash -el {0}
       run: |
+        set -euxo pipefail
         export PKG_VERSION="$(conda run -n gfal-conda-build python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
-        rm -rf conda-dist
+        export CONDA_BLD_DIR="$PWD/conda-bld"
+        export CONDA_ARTIFACT_DIR="$PWD/conda-dist/noarch"
+        rm -rf "$CONDA_BLD_DIR" conda-dist
+        mkdir -p "$CONDA_BLD_DIR" "$CONDA_ARTIFACT_DIR"
         conda run --no-capture-output -n gfal-conda-build \
           python -m conda_build.cli.main_build \
-          --override-channels -c conda-forge recipe --output-folder conda-dist
-        find conda-dist -maxdepth 5 -type f -print
+          --override-channels -c conda-forge --no-anaconda-upload \
+          --croot "$CONDA_BLD_DIR" recipe
+        find "$CONDA_BLD_DIR" -maxdepth 5 -type f -print
         PKG_OUTPUT="$(
-          find conda-dist -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) \
+          find "$CONDA_BLD_DIR" -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) \
             | sort \
             | head -n 1
         )"
         echo "Conda package output: $PKG_OUTPUT"
         test -f "$PKG_OUTPUT"
-        mkdir -p conda-dist/noarch
-        if [ "$(dirname "$PKG_OUTPUT")" != "conda-dist/noarch" ]; then
-          cp "$PKG_OUTPUT" conda-dist/noarch/
-        fi
+        cp "$PKG_OUTPUT" "$CONDA_ARTIFACT_DIR/"
         find conda-dist -maxdepth 3 -type f -print
         test -n "$(find conda-dist/noarch -maxdepth 1 -type f \( -name 'gfal-*.conda' -o -name 'gfal-*.tar.bz2' \) -print -quit)"
     - name: Store conda package
