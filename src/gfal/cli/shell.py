@@ -58,20 +58,12 @@ def _ensure_xrootd_dylib_path():
 
 
 def _find_command(cmd):
-    cmd = {"copy": "cp"}.get(cmd, cmd)
     method_name = "execute_" + cmd
     for cls in base.CommandBase.__subclasses__():
         method = getattr(cls, method_name, None)
         if method is not None:
             return cls, method
     raise ValueError(f"Unknown command: {cmd!r}")
-
-
-def _legacy_command_from_prog(prog_stem):
-    if not prog_stem.startswith("gfal-"):
-        return None
-    cmd = prog_stem[len("gfal-") :]
-    return {"copy": "cp"}.get(cmd, cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -301,17 +293,9 @@ def main(argv=None):
         inst.parse(func, [f"gfal {subcmd}"] + argv[2:])
         sys.exit(inst.execute(func))
 
-    legacy_cmd = _legacy_command_from_prog(prog_stem)
-    if legacy_cmd is not None:
-        try:
-            cls, func = _find_command(legacy_cmd)
-        except ValueError as e:
-            sys.stderr.write(f"{e}\n")
-            sys.exit(1)
-
-        inst = cls()
-        inst.parse(func, argv)
-        sys.exit(inst.execute(func))
-
-    sys.stderr.write(f"Unknown command: {Path(argv[0]).name}\n")
+    sys.stderr.write(
+        "This package exposes the CLI as 'gfal <command>', not as hyphenated "
+        f"executables like '{Path(argv[0]).name}'. Use a shell alias if you need "
+        "that form.\n"
+    )
     sys.exit(1)
