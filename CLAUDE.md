@@ -51,7 +51,20 @@ To verify the install is editable (source changes are picked up), check that the
 pip install -e .
 ```
 
-This registers all `gfal-*` executables as console scripts. Reinstall after changes to `pyproject.toml` (new entry points). Source edits in `src/` are picked up immediately without reinstalling.
+This registers the `gfal` executable as a console script. Reinstall after changes to `pyproject.toml` (new entry points). Source edits in `src/` are picked up immediately without reinstalling.
+
+### CLI command surface
+
+This project intentionally exposes commands as `gfal <command>` (for example
+`gfal ls`, `gfal cp`, `gfal token`), not as legacy hyphenated gfal2-util
+executables like `gfal-ls`, `gfal-copy`, or `gfal-token`.
+
+When auditing compatibility with gfal2-util, compare flags, output, exit codes,
+and protocol behavior, but **do not add `gfal-*` console scripts or hyphenated
+entrypoint dispatch** unless the human maintainer explicitly asks for that
+packaging change. The captured gfal2 help uses legacy executable names because
+that is how gfal2-util is packaged, not because this project should expose the
+same executable names.
 
 ## Commit authorship policy
 
@@ -107,12 +120,15 @@ src/gfal/
 
 ## How dispatch works
 
-Every `gfal-*` executable calls the same `shell.main()`. It reads `sys.argv[0]`, strips the `gfal-` prefix, resolves any aliases (`cp` → `copy`), then finds the `CommandBase` subclass that has an `execute_<cmd>` method. That method is decorated with `@arg(...)` to declare its argparse arguments.
+The `gfal` executable calls `shell.main()`. For `gfal <command>`, the dispatcher
+uses the second argv element as the command name, then finds the `CommandBase`
+subclass that has an `execute_<cmd>` method. That method is decorated with
+`@arg(...)` to declare its argparse arguments.
 
 To add a new command:
 1. Add an `execute_<name>(self)` method to an existing or new `CommandBase` subclass.
-2. Add a `gfal-<name> = "gfal.cli.shell:main"` entry point in `pyproject.toml` and reinstall.
-3. Import the module in `shell.py` so the subclass is registered.
+2. Import the module in `shell.py` so the subclass is registered.
+3. Add tests for `gfal <name>` dispatch and command-specific flags.
 
 ## fsspec integration (`fs.py`)
 
@@ -363,11 +379,11 @@ with contextlib.suppress(ValueError, OSError):
 
 `CommandBase._format_error(e)` converts exceptions to user-friendly strings. It handles three cases: real OS errors (already have `strerror` in `str(e)`), fsspec-style `OSError` subclasses with no `strerror` (appends POSIX description from the type), and aiohttp `ClientResponseError` with an HTTP `status` code (maps to POSIX description).
 
-**Debugging tip:** If `gfal-<cmd>:` shows an empty error message, the exception is likely `NotImplementedError` or another exception type whose `str()` is `""`. These are easy to miss because the output looks like a blank error rather than a crash.
+**Debugging tip:** If `gfal <cmd>:` shows an empty error message, the exception is likely `NotImplementedError` or another exception type whose `str()` is `""`. These are easy to miss because the output looks like a blank error rather than a crash.
 
 ## Third-party copy (`tpc.py`)
 
-`gfal-cp` supports TPC via `--tpc` (attempt TPC, fall back to streaming) and `--tpc-only` (require TPC). The dispatch in `copy.py:_do_copy` calls `tpc.do_tpc()` before falling through to `_copy_file`.
+`gfal cp` supports TPC via `--tpc` (attempt TPC, fall back to streaming) and `--tpc-only` (require TPC). The dispatch in `copy.py:_do_copy` calls `tpc.do_tpc()` before falling through to `_copy_file`.
 
 **HTTP/HTTPS TPC** — WebDAV `COPY` method:
 - `--tpc-mode pull` (default): client sends `COPY <dst>` with `Source: <src>` — destination pulls.
@@ -382,7 +398,7 @@ with contextlib.suppress(ValueError, OSError):
 
 ## Storage-issued tokens (`token.py`)
 
-`gfal-token` is implemented for HTTPS/DAVS endpoints. It mirrors gfal2's HTTP
+`gfal token` is implemented for HTTPS/DAVS endpoints. It mirrors gfal2's HTTP
 plugin token flow:
 
 - without `--issuer`, POST directly to the target URL with
@@ -432,9 +448,9 @@ compatibility.  Each stub prints a clear "not supported" message and exits 1.
 
 | Command / flag | Reason | Status |
 |----------------|--------|--------|
-| `gfal-bringonline` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
-| `gfal-archivepoll` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
-| `gfal-evict` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
+| `gfal bringonline` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
+| `gfal archivepoll` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
+| `gfal evict` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
 | `gfal-legacy-*` | Legacy LFC commands; no active users | Not implemented |
 | `-D`/`--definition` | gfal2 parameter override; no gfal2 | Accepted, ignored (common args) |
 | `-C`/`--client-info` | gfal2 client metadata; no gfal2 | Accepted, ignored (common args) |

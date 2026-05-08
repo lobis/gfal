@@ -107,6 +107,39 @@ class TestClickShellCompletion:
         assert "_gfal_completion" in out
         assert "complete" in out
 
+    def test_completion_import_does_not_require_aiohttp(self):
+        """RPM completion generation runs before runtime HTTP deps are installed."""
+        script = r"""
+import importlib.abc
+import sys
+
+
+class BlockAiohttp(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "aiohttp" or fullname.startswith("aiohttp."):
+            raise ModuleNotFoundError("No module named 'aiohttp'")
+        return None
+
+
+sys.meta_path.insert(0, BlockAiohttp())
+sys.argv = ["gfal"]
+from gfal.cli.shell import main
+
+main()
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env={
+                **_subprocess_env(),
+                "_GFAL_COMPLETE": "zsh_source",
+            },
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "_gfal_completion" in proc.stdout
+
     def test_zsh_source_script_is_generated(self):
         """``_GFAL_COMPLETE=zsh_source gfal`` emits a zsh completion function."""
         rc, out, _ = _run_completion([], env_extra={"_GFAL_COMPLETE": "zsh_source"})

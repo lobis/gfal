@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from urllib.parse import quote, urlparse, urlunparse
 
 from gfal.core.fs import eos_authz_url, normalize_url
+from gfal.core.token_defaults import DEFAULT_TOKEN_VALIDITY
 from gfal.core.webdav import HttpStatusError, _SyncAiohttpSession
 
 log = logging.getLogger(__name__)
 
 RESPONSE_MAX_SIZE = 1024 * 1024
-DEFAULT_TOKEN_VALIDITY = 60
 READ_ACTIVITIES = ("LIST", "DOWNLOAD")
 WRITE_ACTIVITIES = ("LIST", "DOWNLOAD", "MANAGE", "UPLOAD", "DELETE")
 
