@@ -325,6 +325,15 @@ def _generic_storage_opts(opts: dict) -> dict:
     return {k: v for k, v in opts.items() if k not in _GFAL_HTTP_OPTS}
 
 
+def _default_globus_cert_pair() -> tuple[str, str] | tuple[None, None]:
+    home = Path(os.environ.get("HOME") or str(Path.home()))
+    default_cert = home / ".globus" / "usercert.pem"
+    default_key = home / ".globus" / "userkey.pem"
+    if default_cert.is_file() and default_key.is_file():
+        return str(default_cert), str(default_key)
+    return None, None
+
+
 def build_storage_options(params):
     """Build fsspec storage_options from parsed CLI params.
 
@@ -341,13 +350,6 @@ def build_storage_options(params):
         if proxy and Path(proxy).is_file():
             cert = proxy
             key = proxy
-    if not cert:
-        home = Path(os.environ.get("HOME") or str(Path.home()))
-        default_cert = home / ".globus" / "usercert.pem"
-        default_key = home / ".globus" / "userkey.pem"
-        if default_cert.is_file() and default_key.is_file():
-            cert = str(default_cert)
-            key = str(default_key)
     if cert:
         opts["client_cert"] = cert
         opts["client_key"] = key or cert

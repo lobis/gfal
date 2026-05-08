@@ -277,6 +277,39 @@ class TestHttpTpc:
             "Bearer source-read-token"
         )
 
+    def test_eos_pull_uses_default_globus_cert_for_token_retrieval(self):
+        session, _ = self._make_session(201)
+        token_calls = []
+
+        def fake_retrieve_token(url, **kwargs):
+            token_calls.append(kwargs["storage_options"])
+            return "token"
+
+        with (
+            patch.object(tpc_mod, "_build_session", return_value=session),
+            patch.object(tpc_mod, "retrieve_token", side_effect=fake_retrieve_token),
+            patch.object(
+                tpc_mod.fs,
+                "_default_globus_cert_pair",
+                return_value=(
+                    "/home/user/.globus/usercert.pem",
+                    "/home/user/.globus/userkey.pem",
+                ),
+            ),
+        ):
+            tpc_mod._http_tpc(
+                "https://eospilot.cern.ch//eos/pilot/src",
+                "https://eospilot.cern.ch//eos/pilot/dst",
+                {"ssl_verify": False},
+                mode="pull",
+                timeout=None,
+                verbose=False,
+                scitag=None,
+            )
+
+        assert token_calls[0]["client_cert"] == "/home/user/.globus/usercert.pem"
+        assert token_calls[0]["client_key"] == "/home/user/.globus/userkey.pem"
+
     def test_existing_bearer_token_skips_auto_token_retrieval(self):
         session, _ = self._make_session(201)
         with (

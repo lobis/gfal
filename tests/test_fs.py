@@ -465,10 +465,8 @@ class TestBuildStorageOptions:
         opts = build_storage_options(params)
         assert opts == {}
 
-    def test_default_globus_cert_pair_used(self, monkeypatch, tmp_path):
-        from types import SimpleNamespace
-
-        from gfal.core.fs import build_storage_options
+    def test_default_globus_cert_pair_helper_uses_home(self, monkeypatch, tmp_path):
+        from gfal.core.fs import _default_globus_cert_pair
 
         globus = tmp_path / ".globus"
         globus.mkdir()
@@ -479,11 +477,10 @@ class TestBuildStorageOptions:
         monkeypatch.delenv("X509_USER_PROXY", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
 
-        params = SimpleNamespace(cert=None, key=None, ssl_verify=True)
-        opts = build_storage_options(params)
+        default_cert, default_key = _default_globus_cert_pair()
 
-        assert opts["client_cert"] == str(cert)
-        assert opts["client_key"] == str(key)
+        assert default_cert == str(cert)
+        assert default_key == str(key)
 
 
 # ---------------------------------------------------------------------------

@@ -158,19 +158,26 @@ def _with_http_tpc_token_auth(src_url: str, dst_url: str, opts: dict) -> dict:
     if not (_is_eos_https_url(src_url) and _is_eos_https_url(dst_url)):
         return dict(opts)
 
+    token_base_opts = dict(opts)
+    if "client_cert" not in token_base_opts:
+        default_cert, default_key = fs._default_globus_cert_pair()
+        if default_cert:
+            token_base_opts["client_cert"] = default_cert
+            token_base_opts["client_key"] = default_key or default_cert
+
     log.info("Using client X509 for HTTPS session authorization")
     source_token = retrieve_token(
         src_url,
         validity=_HTTP_TPC_READ_TOKEN_VALIDITY,
         write_access=False,
-        storage_options=opts,
+        storage_options=token_base_opts,
         operation="read",
     )
     destination_token = retrieve_token(
         dst_url,
         validity=_HTTP_TPC_WRITE_TOKEN_VALIDITY,
         write_access=True,
-        storage_options=opts,
+        storage_options=token_base_opts,
         operation="write",
     )
     log.info("Using bearer token for HTTPS request authorization")
