@@ -933,7 +933,7 @@ jobs:
         key: ${{ runner.os }}-conda-pkgs-v1-${{ hashFiles('pyproject.toml', 'recipe/meta.yaml', '.github/workflows/ci.yml') }}
     - uses: conda-incubator/setup-miniconda@v4
       with:
-        activate-environment: conda-build
+        activate-environment: gfal-conda-build
         auto-activate-base: false
         channels: conda-forge
         channel-priority: strict
@@ -942,13 +942,15 @@ jobs:
         pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
     - name: Install conda build dependencies
       shell: bash -el {0}
-      run: conda install -y conda-build anaconda-client hatchling hatch-vcs
+      run: conda install -y -n gfal-conda-build conda-build anaconda-client hatchling hatch-vcs
     - name: Build conda package
       shell: bash -el {0}
       run: |
-        export PKG_VERSION="$(python -m hatchling version)"
+        export PKG_VERSION="$(conda run -n gfal-conda-build python -m hatchling version)"
         export SETUPTOOLS_SCM_PRETEND_VERSION="$PKG_VERSION"
-        conda build --override-channels -c conda-forge recipe --output-folder conda-dist
+        conda run --no-capture-output -n gfal-conda-build \
+          python -m conda_build.cli.main_build \
+          --override-channels -c conda-forge recipe --output-folder conda-dist
     - name: Store conda package
       uses: actions/upload-artifact@v7
       with:
