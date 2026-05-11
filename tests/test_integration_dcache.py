@@ -138,11 +138,6 @@ def _cleanup_stale_run_dirs(proxy_cert: str) -> None:
 
 @pytest.fixture(scope="session")
 def dcache_run_dir(proxy_cert):
-    rc, out, err = _run("mkdir", proxy_cert, "-p", _DCACHE_BASE)
-    require_test_prereq(
-        rc == 0, f"Could not create dCache CI root {_DCACHE_BASE}: {err or out}"
-    )
-
     _cleanup_stale_run_dirs(proxy_cert)
 
     url = f"{_DCACHE_BASE}/{_run_dir_name()}"
