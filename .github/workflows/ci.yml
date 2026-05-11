@@ -275,6 +275,7 @@ jobs:
         timeout 30m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
           tests/test_integration_eospublic.py \
+          tests/test_integration_dcache.py \
           tests/test_integration_eospilot.py
 
   integration-compare-gfal2:
