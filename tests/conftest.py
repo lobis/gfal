@@ -90,34 +90,47 @@ def _download_cern_ca() -> Path:
     return _CERN_CA_PEM
 
 
+def _base_ca_bundle() -> Path:
+    """Return the CA bundle to extend with the CERN Root CA."""
+    existing = os.environ.get("SSL_CERT_FILE")
+    if existing:
+        existing_path = Path(existing)
+        if existing_path.is_file():
+            return existing_path
+
+    import certifi
+
+    return Path(certifi.where())
+
+
+def _write_combined_ca_bundle(base: Path, cern_pem: Path, destination: Path) -> None:
+    """Write a CA bundle containing the base trust roots plus CERN Root CA 2."""
+    destination.write_bytes(base.read_bytes() + b"\n" + cern_pem.read_bytes())
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cern_ca_bundle(tmp_path_factory):
     """Ensure aiohttp / requests can verify eospublic.cern.ch's certificate.
 
-    When the CI workflow already sets ``SSL_CERT_FILE`` (after installing the
-    CERN Root CA into the system trust store) this fixture is a no-op.
+    Some environments, especially conda, set ``SSL_CERT_FILE`` to their own
+    CA bundle.  That bundle may not include the CERN Root CA, so this fixture
+    always extends the active base bundle instead of treating ``SSL_CERT_FILE``
+    as proof that CERN endpoints are already trusted.
 
-    Otherwise, it:
+    It:
     1. Downloads and caches the CERN Root CA 2 PEM certificate.
-    2. Creates a combined bundle: certifi's default bundle + CERN Root CA 2.
+    2. Creates a combined bundle: the active base bundle + CERN Root CA 2.
     3. Sets ``SSL_CERT_FILE`` and ``REQUESTS_CA_BUNDLE`` in ``os.environ`` so
        both aiohttp and requests pick it up.  Because ``helpers._subprocess_env``
        captures ``os.environ`` at call time, all gfal-cli subprocesses spawned
        by the test suite inherit the updated env.
     """
-    if os.environ.get("SSL_CERT_FILE"):
-        return  # CI already configured the bundle — nothing to do
-
     try:
-        import certifi
-
+        base = _base_ca_bundle()
         cern_pem = _download_cern_ca()
 
-        # Build a combined bundle: certifi's bundle + CERN Root CA 2
         combined = tmp_path_factory.mktemp("ca") / "bundle.pem"
-        combined.write_bytes(
-            Path(certifi.where()).read_bytes() + b"\n" + cern_pem.read_bytes()
-        )
+        _write_combined_ca_bundle(base, cern_pem, combined)
 
         os.environ["SSL_CERT_FILE"] = str(combined)
         os.environ["REQUESTS_CA_BUNDLE"] = str(combined)

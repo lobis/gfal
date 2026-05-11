@@ -1,6 +1,6 @@
 # gfal — Grid File Access Library
 
-**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with native **XRootD** support available when the XRootD Python bindings are installed.
+**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and native **XRootD** out of the box.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
@@ -98,23 +98,11 @@ For the full Python API reference, see [Python API](python-api.md).
 pip install gfal
 ```
 
-This installs the CLI and the Python library with local-file and HTTP/HTTPS support.
+This installs the CLI and the Python library with local-file, HTTP/HTTPS, and XRootD support. The PyPI package depends on `xrootd>=6.0.1`.
 
-For a fully pip-managed XRootD (`root://`) client stack:
-
-```bash
-pip install "gfal[xrootd]"
-```
-
-This adds the PyPI `xrootd` bindings on top of the base install.
-
-On grid systems where XRootD Python bindings are already provided and centrally managed, prefer the site package manager or conda for those bindings and keep `gfal` itself lean:
+In conda environments, install the full conda bundle from the `lobis` channel:
 
 ```bash
-# Conda
-conda install -c conda-forge xrootd
-
-# Or install the full conda bundle from the lobis channel
 conda install -c lobis -c conda-forge gfal
 ```
 
@@ -412,7 +400,7 @@ gfal completion fish > ~/.config/fish/completions/gfal.fish
 | `file://` or bare path | Local filesystem | Built-in |
 | `http://` / `https://` | HTTP/WebDAV | Built-in |
 | `dav://` / `davs://` | WebDAV (converted to HTTP) | Built-in |
-| `root://` | XRootD | Built-in adapter; `xrootd` client bindings required |
+| `root://` | XRootD | Built-in adapter; `xrootd>=6.0.1` |
 | `s3://` / `s3a://` | Amazon S3 and S3-compatible (MinIO, Ceph, …) | `s3fs` |
 | `sftp://` / `ssh://` | SSH File Transfer Protocol | `paramiko` |
 | `gs://` | Google Cloud Storage | `gcsfs` |

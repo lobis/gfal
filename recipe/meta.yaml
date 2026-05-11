@@ -29,6 +29,8 @@ requirements:
     - python >=3.10
     - rich >=13.0.0
     - rich-click >=1.7.0
+    # conda-forge does not publish XRootD 6 yet; keep conda builds on the
+    # latest available 5.x line until the 6.x packages land there.
     - xrootd >=5.9.2
 
 test:
