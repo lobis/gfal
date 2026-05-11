@@ -4,7 +4,7 @@
 > other AI coding agents (Codex, Copilot Workspace, Cursor, …) read `AGENTS.md`.
 > Edit only `CLAUDE.md` — changes are automatically visible through both names.
 
-**gfal** stands for **Grid File Access Library**. This is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and **XRootD** only (via [fsspec-xrootd](https://github.com/scikit-hep/fsspec-xrootd)).
+**gfal** stands for **Grid File Access Library**. This is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/) for shared filesystem conventions. Supports **HTTP/HTTPS** and **XRootD** only; XRootD uses the native `xrootd>=6.0.1` Python bindings directly.
 
 GitHub: [github.com/lobis/gfal](https://github.com/lobis/gfal)
 
@@ -210,7 +210,7 @@ When updating AlmaLinux installation instructions:
 - use a simple direct RPM example for AlmaLinux 9 and 10:
   ```bash
   dnf install -y epel-release
-  dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').noarch.rpm
+  dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').$(uname -m).rpm
   ```
 - mention that users should update the version in the filename manually for
   direct-download installs, and use the repo instead if they want automatic
@@ -467,10 +467,11 @@ compatibility.  Each stub prints a clear "not supported" message and exits 1.
 
 ### Cross-platform path handling
 
-CI runs on Linux, macOS, **and Windows**. Never hardcode forward-slash path
-comparisons (e.g. `assert "/tmp" in str(path)`) — on Windows `Path("/tmp")`
-becomes `D:\tmp`. Use `Path` objects or `PurePosixPath` for comparisons, or
-compare individual path components via `.parts` / `.name`. Common patterns:
+CI runs on Linux and macOS. Windows support is best-effort, so still avoid
+hardcoding forward-slash path comparisons (e.g. `assert "/tmp" in str(path)`) —
+on Windows `Path("/tmp")` becomes `D:\tmp`. Use `Path` objects or
+`PurePosixPath` for comparisons, or compare individual path components via
+`.parts` / `.name`. Common patterns:
 
 ```python
 # BAD — breaks on Windows:
@@ -486,11 +487,11 @@ where PEP 604 unions are not supported at runtime.
 
 ### Windows subprocess encoding
 
-CI also runs on Windows. When using `subprocess.run(..., text=True)`, always
-specify `encoding="utf-8"` explicitly — otherwise Python uses the system
-default (cp1252 on Windows) which cannot decode rich-click's Unicode box-drawing
-characters. Failure to do so causes stdout to be `None` and subsequent string
-operations to crash with `TypeError`.
+Windows is not a required CI platform, but remains best-effort. When using
+`subprocess.run(..., text=True)`, always specify `encoding="utf-8"` explicitly —
+otherwise Python uses the system default (cp1252 on Windows) which cannot decode
+rich-click's Unicode box-drawing characters. Failure to do so causes stdout to be
+`None` and subsequent string operations to crash with `TypeError`.
 
 ```python
 # BAD — breaks on Windows when output contains Unicode:
@@ -516,7 +517,7 @@ pytest tests/test_integration_eospublic.py       # EOS public endpoint tests
 
 ### XRootD integration tests (`tests/test_xrootd.py`)
 
-The `xrootd_server` fixture (in `conftest.py`) starts a real local XRootD daemon automatically. Tests are skipped if the `xrootd` binary or `fsspec-xrootd` package is not installed.
+The `xrootd_server` fixture (in `conftest.py`) starts a real local XRootD daemon automatically. Tests are skipped if the `xrootd` server binary or the native `xrootd` Python package is not installed.
 
 The fixture serves a temp directory over `root://` and optionally `https://` (XrdHttp plugin, requires `openssl`). Minimal server config used:
 

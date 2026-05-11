@@ -8,32 +8,8 @@ The easiest way to install `gfal` is via `pip`:
 pip install gfal
 ```
 
-This installs the base package with local-file and HTTP/HTTPS support.
-
-### PyPI with XRootD support
-
-For a fully pip-managed XRootD client stack, install the optional extra:
-
-```bash
-pip install "gfal[xrootd]"
-```
-
-This adds the PyPI `xrootd` bindings on top of the base install.
-
-On grid systems where XRootD Python bindings are already available and centrally
-managed, prefer the site package manager or conda for those bindings and keep
-`gfal` itself lean. In that case, install `gfal` normally and provide the
-bindings separately:
-
-```bash
-pip install gfal
-```
-
-In conda environments, install XRootD from conda-forge:
-
-```bash
-conda install -c conda-forge xrootd
-```
+This installs the base package with local-file, HTTP/HTTPS, and XRootD support.
+The PyPI package depends on `xrootd>=6.0.1`.
 
 ### Conda with XRootD support
 
@@ -58,13 +34,9 @@ conda install -c conda-forge paramiko sshfs
 For pip users, the equivalent extras are:
 
 ```bash
-pip install "gfal[xrootd]"
 pip install "gfal[s3]"
 pip install "gfal[ssh]"
 ```
-
-For pip users, the `xrootd` extra is optional to avoid making every base
-installation download the full XRootD client bundle.
 
 ---
 
@@ -83,9 +55,8 @@ curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.rep
 dnf install -y python3-gfal
 ```
 
-The RPM build does not bundle the heavyweight XRootD client bindings. Full
-`root://` support therefore still depends on `python3-xrootd` or equivalent
-site-provided bindings being available in the environment.
+The RPM build bundles the PyPI XRootD bindings because EPEL currently provides
+XRootD 5.x while `gfal` requires the Python bindings starting at 6.0.1.
 
 ---
 
@@ -96,15 +67,15 @@ You can also download individual packages from the [GitHub Releases](https://git
 **AlmaLinux 9/10**:
 ```bash
 dnf install -y epel-release
-dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').noarch.rpm
+dnf install -y https://github.com/lobis/gfal/releases/latest/download/python3-gfal-0.1.50-1.el$(rpm -E '%{rhel}').$(uname -m).rpm
 ```
 
 If you use direct-download installs, update the version in the filename when a
 new release comes out. If you want the latest version automatically, use the
 repository configuration above instead.
 
-This RPM has the same support profile as the repository package: the actual
-XRootD client bindings remain external.
+This RPM has the same support profile as the repository package, including
+bundled XRootD Python bindings.
 
 ## CERN HTTPS and CERN CA Certificates
 
@@ -120,8 +91,8 @@ of these approaches:
   gfal stat root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-photons/single_cluster_r5.C
   ```
 
-  XRootD support requires the XRootD Python bindings, for example
-  `pip install "gfal[xrootd]"` or `conda install -c conda-forge xrootd`.
+  XRootD support is included in normal `pip install gfal` and
+  `conda install -c lobis -c conda-forge gfal` installs.
 
 - For quick tests against trusted CERN endpoints, pass `--no-verify` to disable
   TLS certificate verification:

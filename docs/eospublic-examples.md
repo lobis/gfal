@@ -40,8 +40,8 @@ DIR_ROOT="root://eospublic.cern.ch//eos/opendata/phenix/emcal-finding-pi0s-and-p
 ```
 
 If you installed only `pip install gfal`, use the `https://` examples first.
-`root://` requires XRootD support in the environment, for example via
-`pip install "gfal[xrootd]"` or `conda install -c conda-forge xrootd`.
+`root://` uses the XRootD Python bindings included by the normal `gfal` PyPI
+and conda installs.
 
 If HTTPS fails with an SSL certificate verification error on a minimal or older
 system, either install the CERN Root CA as described in

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "gfal"
 dynamic = ["version"]
-description = "Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS by default, optional XRootD client bindings)"
+description = "Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS and XRootD by default)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -25,6 +25,7 @@ authors = [
 dependencies = [
     "fsspec>=2023.1.0",
     "aiohttp>=3.8.0",
+    "xrootd>=6.0.1",
     "rich>=13.0.0",
     "rich-click>=1.7.0",
     "click>=8.0.0",
@@ -34,9 +35,6 @@ dependencies = [
 gfal = "gfal.cli.shell:main"
 
 [project.optional-dependencies]
-xrootd = [
-    "xrootd>=5.7,<7",
-]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=7.1.0",
