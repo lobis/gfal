@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from gfal.core.fs import (
+    HttpsXRootDFallbackWarning,
     RootProtocolFallbackWarning,
     StatInfo,
     _clear_cached_webdav_filesystems,
@@ -222,6 +223,112 @@ class TestUrlToFs:
 
         fso, path = url_to_fs("https://example.com/file")
         assert isinstance(fso, WebDAVFileSystem)
+
+    def test_https_backend_xrootd_uses_native_backend(self, monkeypatch):
+        from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+        calls = []
+
+        class FakeNativeFs:
+            def probe_support(self, path):
+                calls.append(("probe", path))
+
+        def fake_from_url(url, storage_options=None):
+            calls.append((url, storage_options))
+            return FakeNativeFs(), "/eos/file"
+
+        monkeypatch.setenv("GFAL_HTTPS_BACKEND", "xrootd")
+        monkeypatch.setattr(
+            XRootDNativeFileSystem,
+            "from_url",
+            staticmethod(fake_from_url),
+        )
+
+        fso, path = url_to_fs("https://example.com//eos/file", {"timeout": 12})
+
+        assert isinstance(fso, FakeNativeFs)
+        assert path == "/eos/file"
+        assert calls == [
+            ("https://example.com//eos/file", {"timeout": 12}),
+            ("probe", "/eos/file"),
+        ]
+
+    def test_https_backend_xrootd_falls_back_when_protocol_unsupported(
+        self, monkeypatch
+    ):
+        from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+        class FakeNativeFs:
+            def probe_support(self, path):
+                raise OSError(
+                    "XRootD protocol probe failed: [ERROR] Operation not supported"
+                )
+
+        def fake_from_url(url, storage_options=None):
+            return FakeNativeFs(), "/eos/file"
+
+        monkeypatch.setenv("GFAL_HTTPS_BACKEND", "xrootd")
+        monkeypatch.setattr(
+            XRootDNativeFileSystem,
+            "from_url",
+            staticmethod(fake_from_url),
+        )
+
+        with pytest.warns(HttpsXRootDFallbackWarning):
+            fso, path = url_to_fs("https://example.com//eos/file", {"timeout": 12})
+
+        from gfal.core.webdav import WebDAVFileSystem
+
+        assert isinstance(fso, WebDAVFileSystem)
+        assert path == "https://example.com//eos/file"
+
+    def test_root_backend_native_uses_native_backend(self, monkeypatch):
+        from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+        calls = []
+        sentinel = object()
+
+        def fake_from_url(url, storage_options=None):
+            calls.append((url, storage_options))
+            return sentinel, "/eos/file"
+
+        monkeypatch.setenv("GFAL_XROOTD_BACKEND", "native")
+        monkeypatch.setattr(
+            XRootDNativeFileSystem,
+            "from_url",
+            staticmethod(fake_from_url),
+        )
+
+        fso, path = url_to_fs("root://example.com//eos/file", {"timeout": 7})
+
+        assert fso is sentinel
+        assert path == "/eos/file"
+        assert calls == [("root://example.com//eos/file", {"timeout": 7})]
+
+    def test_root_backend_native_falls_back_to_https_when_xrootd_missing(
+        self, monkeypatch
+    ):
+        from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+        def fake_from_url(url, storage_options=None):
+            raise ModuleNotFoundError("No module named 'XRootD'")
+
+        monkeypatch.setenv("GFAL_XROOTD_BACKEND", "native")
+        monkeypatch.setattr(
+            XRootDNativeFileSystem,
+            "from_url",
+            staticmethod(fake_from_url),
+        )
+
+        with pytest.warns(RootProtocolFallbackWarning):
+            fso, path = url_to_fs(
+                "root://eospublic.cern.ch//eos/opendata/native-file.root"
+            )
+
+        from gfal.core.webdav import WebDAVFileSystem
+
+        assert isinstance(fso, WebDAVFileSystem)
+        assert path == "https://eospublic.cern.ch/eos/opendata/native-file.root"
 
     def test_dav_normalized_to_http(self):
         from gfal.core.webdav import WebDAVFileSystem
