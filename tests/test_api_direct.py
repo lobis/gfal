@@ -238,17 +238,12 @@ class TestGfalClientLs:
         entries = client.ls(d.as_uri(), detail=True)
         assert entries == []
 
-    def test_ls_uses_xrootd_listing_enrichment(self):
+    def test_ls_uses_filesystem_detail_listing(self):
         from unittest.mock import MagicMock, patch
 
         client = GfalClient()
         mock_fso = MagicMock()
-        mock_fso.info.return_value = {
-            "name": "/data/file.txt",
-            "type": "file",
-            "size": 5,
-        }
-        enriched_entries = [
+        mock_fso.ls.return_value = [
             {
                 "name": "/data/file.txt",
                 "type": "file",
@@ -259,16 +254,10 @@ class TestGfalClientLs:
             }
         ]
 
-        with (
-            patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, "/data")),
-            patch(
-                "gfal.core.api.fs.xrootd_ls_enrich",
-                return_value=enriched_entries,
-            ) as ls_enrich,
-        ):
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fso, "/data")):
             entries = client.ls("root://host//data", detail=True)
 
-        ls_enrich.assert_called_once_with(mock_fso, "/data")
+        mock_fso.ls.assert_called_once_with("/data", detail=True)
         assert len(entries) == 1
         assert entries[0].st_nlink == 0
 
@@ -648,22 +637,13 @@ class TestGfalClientLsFallback:
             "mtime": 0,
         }
         mock_fso = MagicMock()
-        mock_fso.info.return_value = file_info
         mock_enoent = FileNotFoundError(errno.ENOENT, "No such file or directory")
+        mock_fso.ls.side_effect = mock_enoent
+        mock_fso.info.return_value = file_info
 
-        with (
-            patch(
-                "gfal.core.api.fs.url_to_fs",
-                return_value=(mock_fso, remote.as_posix()),
-            ),
-            patch(
-                "gfal.core.api.fs.xrootd_ls_enrich",
-                side_effect=mock_enoent,
-            ),
-            patch(
-                "gfal.core.api.fs.xrootd_enrich",
-                side_effect=lambda info, _fso: info,
-            ),
+        with patch(
+            "gfal.core.api.fs.url_to_fs",
+            return_value=(mock_fso, remote.as_posix()),
         ):
             client = GfalClient()
             entries = client.ls(f"sftp://host{remote}", detail=True)

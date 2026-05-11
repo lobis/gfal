@@ -9,7 +9,8 @@ pip install gfal
 ```
 
 This installs the base package with local-file, HTTP/HTTPS, and XRootD support.
-The PyPI package depends on `xrootd>=6.0.1`.
+On this experimental branch, XRootD is pinned to the native fsspec PR branch in
+`lobis/xrootd`.
 
 ### Conda with XRootD support
 

@@ -25,6 +25,7 @@ _EMITTED_HTTPS_XROOTD_FALLBACKS: set[str] = set()
 _WEBDAV_FS_CACHE_LOCK = threading.Lock()
 _WEBDAV_FS_CACHE: dict[tuple[Any, ...], Any] = {}
 _HTTPS_BACKEND_ENV = "GFAL_HTTPS_BACKEND"
+_XROOTD_FSSPEC_REGISTERED = False
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +292,7 @@ def _https_uses_native_xrootd(storage_options: dict[str, Any]) -> bool:
     return backend == "xrootd"
 
 
-def _native_xrootd_url_to_fs(url: str, storage_options: dict[str, Any]):
+def _legacy_native_xrootd_url_to_fs(url: str, storage_options: dict[str, Any]):
     from gfal.core.xrootd_native import XRootDNativeFileSystem
 
     return XRootDNativeFileSystem.from_url(
@@ -300,9 +301,42 @@ def _native_xrootd_url_to_fs(url: str, storage_options: dict[str, Any]):
     )
 
 
+def _xrootd_storage_opts(opts: dict[str, Any]) -> dict[str, Any]:
+    """Return options accepted by XRootD's native fsspec implementation."""
+    return {"timeout": opts["timeout"]} if "timeout" in opts else {}
+
+
+def _register_xrootd_fsspec() -> None:
+    """Register XRootD's native fsspec implementation when available.
+
+    Released XRootD wheels that include native fsspec support should expose
+    entry points, but registering explicitly also lets development wheels and
+    local branch installs work before packaging metadata is refreshed.
+    """
+    global _XROOTD_FSSPEC_REGISTERED
+    if _XROOTD_FSSPEC_REGISTERED:
+        return
+    from XRootD.fsspec import XRootDFileSystem
+
+    for protocol in ("root", "xroot", "roots", "xroots"):
+        fsspec.register_implementation(protocol, XRootDFileSystem, clobber=True)
+    _XROOTD_FSSPEC_REGISTERED = True
+
+
+def _xrootd_fsspec_url_to_fs(url: str, storage_options: dict[str, Any]):
+    _register_xrootd_fsspec()
+    from XRootD.fsspec import XRootDFileSystem
+
+    fso = XRootDFileSystem(
+        **XRootDFileSystem._get_kwargs_from_urls(url),
+        **_xrootd_storage_opts(storage_options),
+    )
+    return fso, fso._strip_protocol(url)
+
+
 def _https_native_xrootd_or_webdav(url: str, storage_options: dict[str, Any]):
     try:
-        fso, path = _native_xrootd_url_to_fs(url, storage_options)
+        fso, path = _legacy_native_xrootd_url_to_fs(url, storage_options)
         if hasattr(fso, "probe_support"):
             fso.probe_support(path)
         return fso, path
@@ -343,7 +377,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
     if scheme in ("root", "xroot"):
         _fix_xrootd_plugin_path()
         try:
-            return _native_xrootd_url_to_fs(url, storage_options)
+            return _xrootd_fsspec_url_to_fs(url, storage_options)
         except Exception as e:
             if _is_missing_xrootd_dependency(e):
                 https_url = _root_url_to_https(url)
@@ -530,90 +564,6 @@ class StatInfo:
     def info(self) -> dict[str, Any]:
         """Return the raw fsspec info dict."""
         return self._info
-
-
-def _xrootd_flags_to_mode(flags):
-    """Convert XRootD StatInfoFlags to a POSIX file mode integer."""
-    from XRootD.client.flags import StatInfoFlags
-
-    is_dir = bool(flags & StatInfoFlags.IS_DIR)
-    is_readable = bool(flags & StatInfoFlags.IS_READABLE)
-    is_writable = bool(flags & StatInfoFlags.IS_WRITABLE)
-
-    if is_dir:
-        ftype = stat_module.S_IFDIR
-        perms = (0o555 if is_readable else 0) | (0o200 if is_writable else 0)
-    else:
-        ftype = stat_module.S_IFREG
-        perms = (0o444 if is_readable else 0) | (0o200 if is_writable else 0)
-    return ftype | perms
-
-
-def xrootd_enrich(info, fso):
-    """
-    Enrich a single XRootD info dict with mtime and mode.
-
-    Older XRootD adapters discarded modtime and flags; recover them via a
-    direct _myclient.stat() call when the filesystem exposes one.
-    """
-    if not hasattr(fso, "_myclient"):
-        return info
-    try:
-        from XRootD.client.flags import StatInfoFlags  # noqa: F401
-    except ImportError:
-        return info
-
-    path = info.get("name", "")
-    timeout = getattr(fso, "timeout", 30)
-    status, st = fso._myclient.stat(path, timeout=timeout)
-    if not status.ok:
-        return info
-
-    enriched = dict(info)
-    enriched["mtime"] = st.modtime
-    enriched["mode"] = _xrootd_flags_to_mode(st.flags)
-    return enriched
-
-
-def xrootd_ls_enrich(fso, path):
-    """
-    Directory listing for XRootD with mtime and mode included.
-
-    Calls _myclient.dirlist(DirListFlags.STAT) directly to capture full stat
-    fields when the filesystem exposes the native XRootD client.
-    Falls back to fso.ls(path, detail=True) on any error.
-    """
-    if not hasattr(fso, "_myclient"):
-        return fso.ls(path, detail=True)
-    try:
-        from XRootD.client.flags import DirListFlags, StatInfoFlags  # noqa: F401
-    except ImportError:
-        return fso.ls(path, detail=True)
-
-    timeout = getattr(fso, "timeout", 30)
-    try:
-        result = fso._myclient.dirlist(path, DirListFlags.STAT, timeout=timeout)
-        status, deets = result
-    except (TypeError, ValueError):
-        return fso.ls(path, detail=True)
-    if not status.ok:
-        return fso.ls(path, detail=True)
-
-    entries = []
-    for item in deets:
-        flags = item.statinfo.flags
-        is_dir = bool(flags & StatInfoFlags.IS_DIR)
-        entries.append({
-            "name": path + "/" + item.name,
-            "size": item.statinfo.size,
-            "type": "directory" if is_dir else "file",
-            "mtime": item.statinfo.modtime,
-            "mode": _xrootd_flags_to_mode(flags),
-            "nlink": 0,
-            "uid": 0,
-            "gid": 0,
-        })
-    return entries
 
 
 def stat(url, storage_options=None):

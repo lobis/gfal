@@ -1,18 +1,20 @@
 # XRootD Native Backend Transition
 
-This transition moved XRootD access behind an internal native adapter and
+This transition moved XRootD access behind native XRootD Python bindings and
 removed the runtime dependency on `fsspec-xrootd`.
 
 ## Current state
 
 The current behavior is:
 
-- `root://` and `xroot://` use the native adapter in
-  `gfal.core.xrootd_native`.
+- `root://` and `xroot://` use XRootD's native fsspec implementation from
+  `XRootD.fsspec`.
 - `http://` and `https://` use the aiohttp/WebDAV backend by default.
 - `fsspec` remains a dependency for local/generic filesystem integration and
   optional non-XRootD protocol backends.
 - `fsspec-xrootd` is no longer required.
+- During the upstream trial, `pyproject.toml` points at the XRootD PR branch:
+  `git+https://github.com/lobis/xrootd.git@codex/native-fsspec-root#subdirectory=python`.
 
 One opt-in selector exists for HTTPS transition testing:
 
@@ -20,16 +22,17 @@ One opt-in selector exists for HTTPS transition testing:
 GFAL_HTTPS_BACKEND=xrootd
 ```
 
-`GFAL_HTTPS_BACKEND=xrootd` first probes `https://` URLs through the same
-adapter. This is intentionally opt-in because XRootD HTTPS support depends on
-the installed XRootD client build and available plugins. If the probe reports
-that HTTP(S) is not supported, `gfal` falls back to the aiohttp/WebDAV backend
-and emits a one-time warning for that URL.
+`GFAL_HTTPS_BACKEND=xrootd` still uses gfal's small internal adapter because the
+current XRootD fsspec PR only registers `root`, `xroot`, `roots`, and `xroots`.
+This is intentionally opt-in because XRootD HTTPS support depends on the
+installed XRootD client build and available plugins. If the probe reports that
+HTTP(S) is not supported, `gfal` falls back to the aiohttp/WebDAV backend and
+emits a one-time warning for that URL.
 
 ## Implementation notes
 
-The native adapter wraps the XRootD Python bindings directly and exposes the
-small fsspec-shaped surface used by the rest of gfal:
+The native XRootD fsspec filesystem provides the filesystem surface used by the
+rest of gfal:
 
 - `info`
 - `ls`
@@ -41,7 +44,9 @@ small fsspec-shaped surface used by the rest of gfal:
 - `checksum`
 
 This lets `GfalClient` and the CLI keep using `url_to_fs()` while the backend is
-migrated incrementally.
+migrated incrementally. gfal registers the XRootD fsspec implementation
+explicitly before instantiating it, which allows local development wheels to work
+even before entry-point metadata is refreshed.
 
 ## Dependency tradeoff
 
@@ -52,13 +57,28 @@ by gfal.
 
 Dropping `fsspec-xrootd` removes an extra adapter layer that gfal was already
 partially bypassing for metadata, directory listing, rename, and TPC behavior.
-The native adapter gives gfal direct control over XRootD status handling, path
-normalization, and gfal2 compatibility details.
+The native implementation now provides stat-rich `info()` and `ls()` results, so
+gfal no longer needs its extra `_myclient` metadata enrichment or rename
+special-case.
 
-The main cost is that gfal now owns more of the fsspec-shaped XRootD surface:
-file objects, directory traversal, checksums, and error mapping. Those paths are
-covered by the local XRootD fixture tests and should be kept in sync with future
-XRootD binding changes.
+The main remaining cost is that `GFAL_HTTPS_BACKEND=xrootd` still depends on
+gfal's internal HTTPS-capability probe until XRootD's fsspec implementation
+supports HTTPS schemes directly.
+
+## Upstream PR findings
+
+Two packaging/API issues showed up while testing
+`xrootd/xrootd#2789` from source:
+
+- `pip install` from the PR branch currently fails in a standalone macOS build
+  with a missing `XrdCks/XrdCksXAttr.hh` header.
+- `fsspec.url_to_fs("root://...")` currently passes `protocol` twice because
+  fsspec uses the URL scheme as its own argument and the PR's
+  `_get_kwargs_from_urls()` also returns `protocol`.
+
+gfal works around the second issue by instantiating `XRootD.fsspec.XRootDFileSystem`
+directly. For local verification, the PR's pure-Python `XRootD.fsspec` module
+was overlaid onto the existing `xrootd==6.0.1` wheel.
 
 ## First smoke-test result
 

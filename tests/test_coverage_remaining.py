@@ -39,12 +39,9 @@ from gfal.core.fs import (
     _is_missing_xrootd_dependency,
     _root_url_to_https,
     _warn_root_https_fallback,
-    _xrootd_flags_to_mode,
     compute_checksum,
     isdir,
     url_to_fs,
-    xrootd_enrich,
-    xrootd_ls_enrich,
 )
 
 
@@ -131,10 +128,7 @@ class TestUrlToFsXrootdFallback:
     def test_non_import_error_raises_runtime_error(self):
         orig_error = RuntimeError("Unexpected init failure in library")
         with (
-            patch(
-                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
-                side_effect=orig_error,
-            ),
+            patch("gfal.core.fs._register_xrootd_fsspec", side_effect=orig_error),
             pytest.raises(RuntimeError, match="Cannot load native XRootD filesystem"),
         ):
             url_to_fs("root://host//path")
@@ -143,7 +137,7 @@ class TestUrlToFsXrootdFallback:
         fs._EMITTED_ROOT_HTTPS_FALLBACKS.clear()
         with (
             patch(
-                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
+                "gfal.core.fs._register_xrootd_fsspec",
                 side_effect=ImportError("no xrootd"),
             ),
             warnings.catch_warnings(record=True),
@@ -170,207 +164,6 @@ class TestUrlToFsWindowsPath:
         with patch("fsspec.url_to_fs", return_value=(mock_fs, "/path")):
             fso, path = url_to_fs("memory://bucket/path")
         assert fso is mock_fs
-
-
-class TestXrootdFlagsToMode:
-    """Lines 321, 326-338: _xrootd_flags_to_mode with mock StatInfoFlags."""
-
-    def test_directory_readable_writable(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": MagicMock(StatInfoFlags=mock_flags),
-            },
-        ):
-            # Flags = IS_DIR | IS_READABLE | IS_WRITABLE = 7
-            result = _xrootd_flags_to_mode(7)
-        assert stat_module.S_ISDIR(result)
-        assert result & 0o555  # readable
-        assert result & 0o200  # writable
-
-    def test_file_readable_only(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": MagicMock(StatInfoFlags=mock_flags),
-            },
-        ):
-            # Flags = IS_READABLE = 2 (file, not dir)
-            result = _xrootd_flags_to_mode(2)
-        assert stat_module.S_ISREG(result)
-        assert result & 0o444
-
-    def test_file_writable_only(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": MagicMock(StatInfoFlags=mock_flags),
-            },
-        ):
-            result = _xrootd_flags_to_mode(4)
-        assert stat_module.S_ISREG(result)
-        assert result & 0o200
-
-
-class TestXrootdEnrich:
-    """Lines 350-364: xrootd_enrich with mock _myclient."""
-
-    def test_no_myclient(self):
-        fso = MagicMock(spec=[])
-        info = {"name": "/file", "size": 100}
-        assert xrootd_enrich(info, fso) is info
-
-    def test_import_error_returns_info(self):
-        fso = MagicMock()
-        fso._myclient = MagicMock()
-        info = {"name": "/file", "size": 100}
-        with patch.dict(
-            "sys.modules",
-            {"XRootD": None, "XRootD.client": None, "XRootD.client.flags": None},
-        ):
-            result = xrootd_enrich(info, fso)
-        assert result is info
-
-    def test_successful_enrich(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        mock_statinfo = SimpleNamespace(modtime=12345.0, flags=2)  # readable file
-        mock_status = SimpleNamespace(ok=True)
-        fso = MagicMock()
-        fso._myclient.stat.return_value = (mock_status, mock_statinfo)
-        fso.timeout = 30
-        info = {"name": "/file", "size": 100}
-        mock_module = MagicMock(StatInfoFlags=mock_flags)
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": mock_module,
-            },
-        ):
-            result = xrootd_enrich(info, fso)
-        assert result["mtime"] == 12345.0
-        assert "mode" in result
-
-    def test_stat_fails_returns_info(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        mock_status = SimpleNamespace(ok=False)
-        fso = MagicMock()
-        fso._myclient.stat.return_value = (mock_status, None)
-        fso.timeout = 30
-        info = {"name": "/file", "size": 100}
-        mock_module = MagicMock(StatInfoFlags=mock_flags)
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": mock_module,
-            },
-        ):
-            result = xrootd_enrich(info, fso)
-        assert result is info
-
-
-class TestXrootdLsEnrich:
-    """Lines 377-403: xrootd_ls_enrich with mock _myclient."""
-
-    def test_no_myclient(self):
-        fso = MagicMock(spec=["ls"])
-        fso.ls.return_value = [{"name": "f"}]
-        result = xrootd_ls_enrich(fso, "/dir")
-        assert result == [{"name": "f"}]
-
-    def test_import_error_falls_back(self):
-        fso = MagicMock()
-        fso._myclient = MagicMock()
-        fso.ls.return_value = [{"name": "f"}]
-        with patch.dict(
-            "sys.modules",
-            {"XRootD": None, "XRootD.client": None, "XRootD.client.flags": None},
-        ):
-            result = xrootd_ls_enrich(fso, "/dir")
-        assert result == [{"name": "f"}]
-
-    def test_dirlist_fails_falls_back(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        mock_module = MagicMock(
-            DirListFlags=MagicMock(STAT=1),
-            StatInfoFlags=mock_flags,
-        )
-        mock_status = SimpleNamespace(ok=False)
-        fso = MagicMock()
-        fso._myclient.dirlist.return_value = (mock_status, None)
-        fso.ls.return_value = [{"name": "f"}]
-        fso.timeout = 30
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": mock_module,
-            },
-        ):
-            result = xrootd_ls_enrich(fso, "/dir")
-        assert result == [{"name": "f"}]
-
-    def test_dirlist_malformed_result_falls_back(self):
-        mock_flags = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        mock_module = MagicMock(
-            DirListFlags=MagicMock(STAT=1),
-            StatInfoFlags=mock_flags,
-        )
-        fso = MagicMock()
-        fso._myclient.dirlist.return_value = ()
-        fso.ls.return_value = [{"name": "f"}]
-        fso.timeout = 30
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": mock_module,
-            },
-        ):
-            result = xrootd_ls_enrich(fso, "/dir")
-        assert result == [{"name": "f"}]
-
-    def test_dirlist_success(self):
-        mock_flags_obj = SimpleNamespace(IS_DIR=1, IS_READABLE=2, IS_WRITABLE=4)
-        item = SimpleNamespace(
-            name="file.txt",
-            statinfo=SimpleNamespace(flags=2, size=1024, modtime=99999),
-        )
-        mock_status = SimpleNamespace(ok=True)
-        fso = MagicMock()
-        fso._myclient.dirlist.return_value = (mock_status, [item])
-        fso.timeout = 30
-        mock_module = MagicMock(
-            DirListFlags=MagicMock(STAT=1),
-            StatInfoFlags=mock_flags_obj,
-        )
-        with patch.dict(
-            "sys.modules",
-            {
-                "XRootD": MagicMock(),
-                "XRootD.client": MagicMock(),
-                "XRootD.client.flags": mock_module,
-            },
-        ):
-            result = xrootd_ls_enrich(fso, "/mydir")
-        assert len(result) == 1
-        assert result[0]["name"] == "/mydir/file.txt"
-        assert result[0]["mtime"] == 99999
-        assert result[0]["type"] == "file"
 
 
 class TestIsdir:
@@ -533,8 +326,8 @@ class TestGfalClientMkdirNonMakedirs:
         mock_fs.mkdir.assert_called_once_with("/test/dir", create_parents=True)
 
 
-class TestGfalClientRenameXrootd:
-    """Lines 506-509: rename with _myclient.mv for xrootd."""
+class TestGfalClientRename:
+    """Rename delegates to the selected filesystem implementation."""
 
     def test_rename_cross_filesystem_raises(self):
         client = GfalClient()
@@ -551,21 +344,17 @@ class TestGfalClientRenameXrootd:
             with pytest.raises(GfalError, match="Rename across different filesystem"):
                 client.rename("file:///a", "file:///b")
 
-    def test_rename_xrootd_myclient_mv(self):
+    def test_rename_uses_filesystem_mv(self):
         client = GfalClient()
         mock_fs = MagicMock()
-        mock_fs._myclient.mv.return_value = (SimpleNamespace(ok=True), None)
         with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fs, "/path")):
             client.rename("root://host//a", "root://host//b")
-        mock_fs._myclient.mv.assert_called_once()
+        mock_fs.mv.assert_called_once_with("/path", "/path")
 
-    def test_rename_xrootd_myclient_mv_failure(self):
+    def test_rename_filesystem_mv_failure(self):
         client = GfalClient()
         mock_fs = MagicMock()
-        mock_fs._myclient.mv.return_value = (
-            SimpleNamespace(ok=False, errno=2, message="not found"),
-            None,
-        )
+        mock_fs.mv.side_effect = OSError("not found")
         with (
             patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fs, "/path")),
             pytest.raises(GfalError),
@@ -573,18 +362,15 @@ class TestGfalClientRenameXrootd:
             client.rename("root://host//a", "root://host//b")
 
 
-class TestGfalClientLsXrootdEnrich:
-    """Line 454: xrootd_enrich fallback in ls."""
+class TestGfalClientLsFileFallback:
+    """File-path listings fall back to info() when the backend raises ENOTDIR."""
 
     def test_ls_not_a_directory_fallback(self):
         client = GfalClient()
         mock_fs = MagicMock()
         mock_fs.ls.side_effect = OSError("not a directory")
         mock_fs.info.return_value = {"name": "/file", "type": "file", "size": 0}
-        with (
-            patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fs, "/file")),
-            patch("gfal.core.api.fs.xrootd_enrich", side_effect=lambda i, f: i),
-        ):
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(mock_fs, "/file")):
             result = client.ls("root://host//file", detail=True)
         assert len(result) == 1
 

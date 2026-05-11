@@ -98,7 +98,7 @@ For the full Python API reference, see [Python API](python-api.md).
 pip install gfal
 ```
 
-This installs the CLI and the Python library with local-file, HTTP/HTTPS, and XRootD support. The PyPI package depends on `xrootd>=6.0.1`.
+This installs the CLI and the Python library with local-file, HTTP/HTTPS, and XRootD support. On this experimental branch, XRootD is pinned to the native fsspec PR branch in `lobis/xrootd`.
 
 In conda environments, install the full conda bundle from the `lobis` channel:
 
@@ -400,7 +400,7 @@ gfal completion fish > ~/.config/fish/completions/gfal.fish
 | `file://` or bare path | Local filesystem | Built-in |
 | `http://` / `https://` | HTTP/WebDAV | Built-in |
 | `dav://` / `davs://` | WebDAV (converted to HTTP) | Built-in |
-| `root://` | XRootD | Built-in adapter; `xrootd>=6.0.1` |
+| `root://` | XRootD | Native `XRootD.fsspec` |
 | `s3://` / `s3a://` | Amazon S3 and S3-compatible (MinIO, Ceph, …) | `s3fs` |
 | `sftp://` / `ssh://` | SSH File Transfer Protocol | `paramiko` |
 | `gs://` | Google Cloud Storage | `gcsfs` |
