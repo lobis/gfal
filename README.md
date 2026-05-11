@@ -16,7 +16,7 @@
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, with the lightweight XRootD fsspec adapter included by default and optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
+A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** out of the box, native **XRootD** through the optional XRootD Python bindings, and optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
@@ -26,7 +26,7 @@ A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com
 pip install gfal
 ```
 
-This installs the CLI and the Python library with local-file, HTTP/HTTPS, and the lightweight `fsspec-xrootd` adapter.
+This installs the CLI and the Python library with local-file and HTTP/HTTPS support.
 
 For a fully pip-managed XRootD (`root://`) client stack:
 

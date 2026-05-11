@@ -24,7 +24,6 @@ _EMITTED_ROOT_HTTPS_FALLBACKS: set[tuple[str, str]] = set()
 _EMITTED_HTTPS_XROOTD_FALLBACKS: set[str] = set()
 _WEBDAV_FS_CACHE_LOCK = threading.Lock()
 _WEBDAV_FS_CACHE: dict[tuple[Any, ...], Any] = {}
-_ROOT_XROOTD_BACKEND_ENV = "GFAL_XROOTD_BACKEND"
 _HTTPS_BACKEND_ENV = "GFAL_HTTPS_BACKEND"
 
 
@@ -189,7 +188,6 @@ def _is_missing_xrootd_dependency(exc):
     """Return True when XRootD initialisation failed because optional deps are missing."""
     markers = (
         "xrootd",
-        "fsspec_xrootd",
         "protocol not known",
         "no implementation for protocol",
         "no module named",
@@ -286,13 +284,6 @@ def _backend_env(name: str) -> str:
     return os.environ.get(name, "").strip().lower()
 
 
-def _root_uses_native_xrootd(storage_options: dict[str, Any]) -> bool:
-    backend = str(
-        storage_options.get("xrootd_backend") or _backend_env(_ROOT_XROOTD_BACKEND_ENV)
-    ).lower()
-    return backend == "native"
-
-
 def _https_uses_native_xrootd(storage_options: dict[str, Any]) -> bool:
     backend = str(
         storage_options.get("https_backend") or _backend_env(_HTTPS_BACKEND_ENV)
@@ -351,17 +342,8 @@ def url_to_fs(url, storage_options=None, **kwargs):
 
     if scheme in ("root", "xroot"):
         _fix_xrootd_plugin_path()
-        if _root_uses_native_xrootd(storage_options):
-            try:
-                return _native_xrootd_url_to_fs(url, storage_options)
-            except Exception as e:
-                if _is_missing_xrootd_dependency(e):
-                    https_url = _root_url_to_https(url)
-                    _warn_root_https_fallback(url, https_url)
-                    return _get_cached_webdav_fs(storage_options), https_url
-                raise
         try:
-            fs, path = fsspec.url_to_fs(url, **storage_options)
+            return _native_xrootd_url_to_fs(url, storage_options)
         except Exception as e:
             if _is_missing_xrootd_dependency(e):
                 https_url = _root_url_to_https(url)
@@ -369,10 +351,9 @@ def url_to_fs(url, storage_options=None, **kwargs):
                 return _get_cached_webdav_fs(storage_options), https_url
             cause = e.__cause__ or e
             raise RuntimeError(
-                f"Cannot load XRootD filesystem: {cause}\n"
+                f"Cannot load native XRootD filesystem: {cause}\n"
                 "Install XRootD bindings in your environment, for example with: conda install -c conda-forge xrootd"
             ) from e
-        return fs, path
 
     if scheme == "file":
         fso = fsspec.filesystem("file")
@@ -404,7 +385,6 @@ _GFAL_HTTP_OPTS = frozenset({
     "ipv6_only",
     "timeout",
     "https_backend",
-    "xrootd_backend",
 })
 
 
@@ -573,8 +553,8 @@ def xrootd_enrich(info, fso):
     """
     Enrich a single XRootD info dict with mtime and mode.
 
-    fsspec-xrootd's _info() discards modtime and flags; we recover them
-    via a direct _myclient.stat() call and add them back.
+    Older XRootD adapters discarded modtime and flags; recover them via a
+    direct _myclient.stat() call when the filesystem exposes one.
     """
     if not hasattr(fso, "_myclient"):
         return info
@@ -599,8 +579,8 @@ def xrootd_ls_enrich(fso, path):
     """
     Directory listing for XRootD with mtime and mode included.
 
-    Calls _myclient.dirlist(DirListFlags.STAT) directly to capture the
-    statinfo fields that fsspec-xrootd discards in its _ls() method.
+    Calls _myclient.dirlist(DirListFlags.STAT) directly to capture full stat
+    fields when the filesystem exposes the native XRootD client.
     Falls back to fso.ls(path, detail=True) on any error.
     """
     if not hasattr(fso, "_myclient"):
@@ -665,12 +645,12 @@ def compute_checksum(fso, path, alg):
     alg_upper = alg.upper()
 
     # 1. Try server-side checksum(path, algorithm)
-    # This is a fsspec-xrootd and WebDAVFileSystem extension.
+    # This is a native XRootD and WebDAVFileSystem extension.
     if hasattr(fso, "checksum"):
         try:
             # Check if it accepts a second argument that looks like an algorithm
-            # name (e.g. "ADLER32", "MD5").  WebDAVFileSystem and
-            # fsspec-xrootd's _checksum accept (path, algorithm).
+            # name (e.g. "ADLER32", "MD5"). WebDAVFileSystem and the native
+            # XRootD adapter accept (path, algorithm).
             # Exclude implementations whose second parameter is named
             # 'refresh' (s3fs) or 'recalculate' — those have a different
             # semantic and the call would silently return wrong results.

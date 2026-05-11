@@ -346,9 +346,9 @@ def xrootd_server(tmp_path_factory):
         require_test_prereq(False, "xrootd binary not found")
 
     try:
-        import fsspec_xrootd  # noqa: F401
+        import XRootD  # noqa: F401
     except ImportError:
-        require_test_prereq(False, "fsspec-xrootd not installed")
+        require_test_prereq(False, "XRootD Python bindings not installed")
 
     base = tmp_path_factory.mktemp("xrootd")
     data_dir = base / "data"

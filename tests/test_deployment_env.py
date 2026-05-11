@@ -8,8 +8,8 @@ import deployment_env
 def test_run_deployment_gfal_passes_proxy_as_cert_for_https(tmp_path, monkeypatch):
     """When only a proxy is available (no explicit cert/key), the proxy file
     must be forwarded as -E/--key so that gfal's WebDAV layer uses it for
-    mutual-TLS auth (e.g. EOS XrdHttp).  X509_USER_PROXY alone is only
-    consumed by fsspec-xrootd, not by the HTTP stack."""
+    mutual-TLS auth (e.g. EOS XrdHttp). XRootD can consume X509_USER_PROXY
+    directly, but the HTTP stack needs explicit client cert options."""
     proxy = tmp_path / "proxy.pem"
     proxy.write_text("proxy")
 

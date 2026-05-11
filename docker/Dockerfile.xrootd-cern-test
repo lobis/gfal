@@ -89,7 +89,6 @@ RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Mi
          "urllib3>=2.0.0" \
          xrootd \
     && /opt/conda/bin/python -m pip install --no-cache-dir --upgrade pip \
-    && /opt/conda/bin/python -m pip install --no-cache-dir "fsspec-xrootd>=0.5.2" \
     && /opt/conda/bin/conda clean -afy
 
 # Make the Miniforge Python runtime the default for the new gfal CLI.
