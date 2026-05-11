@@ -213,7 +213,7 @@ jobs:
       run: pytest -n 0 -v tests/test_integration_mount.py
 
   integration-eospublic:
-    name: Integration Tests (EOS public)
+    name: Integration Tests (CERN EOS public)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -226,14 +226,14 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
-    - name: Run EOS public integration tests
+    - name: Run CERN EOS public integration tests
       run: |
         timeout 20m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
           tests/test_integration_eospublic.py
 
   integration-eospilot:
-    name: Integration Tests (EOS pilot)
+    name: Integration Tests (CERN EOS pilot)
     runs-on: ubuntu-latest
     env:
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
@@ -277,7 +277,7 @@ jobs:
         PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
-    - name: Run EOS pilot integration tests
+    - name: Run CERN EOS pilot integration tests
       run: |
         timeout 30m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
