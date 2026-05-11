@@ -24,7 +24,6 @@ authors = [
 ]
 dependencies = [
     "fsspec>=2023.1.0",
-    "fsspec-xrootd>=0.5.4",
     "aiohttp>=3.8.0",
     "rich>=13.0.0",
     "rich-click>=1.7.0",

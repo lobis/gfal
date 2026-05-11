@@ -292,7 +292,6 @@ class TestUrlToFs:
             calls.append((url, storage_options))
             return sentinel, "/eos/file"
 
-        monkeypatch.setenv("GFAL_XROOTD_BACKEND", "native")
         monkeypatch.setattr(
             XRootDNativeFileSystem,
             "from_url",
@@ -313,7 +312,6 @@ class TestUrlToFs:
         def fake_from_url(url, storage_options=None):
             raise ModuleNotFoundError("No module named 'XRootD'")
 
-        monkeypatch.setenv("GFAL_XROOTD_BACKEND", "native")
         monkeypatch.setattr(
             XRootDNativeFileSystem,
             "from_url",
@@ -372,8 +370,8 @@ class TestUrlToFs:
     def test_root_falls_back_to_https_when_xrootd_deps_missing(self):
         with (
             patch(
-                "gfal.core.fs.fsspec.url_to_fs",
-                side_effect=ModuleNotFoundError("No module named 'fsspec_xrootd'"),
+                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
+                side_effect=ModuleNotFoundError("No module named 'XRootD'"),
             ),
             pytest.warns(
                 RootProtocolFallbackWarning,

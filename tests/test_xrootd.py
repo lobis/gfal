@@ -4,7 +4,7 @@ Integration tests against a local XRootD server.
 The ``xrootd_server`` session fixture (defined in conftest.py) starts a real
 XRootD daemon that serves a temporary directory over both the native
 ``root://`` protocol and ``https://`` (XrdHttp plugin).  Tests are skipped
-automatically when the ``xrootd`` binary or ``fsspec-xrootd`` package is not
+automatically when the ``xrootd`` binary or XRootD Python bindings are not
 available.
 
 Run these tests with::

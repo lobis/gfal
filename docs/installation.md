@@ -8,7 +8,7 @@ The easiest way to install `gfal` is via `pip`:
 pip install gfal
 ```
 
-This installs the base package with local-file, HTTP/HTTPS, and the lightweight `fsspec-xrootd` adapter.
+This installs the base package with local-file and HTTP/HTTPS support.
 
 ### PyPI with XRootD support
 
@@ -64,8 +64,7 @@ pip install "gfal[ssh]"
 ```
 
 For pip users, the `xrootd` extra is optional to avoid making every base
-installation download the full XRootD client bundle while still keeping the
-small `fsspec-xrootd` adapter available by default.
+installation download the full XRootD client bundle.
 
 ---
 
@@ -84,10 +83,9 @@ curl -sL -o /etc/yum.repos.d/gfal.repo https://lobis.github.io/gfal/rpm/gfal.rep
 dnf install -y python3-gfal
 ```
 
-The RPM build bundles the lightweight `fsspec-xrootd` adapter, but does not
-bundle the heavyweight XRootD client bindings. Full `root://` support therefore
-still depends on `python3-xrootd` or equivalent site-provided bindings being
-available in the environment.
+The RPM build does not bundle the heavyweight XRootD client bindings. Full
+`root://` support therefore still depends on `python3-xrootd` or equivalent
+site-provided bindings being available in the environment.
 
 ---
 
@@ -105,9 +103,8 @@ If you use direct-download installs, update the version in the filename when a
 new release comes out. If you want the latest version automatically, use the
 repository configuration above instead.
 
-This RPM has the same support profile as the repository package: the lightweight
-XRootD adapter is bundled, while the actual XRootD client bindings remain
-external.
+This RPM has the same support profile as the repository package: the actual
+XRootD client bindings remain external.
 
 ## CERN HTTPS and CERN CA Certificates
 

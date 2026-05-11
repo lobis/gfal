@@ -1,6 +1,6 @@
 # gfal — Grid File Access Library
 
-**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with the lightweight XRootD fsspec adapter included by default when XRootD bindings are available.
+**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** out of the box, with native **XRootD** support available when the XRootD Python bindings are installed.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
 
@@ -98,7 +98,7 @@ For the full Python API reference, see [Python API](python-api.md).
 pip install gfal
 ```
 
-This installs the CLI and the Python library with local-file, HTTP/HTTPS, and the lightweight `fsspec-xrootd` adapter.
+This installs the CLI and the Python library with local-file and HTTP/HTTPS support.
 
 For a fully pip-managed XRootD (`root://`) client stack:
 

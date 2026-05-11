@@ -279,9 +279,8 @@ def _unmount_gfal(mountpoint: Path) -> None:
 
 
 # Docker image pre-built with CERN CAs, XRootD client, python3-xrootd, and the
-# gfal runtime dependencies plus the temporary fsspec-xrootd fork used for
-# integration coverage. Used for XRootD integration tests that require proper
-# GSI authentication (not available on macOS without /etc/grid-security).
+# gfal runtime dependencies. Used for XRootD integration tests that require
+# proper GSI authentication (not available on macOS without /etc/grid-security).
 _DOCKER_IMAGE = "xrootd-cern-test"
 
 # Repo root — mounted read-only into the container so gfal is importable.

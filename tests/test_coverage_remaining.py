@@ -62,7 +62,7 @@ class TestIsMissingXrootdDependency:
         assert _is_missing_xrootd_dependency(ImportError("no module named xrootd"))
 
     def test_module_not_found(self):
-        assert _is_missing_xrootd_dependency(ModuleNotFoundError("fsspec_xrootd"))
+        assert _is_missing_xrootd_dependency(ModuleNotFoundError("XRootD"))
 
     def test_marker_in_non_import_error(self):
         e = RuntimeError("protocol not known: root")
@@ -131,15 +131,21 @@ class TestUrlToFsXrootdFallback:
     def test_non_import_error_raises_runtime_error(self):
         orig_error = RuntimeError("Unexpected init failure in library")
         with (
-            patch("fsspec.url_to_fs", side_effect=orig_error),
-            pytest.raises(RuntimeError, match="Cannot load XRootD filesystem"),
+            patch(
+                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
+                side_effect=orig_error,
+            ),
+            pytest.raises(RuntimeError, match="Cannot load native XRootD filesystem"),
         ):
             url_to_fs("root://host//path")
 
     def test_import_error_falls_back_to_https(self):
         fs._EMITTED_ROOT_HTTPS_FALLBACKS.clear()
         with (
-            patch("fsspec.url_to_fs", side_effect=ImportError("no xrootd")),
+            patch(
+                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
+                side_effect=ImportError("no xrootd"),
+            ),
             warnings.catch_warnings(record=True),
         ):
             warnings.simplefilter("always")
