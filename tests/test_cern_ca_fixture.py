@@ -1,8 +1,7 @@
 """Tests for the CERN CA bundle helper used by integration tests."""
 
+import sys
 from pathlib import Path
-
-import certifi
 
 import conftest
 
@@ -16,9 +15,17 @@ def test_base_ca_bundle_prefers_existing_ssl_cert_file(monkeypatch, tmp_path):
 
 
 def test_base_ca_bundle_ignores_missing_ssl_cert_file(monkeypatch):
-    monkeypatch.setenv("SSL_CERT_FILE", "/does/not/exist.pem")
+    fallback = Path("/fallback/certifi.pem")
 
-    assert conftest._base_ca_bundle() == Path(certifi.where())
+    class FakeCertifi:
+        @staticmethod
+        def where():
+            return str(fallback)
+
+    monkeypatch.setenv("SSL_CERT_FILE", "/does/not/exist.pem")
+    monkeypatch.setitem(sys.modules, "certifi", FakeCertifi)
+
+    assert conftest._base_ca_bundle() == fallback
 
 
 def test_write_combined_ca_bundle_appends_cern_ca(tmp_path):
