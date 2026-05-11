@@ -32,6 +32,10 @@ def _status_error(operation: str, status: Any) -> OSError:
     return OSError(f"{operation} failed: {message}")
 
 
+def _is_not_found_status(status: Any) -> bool:
+    return "no such file or directory" in getattr(status, "message", "").lower()
+
+
 def _flags_to_mode(flags: int, stat_flags: Any) -> int:
     is_dir = bool(flags & stat_flags.IS_DIR)
     is_readable = bool(flags & stat_flags.IS_READABLE)
@@ -116,6 +120,13 @@ class XRootDNativeFileSystem:
         if not status.ok:
             raise _status_error("File stat request", status)
         return self._info_from_stat(path, stat_info)
+
+    def probe_support(self, path: str) -> None:
+        """Raise only when the server/client cannot operate on this protocol."""
+        status, _stat_info = self._myclient.stat(path, timeout=self.timeout)
+        if status.ok or _is_not_found_status(status):
+            return
+        raise _status_error("XRootD protocol probe", status)
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         status, entries = self._myclient.dirlist(

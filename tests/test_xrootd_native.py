@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
+import pytest
+
 from gfal.core.xrootd_native import XRootDNativeFileSystem
 
 
@@ -185,6 +187,27 @@ def test_info_and_ls_return_fsspec_shaped_dicts(monkeypatch):
     assert listing[0]["name"] == "/eos/file"
     assert listing[0]["type"] == "file"
     assert listing[0]["size"] == len(b"hello native xrootd")
+
+
+def test_probe_support_allows_missing_paths(monkeypatch):
+    monkeypatch.setattr("gfal.core.xrootd_native._load_xrootd_client", fake_loader)
+    fso, _ = XRootDNativeFileSystem.from_url("root://example.com//eos/missing")
+
+    fso.probe_support("/eos/missing")
+
+    assert FakeClient.last_filesystem.calls[-1] == ("stat", "/eos/missing", 0)
+
+
+def test_probe_support_raises_for_unsupported_protocol(monkeypatch):
+    monkeypatch.setattr("gfal.core.xrootd_native._load_xrootd_client", fake_loader)
+    fso, _ = XRootDNativeFileSystem.from_url("https://example.com//eos/file")
+    fso._myclient.stat = lambda path, timeout=0: (
+        FakeStatus(False, "[ERROR] Operation not supported"),
+        None,
+    )
+
+    with pytest.raises(OSError, match="Operation not supported"):
+        fso.probe_support("/eos/file")
 
 
 def test_open_read_and_write_use_native_file(monkeypatch):

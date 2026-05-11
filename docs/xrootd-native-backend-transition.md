@@ -20,9 +20,11 @@ GFAL_HTTPS_BACKEND=xrootd
 `GFAL_XROOTD_BACKEND=native` routes `root://` and `xroot://` URLs through the
 native adapter in `gfal.core.xrootd_native`.
 
-`GFAL_HTTPS_BACKEND=xrootd` routes `https://` URLs through the same adapter. This
-is intentionally opt-in because XRootD HTTPS support depends on the installed
-XRootD client build and available plugins.
+`GFAL_HTTPS_BACKEND=xrootd` first probes `https://` URLs through the same
+adapter. This is intentionally opt-in because XRootD HTTPS support depends on
+the installed XRootD client build and available plugins. If the probe reports
+that HTTP(S) is not supported, `gfal` falls back to the aiohttp/WebDAV backend
+and emits a one-time warning for that URL.
 
 ## Implementation notes
 
@@ -56,7 +58,11 @@ In the current local environment, direct XRootD Python binding access to
 [ERROR] Operation not supported
 ```
 
-for both `FileSystem.stat()` and `File.open()`. That means the HTTPS migration
-should not be a blind default flip. The next step should add capability detection
-and fallback, then compare the resulting traces against gfal2 before enabling
-native HTTPS by default.
+for both `FileSystem.stat()` and `File.open()`. The experimental HTTPS selector
+therefore performs a capability probe before returning the native filesystem. If
+that probe sees the unsupported-protocol error, the command continues through
+the existing HTTP/WebDAV backend.
+
+The next step is to compare this fallback behavior against gfal2 traces and
+then decide whether `GFAL_HTTPS_BACKEND=auto` should try native HTTPS first for
+known-supported deployments.
