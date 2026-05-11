@@ -303,7 +303,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
         sudo apt-get update
-        sudo apt-get install -y globus-proxy-utils
+        sudo apt-get install -y globus-proxy-utils igtf-policy-classic voms-clients-java
     - name: Set up dteam service account credentials
       if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
       run: |
@@ -325,9 +325,27 @@ jobs:
         else
           echo "::warning::Service account certificate expires within 30 days (${CERT_EXPIRY})! Renew it at https://ca.cern.ch/ca/"
         fi
-        grid-proxy-init -cert /tmp/usercert.pem -key /tmp/userkey.pem -out /tmp/x509proxy -valid 12:00 -q
+        mkdir -p /tmp/vomsdir/dteam
+        cat > /tmp/dteam.vomses <<'EOF'
+        "dteam" "voms2.hellasgrid.gr" "15004" "/C=GR/O=HellasGrid/OU=hellasgrid.gr/CN=voms2.hellasgrid.gr" "dteam"
+        EOF
+        cat > /tmp/vomsdir/dteam/voms2.hellasgrid.gr.lsc <<'EOF'
+        /C=GR/O=HellasGrid/OU=hellasgrid.gr/CN=voms2.hellasgrid.gr
+        /C=GR/O=HellasGrid/OU=Certification Authorities/CN=HellasGrid CA 2006
+        EOF
+        voms-proxy-init \
+          --cert /tmp/usercert.pem \
+          --key /tmp/userkey.pem \
+          --out /tmp/x509proxy \
+          --valid 12:00 \
+          --voms dteam \
+          --vomses /tmp/dteam.vomses \
+          --vomsdir /tmp/vomsdir \
+          --rfc \
+          --quiet
         PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
+        voms-proxy-info --file /tmp/x509proxy --vo
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
     - name: Run FNAL dCache integration tests
       run: |
