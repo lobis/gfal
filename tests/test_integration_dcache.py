@@ -1,7 +1,7 @@
 """Integration tests against the FNAL dCache dteam WebDAV endpoint.
 
 These tests use the CERN dteam service-account proxy created by CI.  They write
-only below ``/dcache/dteam/gfal`` and clean up all created paths afterwards.
+only below ``/dcache/dteam/gfal/ci`` and clean up all created paths afterwards.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import hashlib
 import os
 import socket
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +23,15 @@ pytestmark = [pytest.mark.integration, pytest.mark.network]
 
 _DCACHE_HOST = "cmsdcadisk.fnal.gov"
 _DCACHE_PORT = 2880
-_DCACHE_BASE = f"https://{_DCACHE_HOST}:{_DCACHE_PORT}/dcache/dteam/gfal"
+_DCACHE_BASE = f"https://{_DCACHE_HOST}:{_DCACHE_PORT}/dcache/dteam/gfal/ci"
+_RUN_DIR_PREFIX = "pytest-run-"
+_RUN_DIR_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+_STALE_RUN_DIR_AGE = timedelta(days=1)
+
+
+@pytest.fixture(autouse=True)
+def _plain_gfal_output(monkeypatch):
+    monkeypatch.setenv("GFAL_CLI_GFAL2", "1")
 
 
 def _find_proxy() -> Optional[str]:
@@ -65,14 +74,93 @@ def proxy_cert() -> str:
     return path
 
 
-def _run(cmd: str, proxy_cert: str, *args: str):
-    return run_gfal(cmd, "-E", proxy_cert, "--key", proxy_cert, *args)
+def _run(cmd: str, proxy_cert: str, *args: str, **kwargs):
+    return run_gfal(
+        cmd,
+        "-E",
+        proxy_cert,
+        "--key",
+        proxy_cert,
+        "--no-verify",
+        *args,
+        **kwargs,
+    )
+
+
+def _run_dir_name() -> str:
+    timestamp = datetime.now(timezone.utc).strftime(_RUN_DIR_TIMESTAMP_FORMAT)
+    github_run_id = os.environ.get("GITHUB_RUN_ID")
+    github_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "0")
+    xdist_worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+    suffix = uuid.uuid4().hex[:10]
+    token = (
+        f"gha-{github_run_id}-{github_attempt}-{xdist_worker}-{suffix}"
+        if github_run_id
+        else f"local-{suffix}"
+    )
+    return f"{_RUN_DIR_PREFIX}{timestamp}-{token}"
+
+
+def _created_at_from_run_dir_name(name: str) -> Optional[datetime]:
+    if not name.startswith(_RUN_DIR_PREFIX):
+        return None
+    timestamp = name.removeprefix(_RUN_DIR_PREFIX).split("-", maxsplit=1)[0]
+    try:
+        created_at = datetime.strptime(timestamp, _RUN_DIR_TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+    return created_at.replace(tzinfo=timezone.utc)
+
+
+def _child_names(ls_output: str) -> list[str]:
+    names = []
+    for line in ls_output.splitlines():
+        text = line.strip().rstrip("/")
+        if not text:
+            continue
+        name = text.split()[-1].rstrip("/").rsplit("/", maxsplit=1)[-1]
+        names.append(name)
+    return names
+
+
+def _cleanup_stale_run_dirs(proxy_cert: str) -> None:
+    rc, out, _err = _run("ls", proxy_cert, _DCACHE_BASE)
+    if rc != 0:
+        return
+
+    cutoff = datetime.now(timezone.utc) - _STALE_RUN_DIR_AGE
+    for name in _child_names(out):
+        created_at = _created_at_from_run_dir_name(name)
+        if created_at is None or created_at >= cutoff:
+            continue
+        _run("rm", proxy_cert, "-r", f"{_DCACHE_BASE}/{name}")
+
+
+@pytest.fixture(scope="session")
+def dcache_run_dir(proxy_cert):
+    rc, out, err = _run("mkdir", proxy_cert, "-p", _DCACHE_BASE)
+    require_test_prereq(
+        rc == 0, f"Could not create dCache CI root {_DCACHE_BASE}: {err or out}"
+    )
+
+    _cleanup_stale_run_dirs(proxy_cert)
+
+    url = f"{_DCACHE_BASE}/{_run_dir_name()}"
+    rc, out, err = _run("mkdir", proxy_cert, url)
+    require_test_prereq(
+        rc == 0, f"Could not create dCache CI run dir {url}: {err or out}"
+    )
+
+    try:
+        yield url
+    finally:
+        _run("rm", proxy_cert, "-r", url)
 
 
 @pytest.fixture
-def dcache_dir(proxy_cert):
-    name = f"pytest-{uuid.uuid4().hex[:10]}"
-    url = f"{_DCACHE_BASE}/{name}"
+def dcache_dir(proxy_cert, dcache_run_dir):
+    name = f"case-{uuid.uuid4().hex[:10]}"
+    url = f"{dcache_run_dir}/{name}"
     created: list[str] = []
 
     rc, out, err = _run("mkdir", proxy_cert, url)
@@ -126,15 +214,7 @@ def test_dcache_save_cat_and_sum(proxy_cert, dcache_dir):
     payload = b"saved through stdin\n"
     remote = child("saved.txt")
 
-    rc, out, err = run_gfal(
-        "save",
-        "-E",
-        proxy_cert,
-        "--key",
-        proxy_cert,
-        remote,
-        input=payload.decode(),
-    )
+    rc, out, err = _run("save", proxy_cert, remote, input=payload.decode())
     assert rc == 0, err or out
 
     rc, out, err = _run("cat", proxy_cert, remote)
