@@ -14,7 +14,7 @@ The current behavior is:
   optional non-XRootD protocol backends.
 - `fsspec-xrootd` is no longer required.
 - During the upstream trial, `pyproject.toml` points at the XRootD PR branch:
-  `git+https://github.com/lobis/xrootd.git@codex/native-fsspec-root#subdirectory=python`.
+  `git+https://github.com/lobis/xrootd.git@codex/native-fsspec-root`.
 
 One opt-in selector exists for HTTPS transition testing:
 
@@ -67,18 +67,21 @@ supports HTTPS schemes directly.
 
 ## Upstream PR findings
 
-Two packaging/API issues showed up while testing
-`xrootd/xrootd#2789` from source:
+Two packaging/API issues showed up during early testing of
+`xrootd/xrootd#2789`:
 
-- `pip install` from the PR branch currently fails in a standalone macOS build
-  with a missing `XrdCks/XrdCksXAttr.hh` header.
-- `fsspec.url_to_fs("root://...")` currently passes `protocol` twice because
+- Installing from the `python/` subdirectory alone can build the Python bindings
+  against an unrelated XRootD client library. The branch now uses the repository
+  root direct reference so the Python bindings and bundled client library come
+  from the same commit.
+- `fsspec.url_to_fs("root://...")` originally passed `protocol` twice because
   fsspec uses the URL scheme as its own argument and the PR's
-  `_get_kwargs_from_urls()` also returns `protocol`.
+  `_get_kwargs_from_urls()` also returned `protocol`. The upstream branch now
+  returns `xrootd_protocol` for the XRootD-specific constructor argument.
 
-gfal works around the second issue by instantiating `XRootD.fsspec.XRootDFileSystem`
-directly. For local verification, the PR's pure-Python `XRootD.fsspec` module
-was overlaid onto the existing `xrootd==6.0.1` wheel.
+gfal still instantiates `XRootD.fsspec.XRootDFileSystem` directly for `root://`
+URLs so the trial does not depend on entry-point ordering when other `root`
+implementations are installed.
 
 ## First smoke-test result
 

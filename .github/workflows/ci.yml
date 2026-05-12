@@ -54,7 +54,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
-        python-version: [ "3.9", "3.10", "3.11", "3.12", "3.13", "3.14" ]
+        python-version: [ "3.14" ]
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
@@ -62,8 +62,26 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
         cache-dependency-path: pyproject.toml
+    - name: Install XRootD build dependencies
+      run: |
+        if [ "${RUNNER_OS}" = "Linux" ]; then
+          sudo apt-get update
+          sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+        else
+          brew install nlohmann-json
+        fi
     - name: Install package and test dependencies
       run: pip install --no-cache-dir ".[dev]"
+    - name: Check native XRootD fsspec backend
+      run: |
+        python - <<'PY'
+        import fsspec
+        import XRootD.fsspec
+
+        cls = fsspec.get_filesystem_class("root")
+        assert cls is XRootD.fsspec.XRootDFileSystem, cls
+        print(cls)
+        PY
     - name: Configure XRootD wheel library path
       if: runner.os == 'macOS'
       run: |
@@ -109,11 +127,26 @@ jobs:
     - name: Install XRootD runtime via conda
       shell: bash -el {0}
       run: conda install -y xrootd
+    - name: Install XRootD build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
     - name: Install Python dependencies
       shell: bash -el {0}
       run: |
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
+    - name: Check native XRootD fsspec backend
+      shell: bash -el {0}
+      run: |
+        python - <<'PY'
+        import fsspec
+        import XRootD.fsspec
+
+        cls = fsspec.get_filesystem_class("root")
+        assert cls is XRootD.fsspec.XRootDFileSystem, cls
+        print(cls)
+        PY
     - name: Run XRootD tests
       shell: bash -el {0}
       run: pytest tests/ -v -m xrootd
@@ -128,6 +161,10 @@ jobs:
         python-version: "3.12"
         cache: 'pip'
         cache-dependency-path: pyproject.toml
+    - name: Install XRootD build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
     - name: Install package and test dependencies
       run: |
         pip install --no-cache-dir ".[dev,ssh]"
@@ -144,6 +181,10 @@ jobs:
         python-version: "3.12"
         cache: 'pip'
         cache-dependency-path: pyproject.toml
+    - name: Install XRootD build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
     - name: Install package and test dependencies
       run: |
         pip install --no-cache-dir ".[dev,s3]"
@@ -165,6 +206,14 @@ jobs:
         python-version: "3.12"
         cache: 'pip'
         cache-dependency-path: pyproject.toml
+    - name: Install XRootD build dependencies
+      run: |
+        if [ "${RUNNER_OS}" = "Linux" ]; then
+          sudo apt-get update
+          sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+        else
+          brew install nlohmann-json
+        fi
     - name: Check FUSE runtime
       run: |
         if [ "${RUNNER_OS}" = "Linux" ]; then
@@ -239,8 +288,9 @@ jobs:
       run: |
         conda install -y xrootd
         python -m pip install --upgrade pip
-        pip install --no-cache-dir ".[dev]"
         sudo apt-get update
+        sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+        pip install --no-cache-dir ".[dev]"
         sudo apt-get install -y globus-proxy-utils
     - name: Build Docker integration image
       run: docker build --platform linux/amd64 -t xrootd-cern-test -f docker/Dockerfile.xrootd-cern-test .
@@ -293,6 +343,10 @@ jobs:
         python-version: "3.12"
         cache: 'pip'
         cache-dependency-path: pyproject.toml
+    - name: Install XRootD build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake git libkrb5-dev libssl-dev pkg-config uuid-dev zlib1g-dev
     - name: Install local test dependencies
       run: pip install --no-cache-dir ".[dev]"
     - name: Install host proxy tooling

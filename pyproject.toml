@@ -25,7 +25,7 @@ authors = [
 dependencies = [
     "fsspec>=2023.1.0",
     "aiohttp>=3.8.0",
-    "xrootd[fsspec] @ git+https://github.com/lobis/xrootd.git@codex/native-fsspec-root#subdirectory=python",
+    "xrootd[fsspec] @ git+https://github.com/lobis/xrootd.git@codex/native-fsspec-root",
     "rich>=13.0.0",
     "rich-click>=1.7.0",
     "click>=8.0.0",
