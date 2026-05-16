@@ -521,6 +521,7 @@ class AsyncGfalClient:
 
     @staticmethod
     def _probe_destination_info(dst_fs: Any, dst_path: str) -> StatResult | None:
+        probe_error: OSError | None = None
         try:
             return StatResult.from_info(dst_fs.info(dst_path))
         except FileNotFoundError:
@@ -528,6 +529,8 @@ class AsyncGfalClient:
         except OSError as exc:
             if is_xrootd_not_found_message(str(exc)):
                 pass
+            elif AsyncGfalClient._is_permission_probe_error(exc):
+                probe_error = exc
             else:
                 raise
 
@@ -538,12 +541,18 @@ class AsyncGfalClient:
         # concrete directory-capable backends: object stores such as S3 may
         # return an empty listing for a missing key prefix.
         if type(dst_fs).__name__ not in {"WebDAVFileSystem", "XRootDNativeFileSystem"}:
+            if probe_error is not None:
+                raise probe_error
             return None
         try:
             entries = dst_fs.ls(dst_path, detail=True)
         except Exception:
+            if probe_error is not None:
+                raise probe_error from None
             return None
         if not isinstance(entries, list):
+            if probe_error is not None:
+                raise probe_error
             return None
         return AsyncGfalClient._directory_stat_result(dst_path)
 
@@ -691,12 +700,7 @@ class AsyncGfalClient:
 
         if destination_info is _INFO_UNSET:
             if not destination_probed:
-                try:
-                    dst_st = self._probe_destination_info(dst_fs, dst_path)
-                except OSError as exc:
-                    if not src_isdir or not self._is_permission_probe_error(exc):
-                        raise
-                    dst_st = self._directory_stat_result(dst_path)
+                dst_st = self._probe_destination_info(dst_fs, dst_path)
                 if dst_st is not None:
                     dst_exists = True
                     dst_isdir = dst_st.is_dir()

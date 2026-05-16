@@ -939,7 +939,40 @@ class TestGfalClientLibraryHelpers:
 
         dst_fs.mkdir.assert_not_called()
 
-    def test_recursive_copy_descends_when_destination_dir_probe_denied(self):
+    def test_destination_probe_treats_webdav_permission_with_successful_ls_as_dir(
+        self,
+    ):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(return_value=[])
+
+        dst_fs = WebDAVFileSystem()
+
+        result = async_client._probe_destination_info(dst_fs, "/dst")
+
+        assert result is not None
+        assert result.is_dir()
+        dst_fs.ls.assert_called_once_with("/dst", detail=True)
+
+    def test_destination_probe_reraises_unconfirmed_webdav_permission_denied(self):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(side_effect=PermissionError("Permission denied"))
+
+        dst_fs = WebDAVFileSystem()
+
+        with pytest.raises(PermissionError):
+            async_client._probe_destination_info(dst_fs, "/dst")
+
+    def test_recursive_copy_descends_when_destination_permission_ls_succeeds(self):
         client = GfalClient()
         src_fs = MagicMock()
         src_fs.info.return_value = {
@@ -949,9 +982,14 @@ class TestGfalClientLibraryHelpers:
             "mode": stat.S_IFDIR | 0o755,
         }
         src_fs.ls.return_value = []
-        dst_fs = MagicMock()
-        dst_fs.info.side_effect = PermissionError("Permission denied")
-        dst_fs.mkdir = MagicMock()
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(return_value=[])
+                self.mkdir = MagicMock()
+
+        dst_fs = WebDAVFileSystem()
 
         def _url_to_fs(url, storage_options=None):
             del storage_options
@@ -960,6 +998,43 @@ class TestGfalClientLibraryHelpers:
             return dst_fs, "/dst"
 
         with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_recursive_copy_raises_when_destination_permission_not_confirmed(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.mkdir = MagicMock()
+
+        dst_fs = WebDAVFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs),
+            pytest.raises(GfalPermissionError),
+        ):
             client.copy(
                 "file:///src",
                 "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
