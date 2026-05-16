@@ -1074,7 +1074,7 @@ class AsyncGfalClient:
         if options.create_parents:
             parent = parent_fs_path(write_dst_path)
             if parent:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(FileExistsError):
                     write_dst_fs.mkdir(parent, create_parents=True)
 
         src_checksum = None

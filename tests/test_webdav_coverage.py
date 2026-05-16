@@ -456,23 +456,41 @@ class TestWebDAVLsSingleFile:
 
 
 class TestWebDAVMakedirs:
-    def test_makedirs_409_conflict_continues(self):
+    def test_makedirs_409_conflict_on_ancestor_continues(self):
         fs = WebDAVFileSystem()
-        resp = MagicMock()
-        resp.status_code = 409
-        fs._session.request = MagicMock(return_value=resp)
+        ancestor_resp = MagicMock(status_code=409)
+        target_resp = MagicMock(status_code=201)
+        fs._session.request = MagicMock(side_effect=[ancestor_resp, target_resp])
 
-        fs.makedirs("https://example.org/a/b/c", exist_ok=True)
-        assert fs._session.request.call_count == 3  # a, b, c
+        fs.makedirs("https://example.org/a/b", exist_ok=True)
+        assert fs._session.request.call_count == 2  # a, b
 
-    def test_makedirs_403_forbidden_continues(self):
+    def test_makedirs_403_forbidden_on_ancestor_continues(self):
         fs = WebDAVFileSystem()
-        resp = MagicMock()
-        resp.status_code = 403
-        fs._session.request = MagicMock(return_value=resp)
+        ancestor_resp = MagicMock(status_code=403)
+        target_resp = MagicMock(status_code=201)
+        fs._session.request = MagicMock(side_effect=[ancestor_resp, target_resp])
 
         fs.makedirs("https://example.org/x/y", exist_ok=True)
         assert fs._session.request.call_count == 2
+
+    def test_makedirs_409_conflict_on_target_raises(self):
+        fs = WebDAVFileSystem()
+        ancestor_resp = MagicMock(status_code=403)
+        target_resp = MagicMock(status_code=409)
+        fs._session.request = MagicMock(side_effect=[ancestor_resp, target_resp])
+
+        with pytest.raises(FileNotFoundError, match="Intermediate directory"):
+            fs.makedirs("https://example.org/a/b", exist_ok=True)
+
+    def test_makedirs_403_forbidden_on_target_raises(self):
+        fs = WebDAVFileSystem()
+        ancestor_resp = MagicMock(status_code=403)
+        target_resp = MagicMock(status_code=403)
+        fs._session.request = MagicMock(side_effect=[ancestor_resp, target_resp])
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            fs.makedirs("https://example.org/x/y", exist_ok=True)
 
     def test_makedirs_400_plus_raises(self):
         fs = WebDAVFileSystem()
