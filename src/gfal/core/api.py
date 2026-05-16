@@ -6,6 +6,7 @@ import errno
 import hashlib
 import inspect
 import os
+import posixpath
 import stat
 import threading
 import time
@@ -1071,10 +1072,10 @@ class AsyncGfalClient:
         write_dst_fs, write_dst_path = fs.url_to_fs(write_dst_url, self.storage_options)
 
         if options.create_parents:
-            parent = str(Path(dst_path).parent)
+            parent = parent_fs_path(write_dst_path)
             if parent:
                 with contextlib.suppress(Exception):
-                    dst_fs.mkdir(parent, create_parents=True)
+                    write_dst_fs.mkdir(parent, create_parents=True)
 
         src_checksum = None
         if start_callback is not None:
@@ -1763,3 +1764,12 @@ def local_destination_path(dst_url: str, dst_path: str) -> Path | None:
     if urlparse(normalized).scheme.lower() != "file":
         return None
     return Path(dst_path)
+
+
+def parent_fs_path(path: str) -> str:
+    """Return the parent path/URL used by a filesystem backend."""
+    parsed = urlparse(path)
+    if parsed.scheme and parsed.netloc:
+        parent_path = posixpath.dirname(parsed.path.rstrip("/")) or "/"
+        return urlunparse(parsed._replace(path=parent_path))
+    return str(Path(path).parent)
