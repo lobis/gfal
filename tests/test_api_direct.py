@@ -886,6 +886,62 @@ class TestGfalClientLibraryHelpers:
 
         dst_fs.mkdir.assert_not_called()
 
+    def test_recursive_copy_descends_when_destination_dir_probe_denied(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+        dst_fs = MagicMock()
+        dst_fs.info.side_effect = PermissionError("Permission denied")
+        dst_fs.mkdir = MagicMock()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_file_copy_still_raises_when_destination_probe_denied(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src.txt",
+            "type": "file",
+            "size": 1,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        dst_fs = MagicMock()
+        dst_fs.info.side_effect = PermissionError("Permission denied")
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src.txt":
+                return src_fs, "/src.txt"
+            return dst_fs, "/dst.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs),
+            pytest.raises(GfalPermissionError),
+        ):
+            client.copy(
+                "file:///src.txt",
+                "https://eospilot.cern.ch//eos/pilot/test/dst.txt?authz=token",
+            )
+
     def test_copy_respects_options(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"

@@ -545,12 +545,27 @@ class AsyncGfalClient:
             return None
         if not isinstance(entries, list):
             return None
+        return AsyncGfalClient._directory_stat_result(dst_path)
+
+    @staticmethod
+    def _directory_stat_result(path: str) -> StatResult:
         return StatResult.from_info({
-            "name": dst_path,
+            "name": path,
             "size": 0,
             "type": "directory",
             "mode": stat.S_IFDIR | 0o755,
         })
+
+    @staticmethod
+    def _is_permission_probe_error(exc: Exception) -> bool:
+        if getattr(exc, "errno", None) == errno.EACCES:
+            return True
+        if getattr(exc, "status", None) == 403:
+            return True
+        return (
+            is_xrootd_permission_message(str(exc))
+            or "permission denied" in str(exc).lower()
+        )
 
     def _precomputed_match(
         self,
@@ -676,7 +691,12 @@ class AsyncGfalClient:
 
         if destination_info is _INFO_UNSET:
             if not destination_probed:
-                dst_st = self._probe_destination_info(dst_fs, dst_path)
+                try:
+                    dst_st = self._probe_destination_info(dst_fs, dst_path)
+                except OSError as exc:
+                    if not src_isdir or not self._is_permission_probe_error(exc):
+                        raise
+                    dst_st = self._directory_stat_result(dst_path)
                 if dst_st is not None:
                     dst_exists = True
                     dst_isdir = dst_st.is_dir()
