@@ -1928,6 +1928,83 @@ class TestCliUsesLibraryCopy:
         assert 2 in byte_updates
         assert byte_updates[-1] == 3
 
+    def test_recursive_aggregate_uses_directory_transferred_bytes(self, tmp_path):
+        src = tmp_path / "srcdir"
+        dst = tmp_path / "dstdir"
+        src.mkdir()
+        dst.mkdir()
+        child = src / "nested"
+        child.mkdir()
+        (child / "a.bin").write_text("aaa")
+        (child / "b.bin").write_text("bbbb")
+
+        cmd = _make_cmd()
+        cmd.params = _default_params(
+            src=src.as_uri(),
+            dst=[dst.as_uri()],
+            recursive=True,
+            limit=1,
+        )
+
+        class _DoneHandle:
+            def done(self):
+                return True
+
+            def wait(self, timeout=None):
+                del timeout
+                return None
+
+            def cancel(self):
+                return None
+
+        fake_client = MagicMock()
+        fake_client.stat.side_effect = [FileNotFoundError()]
+        fake_client._async_client = MagicMock()
+
+        def _start_copy(src_url, dst_url, **kwargs):
+            del src_url, dst_url
+            kwargs["start_callback"]()
+            for value in (2, 3, 4, 7):
+                kwargs["progress_callback"](value)
+            return _DoneHandle()
+
+        fake_client.start_copy.side_effect = _start_copy
+
+        fake_src_fs = MagicMock()
+        fake_src_fs.ls.return_value = [
+            {"name": str(child), "size": 0, "type": "directory"}
+        ]
+        fake_dst_fs = MagicMock()
+        fake_dst_fs.ls.return_value = []
+
+        copy_progress = MagicMock()
+        with (
+            patch(
+                "gfal.cli.copy.fs.url_to_fs",
+                side_effect=[(fake_src_fs, str(src)), (fake_dst_fs, str(dst))],
+            ),
+            patch("gfal.cli.copy.sys.stdout.isatty", return_value=True),
+            patch("gfal.cli.copy.Spinner"),
+            patch(
+                "gfal.cli.copy.CountProgress",
+                side_effect=[MagicMock(), copy_progress],
+            ),
+        ):
+            cmd._copy_directory_parallel(
+                fake_client,
+                src.as_uri(),
+                dst.as_uri(),
+                {"timeout": 1800},
+                SimpleNamespace(),
+            )
+
+        byte_updates = [
+            call.kwargs.get("bytes_completed")
+            for call in copy_progress.update.call_args_list
+            if "bytes_completed" in call.kwargs
+        ]
+        assert byte_updates[-1] == 7
+
     def test_recursive_parallel_http_tpc_releases_submit_slot_after_start(
         self, tmp_path
     ):

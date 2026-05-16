@@ -865,6 +865,54 @@ class TestGfalClientLibraryHelpers:
         assert handle.done() is True
         assert dst.read_text() == "hello"
 
+    def test_recursive_directory_progress_is_cumulative_across_children(self):
+        client = GfalClient()
+        async_client = client._async_client
+        src_fs = MagicMock()
+        src_fs.ls.return_value = ["/src/a.bin", "/src/b.bin"]
+        dst_fs = MagicMock()
+        received = []
+
+        def fake_invoke_copy_sync(
+            child_src_url,
+            child_dst_url,
+            options,
+            progress_callback,
+            *args,
+            **kwargs,
+        ):
+            del child_dst_url, options, args, kwargs
+            if child_src_url.endswith("/a.bin"):
+                progress_callback(2)
+                progress_callback(3)
+            else:
+                progress_callback(1)
+                progress_callback(4)
+
+        with patch.object(
+            async_client,
+            "_invoke_copy_sync",
+            side_effect=fake_invoke_copy_sync,
+        ):
+            async_client._recursive_copy(
+                "file:///src",
+                src_fs,
+                "/src",
+                "file:///dst",
+                dst_fs,
+                "/dst",
+                CopyOptions(recursive=True),
+                received.append,
+                start_callback=None,
+                transfer_mode_callback=None,
+                warn_callback=None,
+                error_callback=None,
+                traverse_callback=None,
+                cancel_event=None,
+            )
+
+        assert received == [2, 3, 4, 7]
+
     def test_copy_directory_over_existing_file_raises_even_with_overwrite(
         self, tmp_path
     ):

@@ -1012,6 +1012,7 @@ class AsyncGfalClient:
 
         entries = src_fs.ls(src_path, detail=False)
         failures: list[Exception] = []
+        transferred = 0
 
         for entry_path in entries:
             if cancel_event is not None and cancel_event.is_set():
@@ -1022,12 +1023,25 @@ class AsyncGfalClient:
                 continue
             child_src_url = self._url_path_join(src_url, name)
             child_dst_url = self._url_path_join(dst_url, name)
+            child_base = transferred
+            child_last = 0
+
+            def child_progress(
+                bytes_transferred: int,
+                *,
+                _child_base: int = child_base,
+            ) -> None:
+                nonlocal child_last
+                child_last = max(0, int(bytes_transferred or 0))
+                if progress_callback is not None:
+                    progress_callback(_child_base + child_last)
+
             try:
                 self._invoke_copy_sync(
                     child_src_url,
                     child_dst_url,
                     options,
-                    progress_callback,
+                    child_progress,
                     start_callback,
                     warn_callback,
                     transfer_mode_callback,
@@ -1035,7 +1049,9 @@ class AsyncGfalClient:
                     traverse_callback,
                     cancel_event,
                 )
+                transferred = max(transferred, child_base + child_last)
             except Exception as exc:
+                transferred = max(transferred, child_base + child_last)
                 mapped = self._map_error(exc, child_src_url)
                 failures.append(mapped)
                 if error_callback is not None:

@@ -1491,7 +1491,10 @@ class CommandCopy(base.CommandBase):
                     skipped_count += 1
                 else:
                     copied_count += 1
-                    display_size = getattr(display, "src_size", None)
+                    display_size = max(
+                        int(getattr(display, "bytes_transferred", 0) or 0),
+                        int(getattr(display, "src_size", 0) or 0),
+                    )
                     if display_size:
                         copied_bytes += display_size
                 finished_count += 1
