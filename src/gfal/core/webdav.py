@@ -1067,6 +1067,8 @@ class WebDAVFileSystem(AbstractFileSystem):
     - ``chmod``            \u2014 no-op (HTTP has no permission model)
     """
 
+    cachable = False
+
     def __init__(self, storage_options: dict | None = None) -> None:
         self._opts = dict(storage_options or {})
         self._verify = self._opts.get("ssl_verify", True)
@@ -1200,9 +1202,11 @@ class WebDAVFileSystem(AbstractFileSystem):
         parsed = urlparse(path)
         # Split path into components, rebuild from the root down
         parts = [p for p in parsed.path.rstrip("/").split("/") if p]
+        leading_slashes = len(parsed.path) - len(parsed.path.lstrip("/"))
+        path_root = "/" * max(1, leading_slashes)
         for i in range(1, len(parts) + 1):
             is_target = i == len(parts)
-            partial_path = "/" + "/".join(parts[:i])
+            partial_path = path_root + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
             resp = self._session.request("MKCOL", partial_url, timeout=self._timeout)
             sc = resp.status_code

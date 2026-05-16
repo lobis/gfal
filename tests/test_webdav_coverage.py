@@ -492,6 +492,20 @@ class TestWebDAVMakedirs:
         with pytest.raises(PermissionError, match="Permission denied"):
             fs.makedirs("https://example.org/x/y", exist_ok=True)
 
+    def test_makedirs_preserves_double_slash_path_and_query(self):
+        fs = WebDAVFileSystem()
+        resp = MagicMock(status_code=201)
+        fs._session.request = MagicMock(return_value=resp)
+
+        fs.makedirs("https://eospilot.cern.ch//eos/pilot/a?authz=tok")
+
+        urls = [call.args[1] for call in fs._session.request.mock_calls]
+        assert urls == [
+            "https://eospilot.cern.ch//eos?authz=tok",
+            "https://eospilot.cern.ch//eos/pilot?authz=tok",
+            "https://eospilot.cern.ch//eos/pilot/a?authz=tok",
+        ]
+
     def test_makedirs_400_plus_raises(self):
         fs = WebDAVFileSystem()
         resp = MagicMock()
