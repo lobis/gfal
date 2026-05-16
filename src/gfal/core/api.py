@@ -826,7 +826,6 @@ class AsyncGfalClient:
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             info = fso.info(path)
-            info = fs.xrootd_enrich(info, fso)
             return StatResult.from_info(info)
         except Exception as e:
             raise self._map_error(e, url) from e
@@ -835,7 +834,7 @@ class AsyncGfalClient:
         try:
             fso, path = fs.url_to_fs(url, self.storage_options)
             try:
-                raw_entries = fs.xrootd_ls_enrich(fso, path)
+                raw_entries = fso.ls(path, detail=True)
             except OSError as e:
                 msg = str(e).lower()
                 should_try_info_fallback = any(
@@ -846,7 +845,7 @@ class AsyncGfalClient:
                     raise
 
                 try:
-                    raw_entries = [fs.xrootd_enrich(fso.info(path), fso)]
+                    raw_entries = [fso.info(path)]
                 except Exception as info_error:
                     raise e from info_error
         except Exception as e:
@@ -896,12 +895,6 @@ class AsyncGfalClient:
                     "Rename across different filesystem types is not supported",
                     errno.EXDEV,
                 )
-
-            if hasattr(src_fs, "_myclient"):
-                status, _ = src_fs._myclient.mv(src_path, dst_path)
-                if not status.ok:
-                    raise OSError(status.errno or 1, status.message)
-                return
 
             src_fs.mv(src_path, dst_path)
         except Exception as e:
