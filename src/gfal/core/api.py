@@ -531,13 +531,13 @@ class AsyncGfalClient:
             else:
                 raise
 
-        # EOS via the native XRootD backend can allow directory listing even
-        # when a direct directory stat is not useful for existence probing.
-        # Before deciding the destination is missing and attempting mkdir, try a
-        # shallow list and treat success as proof that the destination directory
-        # already exists.  Keep this XRootD-specific: object stores such as S3
-        # may return an empty listing for a missing key prefix.
-        if type(dst_fs).__name__ != "XRootDNativeFileSystem":
+        # EOS can allow directory listing even when a direct directory stat is
+        # not useful for existence probing.  Before deciding the destination is
+        # missing and attempting mkdir, try a shallow list and treat success as
+        # proof that the destination directory already exists.  Keep this to
+        # concrete directory-capable backends: object stores such as S3 may
+        # return an empty listing for a missing key prefix.
+        if type(dst_fs).__name__ not in {"WebDAVFileSystem", "XRootDNativeFileSystem"}:
             return None
         try:
             entries = dst_fs.ls(dst_path, detail=True)
