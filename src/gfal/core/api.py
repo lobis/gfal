@@ -521,14 +521,60 @@ class AsyncGfalClient:
 
     @staticmethod
     def _probe_destination_info(dst_fs: Any, dst_path: str) -> StatResult | None:
+        probe_error: OSError | None = None
         try:
             return StatResult.from_info(dst_fs.info(dst_path))
         except FileNotFoundError:
-            return None
+            pass
         except OSError as exc:
             if is_xrootd_not_found_message(str(exc)):
-                return None
-            raise
+                pass
+            elif AsyncGfalClient._is_permission_probe_error(exc):
+                probe_error = exc
+            else:
+                raise
+
+        # EOS can allow directory listing even when a direct directory stat is
+        # not useful for existence probing.  Before deciding the destination is
+        # missing and attempting mkdir, try a shallow list and treat success as
+        # proof that the destination directory already exists.  Keep this to
+        # concrete directory-capable backends: object stores such as S3 may
+        # return an empty listing for a missing key prefix.
+        if type(dst_fs).__name__ not in {"WebDAVFileSystem", "XRootDNativeFileSystem"}:
+            if probe_error is not None:
+                raise probe_error
+            return None
+        try:
+            entries = dst_fs.ls(dst_path, detail=True)
+        except Exception:
+            if probe_error is not None:
+                raise probe_error from None
+            return None
+        if not isinstance(entries, list):
+            if probe_error is not None:
+                raise probe_error
+            return None
+        return AsyncGfalClient._directory_stat_result(dst_path)
+
+    @staticmethod
+    def _directory_stat_result(path: str) -> StatResult:
+        return StatResult.from_info({
+            "name": path,
+            "size": 0,
+            "type": "directory",
+            "mode": stat.S_IFDIR | 0o755,
+        })
+
+    @staticmethod
+    def _is_permission_probe_error(exc: Exception) -> bool:
+        if getattr(exc, "errno", None) == errno.EACCES:
+            return True
+        if getattr(exc, "status", None) == 403:
+            return True
+        return (
+            is_xrootd_permission_message(str(exc))
+            or "permission denied" in str(exc).lower()
+        )
 
     def _precomputed_match(
         self,
@@ -1012,6 +1058,7 @@ class AsyncGfalClient:
 
         entries = src_fs.ls(src_path, detail=False)
         failures: list[Exception] = []
+        transferred = 0
 
         for entry_path in entries:
             if cancel_event is not None and cancel_event.is_set():
@@ -1022,12 +1069,25 @@ class AsyncGfalClient:
                 continue
             child_src_url = self._url_path_join(src_url, name)
             child_dst_url = self._url_path_join(dst_url, name)
+            child_base = transferred
+            child_last = 0
+
+            def child_progress(
+                bytes_transferred: int,
+                *,
+                _child_base: int = child_base,
+            ) -> None:
+                nonlocal child_last
+                child_last = max(0, int(bytes_transferred or 0))
+                if progress_callback is not None:
+                    progress_callback(_child_base + child_last)
+
             try:
                 self._invoke_copy_sync(
                     child_src_url,
                     child_dst_url,
                     options,
-                    progress_callback,
+                    child_progress,
                     start_callback,
                     warn_callback,
                     transfer_mode_callback,
@@ -1035,7 +1095,9 @@ class AsyncGfalClient:
                     traverse_callback,
                     cancel_event,
                 )
+                transferred = max(transferred, child_base + child_last)
             except Exception as exc:
+                transferred = max(transferred, child_base + child_last)
                 mapped = self._map_error(exc, child_src_url)
                 failures.append(mapped)
                 if error_callback is not None:

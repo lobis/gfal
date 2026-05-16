@@ -134,6 +134,7 @@ class _TransferDisplay:
         self.transfer_index = transfer_index
         self.transfer_total = transfer_total
         self.rich_history = rich_history
+        self.bytes_transferred = 0
         self._suppress_output = False
         self._lock = threading.Lock()
 
@@ -246,6 +247,7 @@ class _TransferDisplay:
         with self._lock:
             if self._suppress_output:
                 return
+            self.bytes_transferred = max(0, int(bytes_transferred or 0))
             if self.show_progress and self.progress_bar is not None and self.src_size:
                 self.progress_bar.update(
                     curr_size=bytes_transferred,
@@ -1346,6 +1348,9 @@ class CommandCopy(base.CommandBase):
         copied_bytes = 0
         skipped_count = 0
         finished_count = 0
+        live_child_bytes = {}
+        live_child_bytes_lock = threading.Lock()
+        aggregate_progress_lock = threading.Lock()
         aggregate_progress = None
         cancelled = False
         self._set_recursive_interrupt_summary_state(
@@ -1374,10 +1379,13 @@ class CommandCopy(base.CommandBase):
 
         def _update_aggregate_progress():
             if aggregate_progress is not None:
-                aggregate_progress.update(
-                    completed=finished_count,
-                    bytes_completed=copied_bytes,
-                )
+                with aggregate_progress_lock:
+                    with live_child_bytes_lock:
+                        live_bytes = sum(live_child_bytes.values())
+                    aggregate_progress.update(
+                        completed=finished_count,
+                        bytes_completed=copied_bytes + live_bytes,
+                    )
 
         def _usable_precomputed_source_info(entry):
             if isinstance(entry, dict):
@@ -1421,15 +1429,27 @@ class CommandCopy(base.CommandBase):
             child_size = self._entry_size(child_info_by_url.get(child_src_url))
             if child_size is not None:
                 display.set_total_size(child_size)
+            display_key = id(display)
+            with live_child_bytes_lock:
+                live_child_bytes[display_key] = 0
 
             def _handle_warn(msg, dst=child_dst_url, child_display=display):
                 if self._handle_skip_warn(msg, child_display):
                     return
                 self._warn_copy_message(msg, dst)
 
+            def _handle_progress(bytes_transferred, child_display=display):
+                child_display.update(bytes_transferred)
+                with live_child_bytes_lock:
+                    if display_key in live_child_bytes:
+                        live_child_bytes[display_key] = max(
+                            0, int(bytes_transferred or 0)
+                        )
+                _update_aggregate_progress()
+
             start_copy_kwargs = {
                 "options": copy_options,
-                "progress_callback": display.update,
+                "progress_callback": _handle_progress,
                 "start_callback": display.start,
                 "warn_callback": _handle_warn,
                 "transfer_mode_callback": display.set_mode,
@@ -1463,6 +1483,8 @@ class CommandCopy(base.CommandBase):
             del child_src_url, child_dst_url
             if remove_from is not None:
                 remove_from.remove(entry)
+            with live_child_bytes_lock:
+                live_child_bytes.pop(id(display), None)
             try:
                 display.transfer_index = finished_count + 1
                 handle.wait()
@@ -1471,7 +1493,10 @@ class CommandCopy(base.CommandBase):
                     skipped_count += 1
                 else:
                     copied_count += 1
-                    display_size = getattr(display, "src_size", None)
+                    display_size = max(
+                        int(getattr(display, "bytes_transferred", 0) or 0),
+                        int(getattr(display, "src_size", 0) or 0),
+                    )
                     if display_size:
                         copied_bytes += display_size
                 finished_count += 1

@@ -835,6 +835,241 @@ class TestGfalClientLibraryHelpers:
 
         dst_fs.open.assert_not_called()
 
+    def test_destination_probe_treats_successful_ls_as_existing_directory(self):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class XRootDNativeFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+
+        dst_fs = XRootDNativeFileSystem()
+
+        result = async_client._probe_destination_info(dst_fs, "/dst")
+
+        assert result is not None
+        assert result.is_dir()
+        dst_fs.ls.assert_called_once_with("/dst", detail=True)
+
+    def test_destination_probe_treats_successful_webdav_ls_as_existing_directory(
+        self,
+    ):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+
+        dst_fs = WebDAVFileSystem()
+
+        result = async_client._probe_destination_info(dst_fs, "/dst")
+
+        assert result is not None
+        assert result.is_dir()
+        dst_fs.ls.assert_called_once_with("/dst", detail=True)
+
+    def test_recursive_copy_does_not_mkdir_when_destination_ls_succeeds(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class XRootDNativeFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+                self.mkdir = MagicMock()
+
+        dst_fs = XRootDNativeFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "root://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_recursive_copy_does_not_mkdir_when_webdav_destination_ls_succeeds(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+                self.mkdir = MagicMock()
+
+        dst_fs = WebDAVFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_destination_probe_treats_webdav_permission_with_successful_ls_as_dir(
+        self,
+    ):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(return_value=[])
+
+        dst_fs = WebDAVFileSystem()
+
+        result = async_client._probe_destination_info(dst_fs, "/dst")
+
+        assert result is not None
+        assert result.is_dir()
+        dst_fs.ls.assert_called_once_with("/dst", detail=True)
+
+    def test_destination_probe_reraises_unconfirmed_webdav_permission_denied(self):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(side_effect=PermissionError("Permission denied"))
+
+        dst_fs = WebDAVFileSystem()
+
+        with pytest.raises(PermissionError):
+            async_client._probe_destination_info(dst_fs, "/dst")
+
+    def test_recursive_copy_descends_when_destination_permission_ls_succeeds(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(return_value=[])
+                self.mkdir = MagicMock()
+
+        dst_fs = WebDAVFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_recursive_copy_raises_when_destination_permission_not_confirmed(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class WebDAVFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.ls = MagicMock(side_effect=PermissionError("Permission denied"))
+                self.mkdir = MagicMock()
+
+        dst_fs = WebDAVFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs),
+            pytest.raises(GfalPermissionError),
+        ):
+            client.copy(
+                "file:///src",
+                "https://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
+    def test_file_copy_still_raises_when_destination_probe_denied(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src.txt",
+            "type": "file",
+            "size": 1,
+            "mode": stat.S_IFREG | 0o644,
+        }
+        dst_fs = MagicMock()
+        dst_fs.info.side_effect = PermissionError("Permission denied")
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src.txt":
+                return src_fs, "/src.txt"
+            return dst_fs, "/dst.txt"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs),
+            pytest.raises(GfalPermissionError),
+        ):
+            client.copy(
+                "file:///src.txt",
+                "https://eospilot.cern.ch//eos/pilot/test/dst.txt?authz=token",
+            )
+
     def test_copy_respects_options(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"
@@ -864,6 +1099,54 @@ class TestGfalClientLibraryHelpers:
 
         assert handle.done() is True
         assert dst.read_text() == "hello"
+
+    def test_recursive_directory_progress_is_cumulative_across_children(self):
+        client = GfalClient()
+        async_client = client._async_client
+        src_fs = MagicMock()
+        src_fs.ls.return_value = ["/src/a.bin", "/src/b.bin"]
+        dst_fs = MagicMock()
+        received = []
+
+        def fake_invoke_copy_sync(
+            child_src_url,
+            child_dst_url,
+            options,
+            progress_callback,
+            *args,
+            **kwargs,
+        ):
+            del child_dst_url, options, args, kwargs
+            if child_src_url.endswith("/a.bin"):
+                progress_callback(2)
+                progress_callback(3)
+            else:
+                progress_callback(1)
+                progress_callback(4)
+
+        with patch.object(
+            async_client,
+            "_invoke_copy_sync",
+            side_effect=fake_invoke_copy_sync,
+        ):
+            async_client._recursive_copy(
+                "file:///src",
+                src_fs,
+                "/src",
+                "file:///dst",
+                dst_fs,
+                "/dst",
+                CopyOptions(recursive=True),
+                received.append,
+                start_callback=None,
+                transfer_mode_callback=None,
+                warn_callback=None,
+                error_callback=None,
+                traverse_callback=None,
+                cancel_event=None,
+            )
+
+        assert received == [2, 3, 4, 7]
 
     def test_copy_directory_over_existing_file_raises_even_with_overwrite(
         self, tmp_path
