@@ -397,7 +397,7 @@ class TestUrlToFs:
             del url, storage_options
             raise ModuleNotFoundError("No module named 'XRootD'")
 
-        fs_module._EMITTED_ROOT_HTTPS_FALLBACKS.clear()
+        monkeypatch.setattr(fs_module, "_EMITTED_ROOT_HTTPS_FALLBACKS", set())
         monkeypatch.setattr(
             XRootDNativeFileSystem,
             "from_url",

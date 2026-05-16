@@ -222,7 +222,7 @@ class CommandLs(base.CommandBase):
                 if not first:
                     sys.stdout.write("\n")
                 sys.stdout.write(f"{display_url}:\n")
-            self._print_entry(url, st, self._fetch_xattrs(client, url))
+            self._print_entry(display_url, st, self._fetch_xattrs(client, url))
             return 0
 
         with self.spinner(f"Listing directory {display_url}..."):
@@ -243,7 +243,7 @@ class CommandLs(base.CommandBase):
         is_self_only = entries and all(
             _get_norm_entry_path(e) == norm_path for e in entries
         )
-        entry_name = Path(st.info.get("name", "").rstrip("/")).name or url
+        entry_name = Path(st.info.get("name", "").rstrip("/")).name or display_url
 
         if is_self_only:
             # fsspec returns [the_entry_itself] when path is a file (local/XRootD)

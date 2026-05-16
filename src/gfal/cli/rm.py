@@ -97,7 +97,7 @@ class CommandRm(base.CommandBase):
             print(f"{display_url}\tMISSING")
         except Exception as e:
             self._set_error(exception_exit_code(e))
-            print(f"{display_url}\tFAILED: {fs.redact_authz(e)}")
+            print(f"{display_url}\tFAILED: {fs.redact_authz(str(e))}")
 
     def _do_rmdir(self, url, client):
         display_url = fs.redact_authz(url)
@@ -144,7 +144,7 @@ class CommandRm(base.CommandBase):
                 print(f"{display_url}\tMISSING")
             except Exception as e:
                 self._set_error(exception_exit_code(e))
-                print(f"{display_url}\tFAILED: {fs.redact_authz(e)}")
+                print(f"{display_url}\tFAILED: {fs.redact_authz(str(e))}")
 
     def _set_error(self, code):
         if self.return_code == 0:

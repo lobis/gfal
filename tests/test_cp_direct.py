@@ -134,6 +134,25 @@ class TestCopyAuthzRedaction:
         assert "zteos64:secret" not in out
         assert "authz=<redacted>&eos.app=gfal" in out
 
+    def test_skip_warn_redacts_authz_token(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        display = MagicMock(show_progress=False)
+
+        with patch("gfal.cli.copy.print_live_message") as mock_live_message:
+            handled = cmd._handle_skip_warn(
+                "Skipping existing file "
+                "https://eospilot.cern.ch//eos/dst.root?"
+                "authz=zteos64:secret&eos.app=gfal (matching size)",
+                display,
+            )
+
+        assert handled is True
+        display.mark_skipped.assert_called_once_with()
+        message = mock_live_message.call_args.args[0]
+        assert "zteos64:secret" not in message
+        assert "authz=<redacted>&eos.app=gfal" in message
+
 
 # ---------------------------------------------------------------------------
 # execute_cp: basic copy

@@ -748,6 +748,7 @@ class CommandCopy(base.CommandBase):
             return False
         display.mark_skipped()
         if not display.show_progress and not self._is_quiet():
+            message = fs.redact_authz(message)
             # Non-TTY: print directly, bypassing _warn_copy_message's
             # has_live_progress() which can transiently return False
             # during another thread's print_live_message stop/start.

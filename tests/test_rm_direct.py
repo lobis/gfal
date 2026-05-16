@@ -6,8 +6,9 @@ in the pytest process.
 """
 
 import errno
+import stat
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -100,6 +101,24 @@ class TestExecuteRm:
         rc = cmd.execute_rm()
         assert rc == 0
         assert not f.exists()
+
+    def test_rm_failure_redacts_authz_token(self, capsys):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        url = "https://eospilot.cern.ch//eos/file?authz=zteos64:secret&eos.app=gfal"
+        client = MagicMock()
+        client.stat.return_value = SimpleNamespace(st_mode=stat.S_IFREG | 0o644)
+        client.rm.side_effect = OSError(
+            "failed "
+            "https://eospilot.cern.ch//eos/file?"
+            "authz=zteos64:secret&eos.app=gfal"
+        )
+
+        cmd._do_rm(url, client)
+
+        out = capsys.readouterr().out
+        assert "zteos64:secret" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
 
     def test_rm_no_uri_returns_einval(self, tmp_path, capsys):
         cmd = _make_cmd()
@@ -215,6 +234,22 @@ class TestDoRmdir:
         cmd.params = _default_params(recursive=True, dry_run=False)
         cmd._do_rmdir(d.as_uri(), client)
         assert not d.exists()
+
+    def test_rmdir_failure_redacts_authz_token(self, capsys):
+        cmd = _make_cmd()
+        cmd.params = _default_params(recursive=True)
+        url = "https://eospilot.cern.ch//eos/dir?authz=zteos64:secret&eos.app=gfal"
+        client = MagicMock()
+        client.ls.return_value = []
+        client.rmdir.side_effect = OSError(
+            "failed https://eospilot.cern.ch//eos/dir?authz=zteos64:secret&eos.app=gfal"
+        )
+
+        cmd._do_rmdir(url, client)
+
+        out = capsys.readouterr().out
+        assert "zteos64:secret" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
 
 
 # ---------------------------------------------------------------------------
