@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gfal.core import fs as fs_module
 from gfal.core.fs import (
     HttpsXRootDFallbackWarning,
     RootProtocolFallbackWarning,
@@ -19,6 +20,7 @@ from gfal.core.fs import (
     _verify_get_client,
     isdir,
     normalize_url,
+    redact_authz,
     stat,
     url_to_fs,
 )
@@ -387,6 +389,42 @@ class TestUrlToFs:
 
         assert isinstance(fso, WebDAVFileSystem)
         assert path == "https://eospublic.cern.ch/eos/opendata/file.root"
+
+    def test_root_fallback_warning_redacts_authz_token(self, monkeypatch):
+        from gfal.core.xrootd_native import XRootDNativeFileSystem
+
+        def fake_from_url(url, storage_options=None):
+            del url, storage_options
+            raise ModuleNotFoundError("No module named 'XRootD'")
+
+        fs_module._EMITTED_ROOT_HTTPS_FALLBACKS.clear()
+        monkeypatch.setattr(
+            XRootDNativeFileSystem,
+            "from_url",
+            staticmethod(fake_from_url),
+        )
+
+        url = (
+            "root://eospilot.cern.ch//eos/pilot/test/file.root?"
+            "authz=zteos64:secret&eos.app=gfal"
+        )
+        with pytest.warns(RootProtocolFallbackWarning) as records:
+            url_to_fs(url)
+
+        warning = str(records[0].message)
+        assert "zteos64:secret" not in warning
+        assert "authz=<redacted>&eos.app=gfal" in warning
+
+    def test_redact_authz_preserves_other_query_params(self):
+        message = (
+            "https://eospilot.cern.ch//eos/file?authz=zteos64:secret&eos.app=gfal#frag"
+        )
+
+        redacted = redact_authz(message)
+
+        assert redacted == (
+            "https://eospilot.cern.ch//eos/file?authz=<redacted>&eos.app=gfal#frag"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ except ImportError:
 
 from rich.console import Console
 
+from gfal.core import fs
 from gfal.core.errors import (
     GfalFileExistsError,
     GfalFileNotFoundError,
@@ -957,7 +958,7 @@ class CommandBase:
         str(e) looks identical to a normal program output line, so we append
         the POSIX description ourselves.
         """
-        msg = str(e)
+        msg = fs.redact_authz(str(e))
         if not msg:
             msg = e.__class__.__name__
 
@@ -975,6 +976,8 @@ class CommandBase:
 
         if isinstance(path, bytes):
             path = path.decode("utf-8", "replace")
+        if path:
+            path = fs.redact_authz(path)
 
         # 1. Handle Windows-specific error codes
         winerror = getattr(e, "winerror", None)
@@ -1066,7 +1069,7 @@ class CommandBase:
                 503: "Service unavailable",
             }
             url = getattr(e, "request_info", None)
-            url_str = str(url.url) if url is not None else ""
+            url_str = fs.redact_authz(url.url) if url is not None else ""
             description = _http_descriptions.get(status, f"HTTP {status}")
             if url_str:
                 return f"{url_str}: {description}"
@@ -1087,7 +1090,7 @@ class CommandBase:
 
     def _print_error(self, e):
         """Prints a formatted error message to stderr, respecting compatibility mode."""
-        msg = self._format_error(e)
+        msg = fs.redact_authz(self._format_error(e))
         if is_gfal2_compat():
             sys.stderr.write(f"{self.prog}: {msg}\n")
         else:

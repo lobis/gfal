@@ -130,10 +130,11 @@ class GfalCommands(base.CommandBase):
         return rc
 
     def _stat_one(self, url, client):
-        with self.spinner(f"Statting {url}..."):
+        display_url = fs.redact_authz(url)
+        with self.spinner(f"Statting {display_url}..."):
             st = client.stat(url)
         if base.is_gfal2_compat():
-            print(f"  File: '{url}'")
+            print(f"  File: '{display_url}'")
             print(f"  Size: {st.st_size}\t{file_type_str(stat.S_IFMT(st.st_mode))}")
             print(
                 f"Access: ({stat.S_IMODE(st.st_mode):04o}/{file_mode_str(st.st_mode)})\t"
@@ -162,7 +163,7 @@ class GfalCommands(base.CommandBase):
             table.add_column(style="bold cyan")
             table.add_column()
 
-            table.add_row("File", f"'{url}'")
+            table.add_row("File", f"'{display_url}'")
             table.add_row(
                 "Size", f"{st.st_size} bytes ({file_type_str(stat.S_IFMT(st.st_mode))})"
             )
@@ -223,7 +224,7 @@ class GfalCommands(base.CommandBase):
         rc = 0
         for url in self.params.file:
             try:
-                with self.spinner(f"Changing permissions of {url}..."):
+                with self.spinner(f"Changing permissions of {fs.redact_authz(url)}..."):
                     client.chmod(url, mode)
             except Exception as e:
                 self._print_error(e)
