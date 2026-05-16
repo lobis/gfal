@@ -524,11 +524,33 @@ class AsyncGfalClient:
         try:
             return StatResult.from_info(dst_fs.info(dst_path))
         except FileNotFoundError:
-            return None
+            pass
         except OSError as exc:
             if is_xrootd_not_found_message(str(exc)):
-                return None
-            raise
+                pass
+            else:
+                raise
+
+        # EOS via the native XRootD backend can allow directory listing even
+        # when a direct directory stat is not useful for existence probing.
+        # Before deciding the destination is missing and attempting mkdir, try a
+        # shallow list and treat success as proof that the destination directory
+        # already exists.  Keep this XRootD-specific: object stores such as S3
+        # may return an empty listing for a missing key prefix.
+        if type(dst_fs).__name__ != "XRootDNativeFileSystem":
+            return None
+        try:
+            entries = dst_fs.ls(dst_path, detail=True)
+        except Exception:
+            return None
+        if not isinstance(entries, list):
+            return None
+        return StatResult.from_info({
+            "name": dst_path,
+            "size": 0,
+            "type": "directory",
+            "mode": stat.S_IFDIR | 0o755,
+        })
 
     def _precomputed_match(
         self,

@@ -835,6 +835,57 @@ class TestGfalClientLibraryHelpers:
 
         dst_fs.open.assert_not_called()
 
+    def test_destination_probe_treats_successful_ls_as_existing_directory(self):
+        client = GfalClient()
+        async_client = client._async_client
+
+        class XRootDNativeFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+
+        dst_fs = XRootDNativeFileSystem()
+
+        result = async_client._probe_destination_info(dst_fs, "/dst")
+
+        assert result is not None
+        assert result.is_dir()
+        dst_fs.ls.assert_called_once_with("/dst", detail=True)
+
+    def test_recursive_copy_does_not_mkdir_when_destination_ls_succeeds(self):
+        client = GfalClient()
+        src_fs = MagicMock()
+        src_fs.info.return_value = {
+            "name": "/src",
+            "type": "directory",
+            "size": 0,
+            "mode": stat.S_IFDIR | 0o755,
+        }
+        src_fs.ls.return_value = []
+
+        class XRootDNativeFileSystem:
+            def __init__(self):
+                self.info = MagicMock(side_effect=FileNotFoundError("/dst"))
+                self.ls = MagicMock(return_value=[])
+                self.mkdir = MagicMock()
+
+        dst_fs = XRootDNativeFileSystem()
+
+        def _url_to_fs(url, storage_options=None):
+            del storage_options
+            if url == "file:///src":
+                return src_fs, "/src"
+            return dst_fs, "/dst"
+
+        with patch("gfal.core.api.fs.url_to_fs", side_effect=_url_to_fs):
+            client.copy(
+                "file:///src",
+                "root://eospilot.cern.ch//eos/pilot/test/dst?authz=token",
+                options=CopyOptions(recursive=True, create_parents=True),
+            )
+
+        dst_fs.mkdir.assert_not_called()
+
     def test_copy_respects_options(self, tmp_path):
         src = tmp_path / "src.txt"
         dst = tmp_path / "dst.txt"

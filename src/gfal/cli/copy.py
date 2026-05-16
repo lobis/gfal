@@ -1350,6 +1350,7 @@ class CommandCopy(base.CommandBase):
         finished_count = 0
         live_child_bytes = {}
         live_child_bytes_lock = threading.Lock()
+        aggregate_progress_lock = threading.Lock()
         aggregate_progress = None
         cancelled = False
         self._set_recursive_interrupt_summary_state(
@@ -1378,12 +1379,13 @@ class CommandCopy(base.CommandBase):
 
         def _update_aggregate_progress():
             if aggregate_progress is not None:
-                with live_child_bytes_lock:
-                    live_bytes = sum(live_child_bytes.values())
-                aggregate_progress.update(
-                    completed=finished_count,
-                    bytes_completed=copied_bytes + live_bytes,
-                )
+                with aggregate_progress_lock:
+                    with live_child_bytes_lock:
+                        live_bytes = sum(live_child_bytes.values())
+                    aggregate_progress.update(
+                        completed=finished_count,
+                        bytes_completed=copied_bytes + live_bytes,
+                    )
 
         def _usable_precomputed_source_info(entry):
             if isinstance(entry, dict):
