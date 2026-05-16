@@ -94,6 +94,16 @@ def _url_path_join(base_url, name):
     return urlunparse(parsed._replace(path=path))
 
 
+def _display_url(url):
+    return fs.redact_authz(url)
+
+
+def _display_name(url):
+    parsed = urlparse(str(url))
+    path = parsed.path or str(url)
+    return fs.redact_authz(Path(path.rstrip("/")).name)
+
+
 class _TransferDisplay:
     def __init__(
         self,
@@ -129,9 +139,9 @@ class _TransferDisplay:
 
     def _transfer_label(self):
         if self.transfer_mode is None:
-            return f"Copying {Path(self.src_url).name}"
+            return f"Copying {_display_name(self.src_url)}"
         mode = _TRANSFER_MODE_LABELS.get(self.transfer_mode, self.transfer_mode)
-        return f"Copying {Path(self.src_url).name} ({mode})"
+        return f"Copying {_display_name(self.src_url)} ({mode})"
 
     @staticmethod
     def _size_text(size):
@@ -176,7 +186,7 @@ class _TransferDisplay:
         mode_text = (
             _TRANSFER_MODE_LABELS.get(self.transfer_mode, self.transfer_mode) or "-"
         )
-        name_text = _truncate_middle(Path(self.src_url).name, 48)
+        name_text = _truncate_middle(_display_name(self.src_url), 48)
         total = self.transfer_total or 0
         index = self.transfer_index or 0
         index_text = f"[{index}/{total}]" if total else "[?/?]"
@@ -228,7 +238,7 @@ class _TransferDisplay:
             if not self.quiet:
                 print(
                     f"{self._transfer_label()} {self.src_size or 0} bytes  "
-                    f"{self.src_url}  =>  {self.dst_url}"
+                    f"{_display_url(self.src_url)}  =>  {_display_url(self.dst_url)}"
                 )
 
     def update(self, bytes_transferred):
@@ -691,6 +701,7 @@ class CommandCopy(base.CommandBase):
     def _warn_copy_message(self, message, dst_url):
         if self._is_quiet():
             return
+        message = fs.redact_authz(message)
         live_progress = has_live_progress()
         if message.startswith("Skipping existing file ") or message.startswith(
             "Skipping directory "
@@ -722,7 +733,9 @@ class CommandCopy(base.CommandBase):
     def _traverse_callback(self, dir_src_url, dir_dst_url):
         if self._is_quiet():
             return
-        print_live_message(f"Scanning {dir_src_url}  =>  {dir_dst_url}")
+        print_live_message(
+            f"Scanning {_display_url(dir_src_url)}  =>  {_display_url(dir_dst_url)}"
+        )
 
     @staticmethod
     def _is_skip_message(message):
@@ -735,6 +748,7 @@ class CommandCopy(base.CommandBase):
             return False
         display.mark_skipped()
         if not display.show_progress and not self._is_quiet():
+            message = fs.redact_authz(message)
             # Non-TTY: print directly, bypassing _warn_copy_message's
             # has_live_progress() which can transiently return False
             # during another thread's print_live_message stop/start.
@@ -961,10 +975,10 @@ class CommandCopy(base.CommandBase):
     def _render_recursive_intro(self, src_url, dst_url):
         intro = Text()
         intro.append("Source      ", style="bold")
-        intro.append(src_url, style="cyan")
+        intro.append(_display_url(src_url), style="cyan")
         intro.append("\n")
         intro.append("Destination ", style="bold")
-        intro.append(dst_url, style="cyan")
+        intro.append(_display_url(dst_url), style="cyan")
         intro.append("\n")
         return intro
 
@@ -1587,13 +1601,16 @@ class CommandCopy(base.CommandBase):
             src_st = client.stat(src_url)
             if src_st.is_dir():
                 if not self.params.recursive:
-                    print(f"Skipping directory {src_url} (use -r to copy recursively)")
+                    print(
+                        f"Skipping directory {_display_url(src_url)} "
+                        "(use -r to copy recursively)"
+                    )
                     return
                 if not client.exists(dst_url):
-                    print(f"Mkdir {dst_url}")
-                print(f"Copy {src_url} => {dst_url}")
+                    print(f"Mkdir {_display_url(dst_url)}")
+                print(f"Copy {_display_url(src_url)} => {_display_url(dst_url)}")
                 return
-            print(f"Copy {src_url} => {dst_url}")
+            print(f"Copy {_display_url(src_url)} => {_display_url(dst_url)}")
             return
 
         if getattr(self.params, "tpc_only", False) and not _tpc_applicable(

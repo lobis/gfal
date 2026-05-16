@@ -214,17 +214,18 @@ class CommandLs(base.CommandBase):
         return rc
 
     def _list_one(self, url, client, *, print_header, first):
-        with self.spinner(f"Statting {url}..."):
+        display_url = fs.redact_authz(url)
+        with self.spinner(f"Statting {display_url}..."):
             st = client.stat(url)
         if self.params.directory:
             if print_header:
                 if not first:
                     sys.stdout.write("\n")
-                sys.stdout.write(f"{url}:\n")
-            self._print_entry(url, st, self._fetch_xattrs(client, url))
+                sys.stdout.write(f"{display_url}:\n")
+            self._print_entry(display_url, st, self._fetch_xattrs(client, url))
             return 0
 
-        with self.spinner(f"Listing directory {url}..."):
+        with self.spinner(f"Listing directory {display_url}..."):
             entries_st = client.ls(url, detail=True)
         # Convert StatInfo back to dict-like for _apply_sort (or refactor _apply_sort)
         # Actually _apply_sort uses e.get("name") and fs.StatInfo(e)
@@ -242,14 +243,14 @@ class CommandLs(base.CommandBase):
         is_self_only = entries and all(
             _get_norm_entry_path(e) == norm_path for e in entries
         )
-        entry_name = Path(st.info.get("name", "").rstrip("/")).name or url
+        entry_name = Path(st.info.get("name", "").rstrip("/")).name or display_url
 
         if is_self_only:
             # fsspec returns [the_entry_itself] when path is a file (local/XRootD)
             if print_header:
                 if not first:
                     sys.stdout.write("\n")
-                sys.stdout.write(f"{url}:\n")
+                sys.stdout.write(f"{display_url}:\n")
             self._print_entry(entry_name, st, self._fetch_xattrs(client, url))
         elif not entries:
             if not stat.S_ISDIR(st.st_mode):
@@ -257,13 +258,13 @@ class CommandLs(base.CommandBase):
                 if print_header:
                     if not first:
                         sys.stdout.write("\n")
-                    sys.stdout.write(f"{url}:\n")
+                    sys.stdout.write(f"{display_url}:\n")
                 self._print_entry(entry_name, st, self._fetch_xattrs(client, url))
             # else: genuinely empty directory — print header only
             elif print_header:
                 if not first:
                     sys.stdout.write("\n")
-                sys.stdout.write(f"{url}:\n")
+                sys.stdout.write(f"{display_url}:\n")
         else:
             visible = [
                 e
@@ -278,7 +279,7 @@ class CommandLs(base.CommandBase):
             if print_header:
                 if not first:
                     sys.stdout.write("\n")
-                sys.stdout.write(f"{url}:\n")
+                sys.stdout.write(f"{display_url}:\n")
             for entry_info in entries:
                 name = Path(entry_info["name"].rstrip("/")).name
                 if not self.params.all and name.startswith("."):

@@ -8,6 +8,7 @@ import contextlib
 import datetime
 import hashlib
 import os
+import re
 import stat as stat_module
 import sys
 import threading
@@ -98,6 +99,11 @@ async def _verify_get_client(
 # ---------------------------------------------------------------------------
 # URL helpers
 # ---------------------------------------------------------------------------
+
+
+def redact_authz(message: object) -> str:
+    """Return *message* with EOS ``authz`` query values redacted."""
+    return re.sub(r"([?&]authz=)[^\s'\"),&#]+", r"\1<redacted>", str(message))
 
 
 def normalize_url(url):
@@ -221,7 +227,7 @@ def _warn_root_https_fallback(root_url, https_url):
     _EMITTED_ROOT_HTTPS_FALLBACKS.add(key)
     warnings.warn(
         "XRootD support is not installed; "
-        f"retrying {root_url} via HTTPS as {https_url}",
+        f"retrying {redact_authz(root_url)} via HTTPS as {redact_authz(https_url)}",
         RootProtocolFallbackWarning,
         stacklevel=3,
     )
@@ -234,7 +240,7 @@ def _warn_https_xrootd_fallback(url, reason):
     _EMITTED_HTTPS_XROOTD_FALLBACKS.add(url)
     warnings.warn(
         "XRootD client cannot operate on this HTTPS endpoint; "
-        f"retrying {url} via the HTTP/WebDAV backend ({reason})",
+        f"retrying {redact_authz(url)} via the HTTP/WebDAV backend ({reason})",
         HttpsXRootDFallbackWarning,
         stacklevel=3,
     )

@@ -6,7 +6,7 @@ import errno
 import hashlib
 import inspect
 import os
-import re
+import posixpath
 import stat
 import threading
 import time
@@ -543,14 +543,16 @@ class AsyncGfalClient:
             return None
 
         if compare == "none":
-            if warn_callback is not None:
-                warn_callback(f"Skipping existing file {dst_url} (--compare none)")
+            self._warn(
+                warn_callback, f"Skipping existing file {dst_url} (--compare none)"
+            )
             return True
 
         if compare == "size":
             if src_st.st_size == dst_st.st_size:
-                if warn_callback is not None:
-                    warn_callback(f"Skipping existing file {dst_url} (matching size)")
+                self._warn(
+                    warn_callback, f"Skipping existing file {dst_url} (matching size)"
+                )
                 return True
             return False
 
@@ -559,10 +561,10 @@ class AsyncGfalClient:
                 src_st.st_size == dst_st.st_size
                 and abs(src_st.st_mtime - dst_st.st_mtime) < 1.0
             ):
-                if warn_callback is not None:
-                    warn_callback(
-                        f"Skipping existing file {dst_url} (matching mtime and size)"
-                    )
+                self._warn(
+                    warn_callback,
+                    f"Skipping existing file {dst_url} (matching mtime and size)",
+                )
                 return True
             return False
 
@@ -666,10 +668,10 @@ class AsyncGfalClient:
 
         if src_isdir:
             if not options.recursive:
-                if warn_callback is not None:
-                    warn_callback(
-                        f"Skipping directory {src_url} (use recursive=True to copy recursively)"
-                    )
+                self._warn(
+                    warn_callback,
+                    f"Skipping directory {src_url} (use recursive=True to copy recursively)",
+                )
                 return None
             if not dst_exists:
                 dst_fs.mkdir(dst_path, create_parents=options.create_parents)
@@ -924,7 +926,7 @@ class AsyncGfalClient:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "getxattr"):
                 raise GfalError(
-                    f"xattr not supported by filesystem for {url}",
+                    f"xattr not supported by filesystem for {self._redact_authz(url)}",
                     errno.EOPNOTSUPP,
                 )
             return str(fso.getxattr(path, name))
@@ -936,7 +938,7 @@ class AsyncGfalClient:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "setxattr"):
                 raise GfalError(
-                    f"xattr not supported by filesystem for {url}",
+                    f"xattr not supported by filesystem for {self._redact_authz(url)}",
                     errno.EOPNOTSUPP,
                 )
             fso.setxattr(path, name, value)
@@ -948,7 +950,7 @@ class AsyncGfalClient:
             fso, path = fs.url_to_fs(url, self.storage_options)
             if not hasattr(fso, "listxattr"):
                 raise GfalError(
-                    f"xattr not supported by filesystem for {url}",
+                    f"xattr not supported by filesystem for {self._redact_authz(url)}",
                     errno.EOPNOTSUPP,
                 )
             return fso.listxattr(path)
@@ -1070,10 +1072,10 @@ class AsyncGfalClient:
         write_dst_fs, write_dst_path = fs.url_to_fs(write_dst_url, self.storage_options)
 
         if options.create_parents:
-            parent = str(Path(dst_path).parent)
+            parent = parent_fs_path(write_dst_path)
             if parent:
-                with contextlib.suppress(Exception):
-                    dst_fs.mkdir(parent, create_parents=True)
+                with contextlib.suppress(FileExistsError):
+                    write_dst_fs.mkdir(parent, create_parents=True)
 
         src_checksum = None
         if start_callback is not None:
@@ -1134,7 +1136,7 @@ class AsyncGfalClient:
                         raise GfalError("Transfer cancelled", errno.ECANCELED)
                     if options.timeout and time.monotonic() - start > options.timeout:
                         raise GfalTimeoutError(
-                            f"Transfer timed out after {options.timeout}s: {src_url}"
+                            f"Transfer timed out after {options.timeout}s: {self._redact_authz(src_url)}"
                         )
 
                     chunk = src_f.read(fs.CHUNK_SIZE)
@@ -1229,8 +1231,9 @@ class AsyncGfalClient:
             return False
 
         if compare == "none":
-            if warn_callback is not None:
-                warn_callback(f"Skipping existing file {dst_url} (--compare none)")
+            self._warn(
+                warn_callback, f"Skipping existing file {dst_url} (--compare none)"
+            )
             return True
 
         if compare == "size":
@@ -1238,19 +1241,19 @@ class AsyncGfalClient:
                 dst_info = dst_fs.info(dst_path)
                 dst_st = StatResult.from_info(dst_info)
                 if src_st.st_size == dst_st.st_size:
-                    if warn_callback is not None:
-                        warn_callback(
-                            f"Skipping existing file {dst_url} (matching size)"
-                        )
+                    self._warn(
+                        warn_callback,
+                        f"Skipping existing file {dst_url} (matching size)",
+                    )
                     return True
             except Exception:
-                if warn_callback is not None:
-                    warn_callback(
-                        f"size compare failed for {dst_url}; "
-                        "proceeding with transfer. "
-                        "Use --compare=checksum for reliable deduplication "
-                        "or --compare=none to skip unconditionally."
-                    )
+                self._warn(
+                    warn_callback,
+                    f"size compare failed for {dst_url}; "
+                    "proceeding with transfer. "
+                    "Use --compare=checksum for reliable deduplication "
+                    "or --compare=none to skip unconditionally.",
+                )
             return False
 
         if compare == "size_mtime":
@@ -1261,19 +1264,19 @@ class AsyncGfalClient:
                     src_st.st_size == dst_st.st_size
                     and abs(src_st.st_mtime - dst_st.st_mtime) < 1.0
                 ):
-                    if warn_callback is not None:
-                        warn_callback(
-                            f"Skipping existing file {dst_url} (matching mtime and size)"
-                        )
+                    self._warn(
+                        warn_callback,
+                        f"Skipping existing file {dst_url} (matching mtime and size)",
+                    )
                     return True
             except Exception:
-                if warn_callback is not None:
-                    warn_callback(
-                        f"size_mtime compare failed for {dst_url}; "
-                        "proceeding with transfer. "
-                        "Use --compare=checksum for reliable deduplication "
-                        "or --compare=none to skip unconditionally."
-                    )
+                self._warn(
+                    warn_callback,
+                    f"size_mtime compare failed for {dst_url}; "
+                    "proceeding with transfer. "
+                    "Use --compare=checksum for reliable deduplication "
+                    "or --compare=none to skip unconditionally.",
+                )
             return False
 
         if compare == "checksum":
@@ -1285,8 +1288,9 @@ class AsyncGfalClient:
             if src_checksum != dst_checksum:
                 return False
             if warn_callback is not None:
-                warn_callback(
-                    f"Skipping existing file {dst_url} (matching {algorithm} checksum)"
+                self._warn(
+                    warn_callback,
+                    f"Skipping existing file {dst_url} (matching {algorithm} checksum)",
                 )
             return True
 
@@ -1335,12 +1339,15 @@ class AsyncGfalClient:
                 ),
             )
         except OSError as e:
-            if warn_callback is not None:
-                warn_callback(f"could not preserve times for {dst_url}: {e}")
+            self._warn(warn_callback, f"could not preserve times for {dst_url}: {e}")
 
     @staticmethod
     def _redact_authz(message: str) -> str:
-        return re.sub(r"([?&]authz=)[^\s'\"),&#]+", r"\1<redacted>", message)
+        return fs.redact_authz(message)
+
+    def _warn(self, warn_callback: WarnCallback, message: str) -> None:
+        if warn_callback is not None:
+            warn_callback(self._redact_authz(message))
 
     def _map_error(self, e: Exception, url: str) -> GfalError:
         if isinstance(e, GfalError):
@@ -1757,3 +1764,12 @@ def local_destination_path(dst_url: str, dst_path: str) -> Path | None:
     if urlparse(normalized).scheme.lower() != "file":
         return None
     return Path(dst_path)
+
+
+def parent_fs_path(path: str) -> str:
+    """Return the parent path/URL used by a filesystem backend."""
+    parsed = urlparse(path)
+    if parsed.scheme and parsed.netloc:
+        parent_path = posixpath.dirname(parsed.path.rstrip("/")) or "/"
+        return urlunparse(parsed._replace(path=parent_path))
+    return str(Path(path).parent)

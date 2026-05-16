@@ -359,7 +359,9 @@ def _http_tpc(
         url = src_url
         headers["Destination"] = dst_url
         if verbose:
-            sys.stderr.write(f"[TPC push] {src_url} -> {dst_url}\n")
+            sys.stderr.write(
+                f"[TPC push] {fs.redact_authz(src_url)} -> {fs.redact_authz(dst_url)}\n"
+            )
     else:
         # Destination server pulls from source (default / "pull")
         url = dst_url
@@ -372,7 +374,9 @@ def _http_tpc(
         # forwarded via TransferHeaderAuthorization.
         headers["Credential"] = "none"
         if verbose:
-            sys.stderr.write(f"[TPC pull] {dst_url} <- {src_url}\n")
+            sys.stderr.write(
+                f"[TPC pull] {fs.redact_authz(dst_url)} <- {fs.redact_authz(src_url)}\n"
+            )
 
     request_timeout = timeout if timeout else None
     session = _build_session(opts)
@@ -422,7 +426,9 @@ def _xrootd_tpc(src_url, dst_url, *, timeout, verbose, start_callback=None):
         ) from exc
 
     if verbose:
-        sys.stderr.write(f"[TPC xrootd] {src_url} -> {dst_url}\n")
+        sys.stderr.write(
+            f"[TPC xrootd] {fs.redact_authz(src_url)} -> {fs.redact_authz(dst_url)}\n"
+        )
 
     # XRootD CopyProcess.run() is blocking with no byte-level callbacks, so
     # start the progress display now (before the call) if the caller provided one.
