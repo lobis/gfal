@@ -106,4 +106,4 @@ known-first-party = ["gfal"]
 
 [tool.codespell]
 skip = ".git,.venv,*.egg-info"
-ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag,moto,paramiko"
+ignore-words-list = "cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag,moto,paramiko,cachable"

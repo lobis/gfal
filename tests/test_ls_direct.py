@@ -7,7 +7,7 @@ in the pytest process.
 
 import stat
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from gfal.cli.ls import (
     CommandLs,
@@ -249,6 +249,55 @@ class TestExecuteLs:
         cmd.params = _default_params(file=[tmp_path.as_uri()], directory=True)
         rc = cmd.execute_ls()
         assert rc == 0
+
+    def test_ls_directory_flag_redacts_authz_token(self, capsys):
+        cmd = _make_cmd()
+        cmd.params = _default_params(directory=True)
+        url = "https://eospilot.cern.ch//eos/dir?authz=zteos64:secret&eos.app=gfal"
+        st = SimpleNamespace(
+            info={"name": url},
+            st_mode=stat.S_IFDIR | 0o755,
+            st_size=0,
+            st_nlink=1,
+            st_uid=0,
+            st_gid=0,
+            st_mtime=0,
+        )
+        client = MagicMock()
+        client.stat.return_value = st
+
+        rc = cmd._list_one(url, client, print_header=True, first=True)
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "zteos64:secret" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
+        client.stat.assert_called_once_with(url)
+
+    def test_ls_self_only_fallback_redacts_authz_token(self, capsys):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        url = "https://eospilot.cern.ch//eos/file?authz=zteos64:secret&eos.app=gfal"
+        st = SimpleNamespace(
+            info={"name": ""},
+            st_mode=stat.S_IFREG | 0o644,
+            st_size=3,
+            st_nlink=1,
+            st_uid=0,
+            st_gid=0,
+            st_mtime=0,
+        )
+        client = MagicMock()
+        client.stat.return_value = st
+        client.ls.return_value = [st]
+
+        with patch("gfal.cli.ls.fs.url_to_fs", return_value=(MagicMock(), url)):
+            rc = cmd._list_one(url, client, print_header=True, first=True)
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "zteos64:secret" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
 
     def test_ls_nonexistent_returns_error(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GFAL_CLI_GFAL2", "1")

@@ -12,7 +12,7 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -760,6 +760,80 @@ class TestGfalClientLibraryHelpers:
         client.copy(src.as_uri(), dst.as_uri())
 
         assert dst.read_text() == "hello"
+
+    def test_copy_file_create_parents_preserves_url_query(self):
+        client = GfalClient()
+        async_client = client._async_client
+        src_fs = SimpleNamespace(
+            open=lambda _path, _mode: nullcontext(io.BytesIO(b"x"))
+        )
+        dst_buffer = io.BytesIO()
+        dst_fs = SimpleNamespace(
+            mkdir=MagicMock(),
+            open=lambda _path, _mode: nullcontext(dst_buffer),
+        )
+        dst_url = (
+            "https://eospilot.cern.ch//eos/pilot/test/out/file.root?"
+            "authz=zteos64:secret&eos.app=gfal"
+        )
+
+        with patch("gfal.core.api.fs.url_to_fs", return_value=(dst_fs, dst_url)):
+            async_client._copy_file(
+                "file:///src",
+                src_fs,
+                "/src",
+                dst_url,
+                dst_fs,
+                dst_url,
+                SimpleNamespace(st_size=1, st_mtime=0, st_atime=0),
+                CopyOptions(create_parents=True),
+                progress_callback=None,
+                start_callback=None,
+                transfer_mode_callback=None,
+                warn_callback=None,
+                cancel_event=None,
+            )
+
+        dst_fs.mkdir.assert_called_once_with(
+            "https://eospilot.cern.ch//eos/pilot/test/out?"
+            "authz=zteos64:secret&eos.app=gfal",
+            create_parents=True,
+        )
+        assert dst_buffer.getvalue() == b"x"
+
+    def test_copy_file_create_parents_surfaces_mkdir_failure(self):
+        client = GfalClient()
+        async_client = client._async_client
+        src_fs = SimpleNamespace(
+            open=lambda _path, _mode: nullcontext(io.BytesIO(b"x"))
+        )
+        dst_fs = SimpleNamespace(
+            mkdir=MagicMock(side_effect=FileNotFoundError("missing parent")),
+            open=MagicMock(),
+        )
+        dst_url = "https://eospilot.cern.ch//eos/pilot/test/out/file.root"
+
+        with (
+            patch("gfal.core.api.fs.url_to_fs", return_value=(dst_fs, dst_url)),
+            pytest.raises(FileNotFoundError, match="missing parent"),
+        ):
+            async_client._copy_file(
+                "file:///src",
+                src_fs,
+                "/src",
+                dst_url,
+                dst_fs,
+                dst_url,
+                SimpleNamespace(st_size=1, st_mtime=0, st_atime=0),
+                CopyOptions(create_parents=True),
+                progress_callback=None,
+                start_callback=None,
+                transfer_mode_callback=None,
+                warn_callback=None,
+                cancel_event=None,
+            )
+
+        dst_fs.open.assert_not_called()
 
     def test_copy_respects_options(self, tmp_path):
         src = tmp_path / "src.txt"

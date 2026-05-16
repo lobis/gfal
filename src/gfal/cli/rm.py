@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gfal.cli import base
 from gfal.cli.base import exception_exit_code
+from gfal.core import fs
 from gfal.core.api import GfalClient
 from gfal.core.errors import GfalFileNotFoundError, GfalIsADirectoryError
 
@@ -72,38 +73,40 @@ class CommandRm(base.CommandBase):
         return self.return_code
 
     def _do_rm(self, url, client):
+        display_url = fs.redact_authz(url)
         try:
             if not self.params.just_delete:
-                with self.spinner(f"Statting {url}..."):
+                with self.spinner(f"Statting {display_url}..."):
                     st = client.stat(url)
                 if stat.S_ISDIR(st.st_mode):
                     self._do_rmdir(url, client)
                     return
 
             if self.params.dry_run:
-                print(f"{url}\tSKIP")
+                print(f"{display_url}\tSKIP")
                 return
 
-            with self.spinner(f"Deleting {url}..."):
+            with self.spinner(f"Deleting {display_url}..."):
                 client.rm(url)
-            print(f"{url}\tDELETED")
+            print(f"{display_url}\tDELETED")
         except (IsADirectoryError, GfalIsADirectoryError) as e:
-            sys.stderr.write(f"{self.prog}: {self._format_error(e)}\n")
+            sys.stderr.write(f"{self.prog}: {fs.redact_authz(self._format_error(e))}\n")
             self._set_error(errno.EISDIR)
         except GfalFileNotFoundError:
             self._set_error(errno.ENOENT)
-            print(f"{url}\tMISSING")
+            print(f"{display_url}\tMISSING")
         except Exception as e:
             self._set_error(exception_exit_code(e))
-            print(f"{url}\tFAILED: {e}")
+            print(f"{display_url}\tFAILED: {fs.redact_authz(str(e))}")
 
     def _do_rmdir(self, url, client):
+        display_url = fs.redact_authz(url)
         if not self.params.recursive:
-            raise IsADirectoryError(f"Cannot remove '{url}': is a directory")
+            raise IsADirectoryError(f"Cannot remove '{display_url}': is a directory")
 
         # Remove contents first
         try:
-            with self.spinner(f"Listing directory {url}..."):
+            with self.spinner(f"Listing directory {display_url}..."):
                 entries = client.ls(url, detail=True)
         except Exception:
             entries = []
@@ -117,30 +120,31 @@ class CommandRm(base.CommandBase):
             if stat.S_ISDIR(entry_st.st_mode):
                 self._do_rmdir(child_url, client)
             else:
+                display_child_url = fs.redact_authz(child_url)
                 if self.params.dry_run:
-                    print(f"{child_url}\tSKIP")
+                    print(f"{display_child_url}\tSKIP")
                 else:
                     try:
-                        with self.spinner(f"Deleting {child_url}..."):
+                        with self.spinner(f"Deleting {display_child_url}..."):
                             client.rm(child_url)
-                        print(f"{child_url}\tDELETED")
+                        print(f"{display_child_url}\tDELETED")
                     except GfalFileNotFoundError:
                         self._set_error(errno.ENOENT)
-                        print(f"{child_url}\tMISSING")
+                        print(f"{display_child_url}\tMISSING")
 
         if self.params.dry_run:
-            print(f"{url}\tSKIP DIR")
+            print(f"{display_url}\tSKIP DIR")
         else:
             try:
-                with self.spinner(f"Deleting directory {url}..."):
+                with self.spinner(f"Deleting directory {display_url}..."):
                     client.rmdir(url)
-                print(f"{url}\tRMDIR")
+                print(f"{display_url}\tRMDIR")
             except GfalFileNotFoundError:
                 self._set_error(errno.ENOENT)
-                print(f"{url}\tMISSING")
+                print(f"{display_url}\tMISSING")
             except Exception as e:
                 self._set_error(exception_exit_code(e))
-                print(f"{url}\tFAILED: {e}")
+                print(f"{display_url}\tFAILED: {fs.redact_authz(str(e))}")
 
     def _set_error(self, code):
         if self.return_code == 0:

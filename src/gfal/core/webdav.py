@@ -1067,6 +1067,8 @@ class WebDAVFileSystem(AbstractFileSystem):
     - ``chmod``            \u2014 no-op (HTTP has no permission model)
     """
 
+    cachable = False
+
     def __init__(self, storage_options: dict | None = None) -> None:
         self._opts = dict(storage_options or {})
         self._verify = self._opts.get("ssl_verify", True)
@@ -1200,8 +1202,11 @@ class WebDAVFileSystem(AbstractFileSystem):
         parsed = urlparse(path)
         # Split path into components, rebuild from the root down
         parts = [p for p in parsed.path.rstrip("/").split("/") if p]
+        leading_slashes = len(parsed.path) - len(parsed.path.lstrip("/"))
+        path_root = "/" * max(1, leading_slashes)
         for i in range(1, len(parts) + 1):
-            partial_path = "/" + "/".join(parts[:i])
+            is_target = i == len(parts)
+            partial_path = path_root + "/".join(parts[:i])
             partial_url = urlunparse(parsed._replace(path=partial_path))
             resp = self._session.request("MKCOL", partial_url, timeout=self._timeout)
             sc = resp.status_code
@@ -1210,9 +1215,19 @@ class WebDAVFileSystem(AbstractFileSystem):
             if sc in (301, 405):
                 continue  # already exists \u2014 fine
             if sc == 409:
-                # Conflict: intermediate missing \u2192 shouldn't happen top-down but skip
+                if is_target:
+                    raise FileNotFoundError(
+                        "[Errno 2] Intermediate directory does not exist: "
+                        f"{partial_url!r}"
+                    )
+                # A scoped token may not allow creating/probing every ancestor.
+                # Continue down to the requested target, which must succeed.
                 continue
             if sc == 403:
+                if is_target:
+                    raise PermissionError(
+                        f"[Errno 13] Permission denied: {partial_url!r}"
+                    )
                 # Might not have permission to create ancestors; try to continue
                 continue
             if sc >= 400:

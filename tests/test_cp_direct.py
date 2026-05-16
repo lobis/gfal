@@ -82,6 +82,79 @@ def _default_params(**kwargs):
 
 
 # ---------------------------------------------------------------------------
+# authz output redaction
+# ---------------------------------------------------------------------------
+
+
+class TestCopyAuthzRedaction:
+    def test_transfer_display_redacts_authz_in_non_tty_output(self, capsys):
+        display = _TransferDisplay(
+            "https://eospilot.cern.ch//eos/src.root?authz=zteos64:source&eos.app=gfal",
+            "https://eospilot.cern.ch//eos/dst.root?authz=zteos64:dest&eos.app=gfal",
+            src_size=12,
+            transfer_mode="streamed",
+        )
+
+        display.start()
+
+        out = capsys.readouterr().out
+        assert "zteos64:source" not in out
+        assert "zteos64:dest" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
+        assert "Copying src.root (streamed)" in out
+
+    def test_traverse_callback_redacts_authz_token(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+
+        with patch("gfal.cli.copy.print_live_message") as mock_live_message:
+            cmd._traverse_callback(
+                "file:///tmp/source",
+                "https://eospilot.cern.ch//eos/dst?authz=zteos64:secret&eos.app=gfal",
+            )
+
+        message = mock_live_message.call_args.args[0]
+        assert "zteos64:secret" not in message
+        assert "authz=<redacted>&eos.app=gfal" in message
+
+    def test_dry_run_redacts_authz_token(self, capsys):
+        cmd = _make_cmd()
+        cmd.params = _default_params(dry_run=True)
+        src_url = "file:///tmp/source.txt"
+        dst_url = (
+            "https://eospilot.cern.ch//eos/dst.txt?authz=zteos64:secret&eos.app=gfal"
+        )
+
+        with patch.object(cmd, "_build_client") as mock_build_client:
+            mock_client = mock_build_client.return_value
+            mock_client.stat.return_value = SimpleNamespace(is_dir=lambda: False)
+            cmd._do_copy(src_url, dst_url, {"timeout": 1800})
+
+        out = capsys.readouterr().out
+        assert "zteos64:secret" not in out
+        assert "authz=<redacted>&eos.app=gfal" in out
+
+    def test_skip_warn_redacts_authz_token(self):
+        cmd = _make_cmd()
+        cmd.params = _default_params()
+        display = MagicMock(show_progress=False)
+
+        with patch("gfal.cli.copy.print_live_message") as mock_live_message:
+            handled = cmd._handle_skip_warn(
+                "Skipping existing file "
+                "https://eospilot.cern.ch//eos/dst.root?"
+                "authz=zteos64:secret&eos.app=gfal (matching size)",
+                display,
+            )
+
+        assert handled is True
+        display.mark_skipped.assert_called_once_with()
+        message = mock_live_message.call_args.args[0]
+        assert "zteos64:secret" not in message
+        assert "authz=<redacted>&eos.app=gfal" in message
+
+
+# ---------------------------------------------------------------------------
 # execute_cp: basic copy
 # ---------------------------------------------------------------------------
 

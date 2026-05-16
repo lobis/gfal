@@ -191,6 +191,17 @@ class TestFormatError:
         msg = CommandBase._format_error(e)
         assert msg == "something went wrong"
 
+    def test_generic_exception_redacts_authz_token(self):
+        e = ValueError(
+            "failed https://eospilot.cern.ch//eos/file?"
+            "authz=zteos64:secret&eos.app=gfal"
+        )
+
+        msg = CommandBase._format_error(e)
+
+        assert "zteos64:secret" not in msg
+        assert "authz=<redacted>&eos.app=gfal" in msg
+
     def test_os_error_with_strerror_not_in_msg(self):
         """OSError with strerror that isn't in str(e) gets it appended."""
         e = OSError("custom message")
