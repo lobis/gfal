@@ -41,7 +41,7 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-xdist>=3.8.0",
     "pytest-rerunfailures>=16.0.1",
-    "pre-commit>=3.0",
+    "pre-commit>=4.3.0",
     "codespell>=2.4.2",
     "certifi",
 ]
