@@ -27,7 +27,7 @@ dependencies = [
     "aiohttp>=3.13.5",
     "xrootd>=6.0.1",
     "rich>=15.0.0",
-    "rich-click>=1.9.7",
+    "rich-click>=1.9.8",
     "click>=8.0.0",
 ]
 
