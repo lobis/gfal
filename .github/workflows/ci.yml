@@ -16,6 +16,9 @@ concurrency:
 env:
   FORCE_COLOR: "1"
 
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # 1. Tests & Linting
@@ -212,32 +215,40 @@ jobs:
       if: env.SKIP_INTEGRATION_MOUNT_TESTS != '1'
       run: pytest -n 0 -v tests/test_integration_mount.py
 
-  integration:
-    name: Integration Tests (EOS)
+  integration-eospublic:
+    name: Integration Tests (CERN EOS public)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev]"
+    - name: Run CERN EOS public integration tests
+      run: |
+        timeout 20m pytest -v -rs \
+          --reruns 3 --reruns-delay 10 \
+          tests/test_integration_eospublic.py
+
+  integration-eospilot:
+    name: Integration Tests (CERN EOS pilot)
     runs-on: ubuntu-latest
     env:
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
     - uses: actions/checkout@v6
-    - uses: actions/cache@v5
+    - uses: actions/setup-python@v6
       with:
-        path: ${{ runner.temp }}/conda_pkgs_dir
-        key: ${{ runner.os }}-conda-eos-${{ hashFiles('pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-conda-eos-
-    - uses: conda-incubator/setup-miniconda@v4
-      with:
-        activate-environment: eos-integration
-        auto-activate-base: false
-        channels: conda-forge
-        channel-priority: strict
-        miniforge-variant: Miniforge3
         python-version: "3.11"
-        pkgs-dirs: ${{ runner.temp }}/conda_pkgs_dir
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
     - name: Install dependencies
-      shell: bash -el {0}
       run: |
-        conda install -y xrootd
         python -m pip install --upgrade pip
         pip install --no-cache-dir ".[dev]"
         sudo apt-get update
@@ -269,13 +280,78 @@ jobs:
         PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
         echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
         echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
-    - name: Run integration tests
-      shell: bash -el {0}
+    - name: Run CERN EOS pilot integration tests
       run: |
         timeout 30m pytest -v -rs \
           --reruns 3 --reruns-delay 10 \
-          tests/test_integration_eospublic.py \
           tests/test_integration_eospilot.py
+
+  integration-dcache:
+    name: Integration Tests (FNAL dCache)
+    runs-on: ubuntu-latest
+    env:
+      PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --no-cache-dir ".[dev]"
+        sudo apt-get update
+        sudo apt-get install -y globus-proxy-utils igtf-policy-classic voms-clients-java
+    - name: Set up dteam service account credentials
+      if: env.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 != ''
+      run: |
+        CERT_TMPDIR=$(mktemp -d)
+        export CERT_TMPDIR
+        trap 'rm -rf "$CERT_TMPDIR" /tmp/usercert.pem /tmp/userkey.pem' EXIT
+        echo "$PYTHON3_GFAL_SERVICE_ACCOUNT_P12" | base64 -d > "$CERT_TMPDIR/service_account.p12"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -clcerts -nokeys -passin pass: -out "$CERT_TMPDIR/usercert.pem"
+        openssl pkcs12 -in "$CERT_TMPDIR/service_account.p12" -nocerts -nodes -passin pass: -out "$CERT_TMPDIR/userkey.pem"
+        cp "$CERT_TMPDIR/usercert.pem" /tmp/usercert.pem
+        cp "$CERT_TMPDIR/userkey.pem" /tmp/userkey.pem
+        chown "$(id -u):$(id -g)" /tmp/usercert.pem /tmp/userkey.pem
+        chmod 600 /tmp/usercert.pem /tmp/userkey.pem
+        ls -ln /tmp/usercert.pem /tmp/userkey.pem
+        CERT_EXPIRY=$(openssl x509 -in /tmp/usercert.pem -noout -enddate | cut -d= -f2)
+        echo "Service account certificate expires: ${CERT_EXPIRY}"
+        if openssl x509 -in /tmp/usercert.pem -noout -checkend 2592000 > /dev/null 2>&1; then
+          echo "Certificate is valid for at least 30 days."
+        else
+          echo "::warning::Service account certificate expires within 30 days (${CERT_EXPIRY})! Renew it at https://ca.cern.ch/ca/"
+        fi
+        mkdir -p /tmp/vomsdir/dteam
+        cat > /tmp/dteam.vomses <<'EOF'
+        "dteam" "voms2.hellasgrid.gr" "15004" "/C=GR/O=HellasGrid/OU=hellasgrid.gr/CN=voms2.hellasgrid.gr" "dteam"
+        EOF
+        cat > /tmp/vomsdir/dteam/voms2.hellasgrid.gr.lsc <<'EOF'
+        /C=GR/O=HellasGrid/OU=hellasgrid.gr/CN=voms2.hellasgrid.gr
+        /C=GR/O=HellasGrid/OU=Certification Authorities/CN=HellasGrid CA 2006
+        EOF
+        voms-proxy-init \
+          --cert /tmp/usercert.pem \
+          --key /tmp/userkey.pem \
+          --out /tmp/x509proxy \
+          --valid 12:00 \
+          --voms dteam \
+          --vomses /tmp/dteam.vomses \
+          --vomsdir /tmp/vomsdir \
+          --rfc \
+          --quiet
+        PROXY_EXPIRY=$(openssl x509 -in /tmp/x509proxy -noout -enddate | cut -d= -f2)
+        echo "X.509 proxy generated, expires: ${PROXY_EXPIRY}"
+        voms-proxy-info --file /tmp/x509proxy --vo
+        echo "X509_USER_PROXY=/tmp/x509proxy" >> "$GITHUB_ENV"
+    - name: Run FNAL dCache integration tests
+      run: |
+        timeout 20m pytest -v -rs \
+          --reruns 3 --reruns-delay 10 \
+          tests/test_integration_dcache.py
 
   integration-compare-gfal2:
     name: Integration Compare Tests (Alma Docker)
@@ -885,7 +961,14 @@ jobs:
 
   build:
     name: Build distribution 📦
-    needs: [ codespell, pre-commit, tests, xrootd, integration ]
+    needs:
+      - codespell
+      - pre-commit
+      - tests
+      - xrootd
+      - integration-eospublic
+      - integration-eospilot
+      - integration-dcache
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -1099,6 +1182,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -1171,6 +1255,7 @@ jobs:
       name: pypi
       url: https://pypi.org/p/gfal
     permissions:
+      contents: read
       id-token: write
     steps:
     - uses: actions/download-artifact@v8
