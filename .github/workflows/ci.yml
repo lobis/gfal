@@ -25,7 +25,7 @@ jobs:
     name: Codespell spell-check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: codespell-project/actions-codespell@v2
       with:
         ignore_words_list: cern,xrootd,fsspec,gfal,adler,aiohttp,thirdparty,scitag
@@ -34,7 +34,7 @@ jobs:
     name: Pre-commit checks
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -56,7 +56,7 @@ jobs:
         os: [ ubuntu-latest, macos-latest ]
         python-version: [ "3.9", "3.10", "3.11", "3.12", "3.13", "3.14" ]
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
@@ -91,7 +91,7 @@ jobs:
     name: XRootD Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Cache conda packages
       uses: actions/cache@v5
       with:
@@ -122,7 +122,7 @@ jobs:
     name: SFTP Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -138,7 +138,7 @@ jobs:
     name: S3 Tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -159,7 +159,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -218,7 +218,7 @@ jobs:
     env:
       PYTHON3_GFAL_SERVICE_ACCOUNT_P12: ${{ secrets.PYTHON3_GFAL_SERVICE_ACCOUNT_P12 }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/cache@v5
       with:
         path: ${{ runner.temp }}/conda_pkgs_dir
@@ -287,7 +287,7 @@ jobs:
     # due to old upstream bindings/runtime issues outside this repo.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
@@ -340,7 +340,7 @@ jobs:
         sudo mkdir -p "${GITHUB_WORKSPACE}"
         sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
         sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - uses: actions/setup-python@v6
       with:
@@ -529,7 +529,7 @@ jobs:
         sudo mkdir -p "${GITHUB_WORKSPACE}"
         sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
         sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - uses: actions/setup-python@v6
       with:
@@ -718,7 +718,7 @@ jobs:
         sudo mkdir -p "${GITHUB_WORKSPACE}"
         sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}" || true
         sudo chmod -R u+rwX "${GITHUB_WORKSPACE}" || true
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - uses: actions/setup-python@v6
       with:
@@ -888,7 +888,7 @@ jobs:
     needs: [ codespell, pre-commit, tests, xrootd, integration ]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
     - uses: actions/setup-python@v6
@@ -923,7 +923,7 @@ jobs:
     - name: Set up QEMU
       if: matrix.arch == 'aarch64'
       uses: docker/setup-qemu-action@v4
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
     - name: Build RPM in Container
@@ -947,7 +947,7 @@ jobs:
     needs: [ build ]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
     - name: Cache conda packages
@@ -1025,7 +1025,7 @@ jobs:
             find . -name "*.rpm" -exec dnf install -y {} +
     container: ${{ matrix.target.container }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/download-artifact@v8
       with:
         name: ${{ matrix.target.artifact }}
@@ -1058,7 +1058,7 @@ jobs:
     needs: [ build-conda ]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/download-artifact@v8
       with:
         name: conda-package-distributions
@@ -1105,7 +1105,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: actions/download-artifact@v8
       with:
         name: rpm-package-distributions-el9-x86_64
