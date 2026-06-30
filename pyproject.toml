@@ -28,7 +28,7 @@ dependencies = [
     "xrootd>=6.0.1",
     "rich>=15.0.0",
     "rich-click>=1.9.7",
-    "click>=8.0.0",
+    "click>=8.4.2",
 ]
 
 [project.scripts]
