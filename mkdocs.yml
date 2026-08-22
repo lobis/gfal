@@ -45,6 +45,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - xrdfs CLI refactor: xrdfs-cli-refactor.md
   - Python API: python-api.md
   - EOS Public Examples: eospublic-examples.md
   - EOS authz tokens: eos-token-workflow.md

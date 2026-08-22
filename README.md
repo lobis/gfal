@@ -12,13 +12,21 @@
 [![Lines of tests](https://img.shields.io/badge/lines%20of%20tests-26k-blue)](https://github.com/lobis/gfal/tree/main/tests)
 [![Tests](https://img.shields.io/badge/tests-1700%2B-green)](https://github.com/lobis/gfal/tree/main/tests)
 
-**Grid File Access Library — Python rewrite of gfal2**
+**GFAL-compatible command-line tools and Python library for remote storage**
 
 **Documentation: [lobis.github.io/gfal](https://lobis.github.io/gfal/)**
 
-A pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools, built on [fsspec](https://filesystem-spec.readthedocs.io/) — no C library required. Supports **HTTP/HTTPS** and native **XRootD** out of the box, with optional **S3** and **SSH/SFTP** backends via their corresponding fsspec drivers.
+A pip-installable rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) command family. The current development branch is moving its core remote-storage commands onto the system **XRootD** client while preserving a Python API during the transition.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
+
+> [!IMPORTANT]
+> The `xrdfs` development branch is replacing the fsspec command backend.
+> Remote `gfal ls`, `gfal cat`, `gfal stat`, `gfal sum`, and `gfal xattr`
+> invocations now use an external, compatible `xrdfs`; local paths, other
+> commands, and the Python API retain a lazy legacy fallback while they are
+> migrated. Only the `gfal <command>` form is installed. See
+> [the xrdfs refactor notes](docs/xrdfs-cli-refactor.md).
 
 ## Installation
 

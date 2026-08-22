@@ -1,8 +1,15 @@
 # gfal — Grid File Access Library
 
-**gfal** (**Grid File Access Library**) is a pip-installable **Python-only** rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) CLI tools — no C library required. Built on [fsspec](https://filesystem-spec.readthedocs.io/). Supports **HTTP/HTTPS** and native **XRootD** out of the box.
+**gfal** (**Grid File Access Library**) is a pip-installable rewrite of the [gfal2-util](https://github.com/lobis/gfal2-util) command family. The `xrdfs` development branch is moving its core remote-storage commands onto the system **XRootD** client while preserving the existing Python API during the transition.
 
 `gfal` is both a **Python library** (sync + async) and a **command-line tool**. Use it to stat, list, copy, checksum, and manage files on local, HTTP/WebDAV, and XRootD storage from Python or the terminal.
+
+!!! warning "xrdfs development branch"
+
+    The `xrdfs` branch is migrating the CLI away from fsspec. Complete remote
+    URLs for `gfal ls`, `gfal cat`, `gfal stat`, `gfal sum`, and `gfal xattr`
+    use the new backend; no hyphenated `gfal-*` executables are installed. See
+    [xrdfs CLI refactor](xrdfs-cli-refactor.md) for requirements and status.
 
 ## Python library
 

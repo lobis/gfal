@@ -1,5 +1,16 @@
 # Installation
 
+!!! warning "xrdfs development branch"
+
+    For complete remote URLs, the `xrdfs` branch routes `gfal ls`, `cat`,
+    `stat`, `sum`, and `xattr` through an external XRootD client. `pip` does
+    not provide this executable.
+    Install `xrootd-client` (and `xrdcl-http` for HTTP/WebDAV), or point
+    `GFAL_XRDFS` at a compatible local build. The required JSON interface is
+    still under development in xrootd PR #2868, so this branch is not yet
+    suitable for PyPI or EPEL publication. See
+    [xrdfs CLI refactor](xrdfs-cli-refactor.md).
+
 ## PyPI (Stable)
 
 The easiest way to install `gfal` is via `pip`:
