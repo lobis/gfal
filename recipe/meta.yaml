@@ -14,7 +14,7 @@ build:
     - PKG_VERSION
     - SETUPTOOLS_SCM_PRETEND_VERSION
   entry_points:
-    - gfal = gfal.cli.shell:main
+    - gfal = gfal.cli.main:main
 
 requirements:
   host:

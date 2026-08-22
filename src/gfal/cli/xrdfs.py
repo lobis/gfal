@@ -1,0 +1,905 @@
+"""The ``gfal`` command-line interface backed by the external ``xrdfs`` command."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import errno
+import io
+import json
+import math
+import os
+import posixpath
+import stat
+import sys
+import time
+from collections.abc import Mapping, Sequence
+from datetime import datetime
+from typing import Any, Optional
+from urllib.parse import urlsplit
+
+from gfal import __version__
+from gfal.xrdfs import (
+    XrdfsResult,
+    check_capability,
+    error_exit_code,
+    error_message,
+    find_xrdfs,
+    redact_authz,
+    run_xrdfs,
+)
+
+_REMOTE_SCHEMES = {
+    "dav",
+    "davs",
+    "http",
+    "https",
+    "root",
+    "roots",
+    "xroot",
+    "xroots",
+}
+
+
+def supports_url(value: str) -> bool:
+    """Return whether *value* is a complete URL supported by this backend."""
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in _REMOTE_SCHEMES and bool(parsed.netloc)
+
+
+def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"gfal {__version__} (xrdfs backend)",
+        help="output version information and exit",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="enable verbose mode; repeat for more detail",
+    )
+    parser.add_argument(
+        "-D",
+        "--definition",
+        action="append",
+        default=[],
+        metavar="DEFINITION",
+        help="accept a gfal parameter override (compatibility no-op)",
+    )
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        type=int,
+        default=1800,
+        help="maximum time for the operation to terminate (default: 1800 seconds)",
+    )
+    parser.add_argument("-E", "--cert", help="user certificate")
+    parser.add_argument("--key", help="user private key")
+    parser.add_argument(
+        "-4",
+        "--ipv4",
+        dest="ipv4",
+        action="store_true",
+        help="force IPv4 addresses",
+    )
+    parser.add_argument(
+        "-6",
+        "--ipv6",
+        dest="ipv6",
+        action="store_true",
+        help="force IPv6 addresses",
+    )
+    parser.add_argument(
+        "-C",
+        "--client-info",
+        action="append",
+        default=[],
+        help="provide custom client-side information",
+    )
+    parser.add_argument(
+        "--log-file",
+        help="write XRootD client logs to the given file",
+    )
+
+
+def _build_parser(
+    command: str,
+    prog: str,
+    parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser,
+) -> argparse.ArgumentParser:
+    descriptions = {
+        "ls": "Gfal util LS command. List directory's contents.",
+        "cat": "Gfal util CAT command. Sends to stdout the contents of files.",
+        "stat": "Gfal util STAT command. Stats a file.",
+        "sum": "Gfal util SUM command. Calculates the checksum of a file.",
+        "xattr": (
+            "Gfal util XATTR command. Gets or sets the extended attributes "
+            "of files and directories."
+        ),
+    }
+    parser = parser_class(
+        prog=prog,
+        description=descriptions[command],
+        allow_abbrev=False,
+    )
+    _add_common_arguments(parser)
+
+    if command == "ls":
+        parser.add_argument(
+            "-a", "--all", action="store_true", help="display hidden files"
+        )
+        parser.add_argument(
+            "-l", "--long", action="store_true", help="long listing format"
+        )
+        parser.add_argument(
+            "-d",
+            "--directory",
+            action="store_true",
+            help="list directory entries instead of contents",
+        )
+        parser.add_argument(
+            "-H",
+            "--human-readable",
+            action="store_true",
+            help="with -l, print sizes in human-readable form",
+        )
+        parser.add_argument(
+            "--xattr",
+            action="append",
+            default=[],
+            help="query an additional attribute; may be repeated and is shown with -l",
+        )
+        parser.add_argument(
+            "--time-style",
+            choices=("full-iso", "long-iso", "iso", "locale"),
+            default="locale",
+            help="time style",
+        )
+        parser.add_argument(
+            "--full-time",
+            action="store_true",
+            help="same as --time-style=full-iso",
+        )
+        parser.add_argument(
+            "--color",
+            choices=("always", "never", "auto"),
+            default="auto",
+            help="print colored entries with -l",
+        )
+        parser.add_argument("file", nargs="+", help="file's URI")
+    elif command == "cat":
+        parser.add_argument(
+            "-b",
+            "--bytes",
+            action="store_true",
+            help="handle file contents as bytes (output is always byte-preserving)",
+        )
+        parser.add_argument("file", nargs="+", help="URI of the file to display")
+    elif command == "stat":
+        parser.add_argument("file", nargs="+", help="URI of the file to stat")
+    elif command == "sum":
+        parser.add_argument("file", help="file URI to use for checksum calculation")
+        parser.add_argument(
+            "checksum_type",
+            help="checksum algorithm to use, for example ADLER32, CRC32, or MD5",
+        )
+    else:
+        parser.add_argument("file", help="file URI")
+        parser.add_argument(
+            "attribute",
+            nargs="?",
+            help="attribute to retrieve or set; use key=value to set",
+        )
+    return parser
+
+
+class _RoutingError(Exception):
+    pass
+
+
+class _InformationRequested(_RoutingError):
+    pass
+
+
+class _RoutingParser(argparse.ArgumentParser):
+    """Parse only to select a backend, without printing or exiting."""
+
+    def error(self, message: str) -> None:
+        raise _RoutingError(message)
+
+    def exit(self, status: int = 0, message: Optional[str] = None) -> None:
+        if status == 0:
+            raise _InformationRequested(message or "")
+        raise _RoutingError(message or "")
+
+
+def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
+    """Return whether *argv* is fully understood and has only remote operands."""
+    parser = _build_parser(command, f"gfal {command}", _RoutingParser)
+    try:
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            params = parser.parse_args(list(argv))
+    except _InformationRequested:
+        return True
+    except _RoutingError:
+        return False
+
+    values = params.file if isinstance(params.file, list) else [params.file]
+    return bool(values) and all(supports_url(value) for value in values)
+
+
+def _validate_common(
+    parser: argparse.ArgumentParser, params: argparse.Namespace
+) -> None:
+    if params.ipv4 and params.ipv6:
+        parser.error("-4 and -6 are mutually exclusive")
+
+
+def _validate_remote_url(parser: argparse.ArgumentParser, value: str) -> None:
+    if not supports_url(value):
+        parser.error(
+            "the xrdfs backend requires a complete remote URL "
+            f"(got {redact_authz(value)!r})"
+        )
+
+
+def _child_environment(params: argparse.Namespace) -> dict[str, str]:
+    environment = os.environ.copy()
+
+    if params.timeout > 0:
+        environment["XRD_REQUESTTIMEOUT"] = str(params.timeout)
+    else:
+        environment.pop("XRD_REQUESTTIMEOUT", None)
+
+    if params.cert:
+        key = params.key or params.cert
+        environment["X509_USER_CERT"] = params.cert
+        environment["X509_USER_KEY"] = key
+        environment.pop("X509_USER_PROXY", None)
+        environment["XRD_HTTPCLIENTCERTFILE"] = params.cert
+        environment["XRD_HTTPCLIENTKEYFILE"] = key
+    elif params.key:
+        environment["X509_USER_KEY"] = params.key
+        environment["XRD_HTTPCLIENTKEYFILE"] = params.key
+
+    if params.ipv4:
+        environment["XRD_NETWORKSTACK"] = "IPv4"
+    elif params.ipv6:
+        environment["XRD_NETWORKSTACK"] = "IPv6"
+
+    if params.client_info:
+        environment["XRD_APPNAME"] = ";".join(params.client_info)
+
+    if params.verbose:
+        levels = ("Warning", "Info", "Debug")
+        environment["XRD_LOGLEVEL"] = levels[min(params.verbose, 3) - 1]
+
+    if params.log_file:
+        environment["XRD_LOGFILE"] = params.log_file
+
+    return environment
+
+
+def _prepare_xrdfs(
+    prog: str,
+    deadline: Optional[float],
+    configured_timeout: int,
+) -> tuple[Optional[str], int]:
+    executable = find_xrdfs()
+    if executable is None:
+        configured = os.environ.get("GFAL_XRDFS")
+        detail = f" configured by GFAL_XRDFS={configured!r}" if configured else ""
+        sys.stderr.write(
+            f"{prog}: xrdfs{detail} was not found; install xrootd-client\n"
+        )
+        return None, 127
+
+    probe_timeout = 5.0
+    if deadline is not None:
+        remaining = _remaining(deadline)
+        assert remaining is not None
+        probe_timeout = min(probe_timeout, remaining)
+    capability = check_capability(
+        executable,
+        environ=os.environ,
+        timeout=probe_timeout,
+    )
+    if capability.error:
+        if capability.timed_out and deadline is not None:
+            sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
+            return None, 110
+        sys.stderr.write(
+            f"{prog}: incompatible xrdfs: {capability.error}; use an XRootD build "
+            "containing the command-first compatibility changes\n"
+        )
+        return None, 69
+    return executable, 0
+
+
+def _remaining(deadline: Optional[float]) -> Optional[float]:
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def _write_bytes(stream: Any, data: bytes) -> bool:
+    if not data:
+        return True
+    try:
+        binary = getattr(stream, "buffer", None)
+        if binary is not None:
+            binary.write(data)
+            binary.flush()
+        else:
+            stream.write(data.decode("utf-8", errors="replace"))
+            stream.flush()
+    except BrokenPipeError:
+        _neutralize_broken_pipe(stream)
+        return False
+    return True
+
+
+def _neutralize_broken_pipe(stream: Any) -> None:
+    """Prevent CPython from retrying a failed buffered flush at shutdown."""
+    try:
+        descriptor = stream.fileno()
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, descriptor)
+        finally:
+            os.close(devnull)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def _report_result(
+    prog: str,
+    result: XrdfsResult,
+    *,
+    configured_timeout: int,
+) -> int:
+    if result.returncode == 0:
+        safe_stderr = redact_authz(
+            result.stderr.decode("utf-8", errors="replace")
+        ).encode("utf-8")
+        _write_bytes(sys.stderr, safe_stderr)
+        return 0
+
+    code = error_exit_code(result)
+    if code == 255:
+        return code
+    if result.timed_out:
+        sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
+        return code
+
+    message = error_message(result.stderr)
+    try:
+        description = os.strerror(code)
+    except ValueError:
+        description = "Unknown error"
+    sys.stderr.write(f"{prog} error: {code} ({description}) - {message}\n")
+    return code
+
+
+def _json_records(prog: str, result: XrdfsResult) -> tuple[list[dict[str, Any]], int]:
+    records = []
+    try:
+        for line in result.stdout.decode("utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("JSON line is not an object")
+            _validate_json_record(record)
+            records.append(record)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        code = getattr(errno, "EPROTO", 1)
+        sys.stderr.write(
+            f"{prog} error: {code} ({os.strerror(code)}) - "
+            f"invalid JSON from xrdfs: {exc}\n"
+        )
+        return [], code
+    return records, 0
+
+
+def _validate_json_record(record: Mapping[str, Any]) -> None:
+    """Validate the stable metadata schema before formatting its values."""
+    required = {
+        "path",
+        "type",
+        "size",
+        "mtime",
+        "atime",
+        "ctime",
+        "flags",
+        "flag_names",
+        "extended",
+        "mode",
+        "permissions",
+        "owner",
+        "group",
+        "checksum",
+        "xattrs",
+    }
+    missing = sorted(required.difference(record))
+    if missing:
+        raise ValueError(f"metadata object is missing {', '.join(missing)}")
+    if not isinstance(record["path"], str):
+        raise ValueError("metadata path is not a string")
+    if record["type"] not in ("file", "directory", "other"):
+        raise ValueError("metadata type is invalid")
+    for name in ("size", "mtime", "atime", "ctime", "flags"):
+        if isinstance(record[name], bool) or not isinstance(record[name], int):
+            raise ValueError(f"metadata {name} is not an integer")
+    if not isinstance(record["extended"], bool):
+        raise ValueError("metadata extended flag is not a boolean")
+    for name in ("mode", "permissions", "owner", "group", "checksum"):
+        if record[name] is not None and not isinstance(record[name], str):
+            raise ValueError(f"metadata {name} is not a string or null")
+    if not isinstance(record["flag_names"], list) or not all(
+        isinstance(name, str) for name in record["flag_names"]
+    ):
+        raise ValueError("metadata flag_names is not a string array")
+    if not isinstance(record["xattrs"], list) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("value"), str)
+        for item in record["xattrs"]
+    ):
+        raise ValueError("metadata xattrs is not a name/value array")
+
+
+def _run_metadata(
+    prog: str,
+    executable: str,
+    arguments: Sequence[str],
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> tuple[list[dict[str, Any]], int]:
+    result = run_xrdfs(
+        executable,
+        arguments,
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return [], status
+    return _json_records(prog, result)
+
+
+def _record_type(record: Mapping[str, Any]) -> str:
+    value = str(record.get("type", "other")).lower()
+    return value if value in ("file", "directory", "other") else "other"
+
+
+def _permissions_from_text(value: Any) -> Optional[int]:
+    text = str(value or "")
+    if len(text) == 10:
+        text = text[1:]
+    if len(text) != 9:
+        return None
+
+    permissions = 0
+    bits = (
+        stat.S_IRUSR,
+        stat.S_IWUSR,
+        stat.S_IXUSR,
+        stat.S_IRGRP,
+        stat.S_IWGRP,
+        stat.S_IXGRP,
+        stat.S_IROTH,
+        stat.S_IWOTH,
+        stat.S_IXOTH,
+    )
+    for character, bit in zip(text, bits):
+        if character != "-":
+            permissions |= bit
+    return permissions
+
+
+def _record_mode(record: Mapping[str, Any]) -> int:
+    record_type = _record_type(record)
+    type_mode = {
+        "file": stat.S_IFREG,
+        "directory": stat.S_IFDIR,
+        "other": 0,
+    }[record_type]
+
+    raw_mode = record.get("mode")
+    if raw_mode not in (None, ""):
+        try:
+            return type_mode | (int(str(raw_mode), 8) & 0o7777)
+        except ValueError:
+            pass
+
+    parsed = _permissions_from_text(record.get("permissions"))
+    if parsed is not None:
+        return type_mode | parsed
+
+    names = {str(name) for name in record.get("flag_names", [])}
+    permissions = 0
+    if "IsReadable" in names:
+        permissions |= 0o555 if record_type == "directory" else 0o444
+    if "IsWritable" in names:
+        permissions |= 0o222
+    if "XBitSet" in names:
+        permissions |= 0o111
+    return type_mode | permissions
+
+
+def _numeric_identity(value: Any) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _epoch(record: Mapping[str, Any], name: str) -> float:
+    value = record.get(name)
+    if value in (None, 0, "0", "") and name != "mtime":
+        value = record.get("mtime", 0)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _file_type_label(record_type: str) -> str:
+    return {
+        "file": "regular file",
+        "directory": "directory",
+        "other": "unknown",
+    }[record_type]
+
+
+def _execute_stat(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    for index, value in enumerate(params.file):
+        records, status = _run_metadata(
+            prog,
+            executable,
+            ("stat", "--json", value),
+            params,
+            environment,
+            deadline,
+        )
+        if status:
+            return status
+        if len(records) != 1:
+            sys.stderr.write(f"{prog}: xrdfs stat returned {len(records)} records\n")
+            return getattr(errno, "EPROTO", 1)
+
+        if index:
+            sys.stdout.write("\n")
+        record = records[0]
+        mode = _record_mode(record)
+        size = int(record["size"])
+        uid = _numeric_identity(record.get("owner"))
+        gid = _numeric_identity(record.get("group"))
+
+        sys.stdout.write(f"  File: '{redact_authz(value)}'\n")
+        sys.stdout.write(f"  Size: {size}\t{_file_type_label(_record_type(record))}\n")
+        sys.stdout.write(
+            f"Access: ({stat.S_IMODE(mode):04o}/{stat.filemode(mode)})\t"
+            f"Uid: {uid}\tGid: {gid}\t\n"
+        )
+        for label, field in (
+            ("Access", "atime"),
+            ("Modify", "mtime"),
+            ("Change", "ctime"),
+        ):
+            formatted = datetime.fromtimestamp(_epoch(record, field)).strftime(
+                "%Y-%m-%d %H:%M:%S.%f"
+            )
+            sys.stdout.write(f"{label}: {formatted}\n")
+    return 0
+
+
+def _fmt_full_iso(timestamp: float) -> str:
+    # gfal2-util formats local time but always appends this literal suffix.
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f +0000")
+
+
+def _fmt_long_iso(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_iso(timestamp: float) -> str:
+    value = datetime.fromtimestamp(timestamp)
+    if (datetime.now() - value).days < 180:
+        return value.strftime("%m-%d %H:%M")
+    return value.strftime("%Y-%m-%d")
+
+
+def _fmt_locale(timestamp: float) -> str:
+    value = datetime.fromtimestamp(timestamp)
+    day = value.strftime("%d").lstrip("0").rjust(2)
+    if (datetime.now() - value).days < 180:
+        return value.strftime(f"%b {day} %H:%M")
+    return value.strftime(f"%b {day}  %Y")
+
+
+_TIME_FORMATS = {
+    "full-iso": _fmt_full_iso,
+    "long-iso": _fmt_long_iso,
+    "iso": _fmt_iso,
+    "locale": _fmt_locale,
+}
+
+
+def _human_size(size: int) -> str:
+    symbols = ("", "K", "M", "G", "T", "P")
+    value = float(size)
+    degree = 0
+    while value >= 1024.0 and degree < len(symbols) - 1:
+        value /= 1024.0
+        degree += 1
+    if value < 10.0:
+        return f"{math.ceil(value * 10.0) / 10.0:0.1f}{symbols[degree]}"
+    return f"{math.ceil(value):0.0f}{symbols[degree]}"
+
+
+def _ls_colors() -> dict[str, str]:
+    colors = {}
+    for entry in os.environ.get("LS_COLORS", "").split(":"):
+        if "=" in entry:
+            kind, value = entry.split("=", 1)
+            colors[kind] = value
+    return colors
+
+
+def _colored_name(name: str, mode: int, choice: str) -> str:
+    enabled = choice == "always" or (choice == "auto" and sys.stdout.isatty())
+    if not enabled:
+        return name
+    colors = _ls_colors()
+    if stat.S_ISDIR(mode):
+        color = colors.get("di")
+    elif stat.S_ISLNK(mode):
+        color = colors.get("ln")
+    elif mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        color = colors.get("ex")
+    else:
+        extension = posixpath.splitext(name)[1]
+        color = colors.get(f"*{extension}") if extension else None
+        if color is None:
+            color = colors.get("fi")
+    if not color:
+        return name
+    return f"\033[{color}m{name}\033[0m"
+
+
+def _normalized_url_path(value: str) -> str:
+    path = urlsplit(value).path
+    return posixpath.normpath("/" + path.lstrip("/"))
+
+
+def _is_target_record(record: Mapping[str, Any], target: str) -> bool:
+    path = str(record.get("path", "")).split("?", 1)[0]
+    return posixpath.normpath("/" + path.lstrip("/")) == _normalized_url_path(target)
+
+
+def _xattr_values(record: Mapping[str, Any]) -> list[str]:
+    values = []
+    for item in record.get("xattrs", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("value", "")))
+    return values
+
+
+def _execute_ls(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    # Despite its help text, current gfal2-util renders --full-time using the
+    # long-iso layout. Preserve observed behavior for output compatibility.
+    time_style = "long-iso" if params.full_time else params.time_style
+    multiple = len(params.file) > 1
+    for index, value in enumerate(params.file):
+        arguments = ["ls", "--json"]
+        if params.directory:
+            arguments.append("--directory")
+        if params.long:
+            for attribute in params.xattr:
+                arguments.extend(("--xattr", attribute))
+        arguments.append(value)
+
+        records, status = _run_metadata(
+            prog,
+            executable,
+            arguments,
+            params,
+            environment,
+            deadline,
+        )
+        if status:
+            return status
+
+        if multiple:
+            if index:
+                sys.stdout.write("\n")
+            sys.stdout.write(f"{redact_authz(value)}:\n")
+
+        for record in records:
+            path = str(record["path"])
+            target_record = params.directory or _is_target_record(record, value)
+            try:
+                entry_path = urlsplit(path).path
+            except ValueError:
+                entry_path = path.split("?", 1)[0]
+            name = (
+                redact_authz(value)
+                if target_record
+                else posixpath.basename(entry_path.rstrip("/"))
+            )
+            if not target_record and not params.all and name.startswith("."):
+                continue
+
+            mode = _record_mode(record)
+            display_name = _colored_name(name, mode, params.color)
+            if not params.long:
+                sys.stdout.write(f"{display_name}\n")
+                continue
+
+            size = int(record["size"])
+            size_text = _human_size(size) if params.human_readable else str(size)
+            size_width = 4 if params.human_readable else 9
+            date = _TIME_FORMATS[time_style](_epoch(record, "mtime"))
+            nlink = _numeric_identity(record.get("nlink")) or 1
+            uid = _numeric_identity(record.get("owner"))
+            gid = _numeric_identity(record.get("group"))
+            extras = "\t".join(_xattr_values(record))
+            sys.stdout.write(
+                f"{stat.filemode(mode)} {nlink:>3} {uid!s:<5} {gid!s:<5} "
+                f"{size_text:>{size_width}} {date:<11} {display_name}\t{extras}\n"
+            )
+    return 0
+
+
+def _execute_cat(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    for value in params.file:
+        arguments = ["cat"]
+        if params.bytes:
+            arguments.append("--bytes")
+        arguments.append(value)
+        result = run_xrdfs(
+            executable,
+            arguments,
+            environ=environment,
+            timeout=_remaining(deadline),
+            passthrough_stdout=True,
+        )
+        status = _report_result(prog, result, configured_timeout=params.timeout)
+        if status:
+            return status
+    return 0
+
+
+def _execute_sum(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    result = run_xrdfs(
+        executable,
+        ("sum", params.file, params.checksum_type),
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return status
+
+    fields = result.stdout.decode("utf-8", errors="replace").split()
+    if len(fields) != 2:
+        sys.stderr.write(f"{prog}: invalid checksum response from xrdfs\n")
+        return getattr(errno, "EPROTO", 1)
+    display_url = redact_authz(params.file)
+    if not _write_bytes(sys.stdout, f"{display_url} {fields[1]}\n".encode()):
+        return 255
+    return 0
+
+
+def _execute_xattr(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    attribute = params.attribute
+    if attribute is None:
+        arguments = ("xattr", params.file)
+    elif "=" in attribute:
+        key, value = attribute.split("=", 1)
+        if not key or not value:
+            return 0
+        arguments = ("xattr", params.file, "set", attribute)
+    else:
+        arguments = ("xattr", params.file, "--", attribute)
+
+    result = run_xrdfs(
+        executable,
+        arguments,
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return status
+    if not _write_bytes(sys.stdout, result.stdout):
+        return 255
+    return 0
+
+
+def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -> int:
+    """Parse and execute one of the five xrdfs-backed commands."""
+    program = prog or f"gfal {command}"
+    parser = _build_parser(command, program)
+    params = parser.parse_args(list(argv))
+    _validate_common(parser, params)
+
+    urls = params.file if isinstance(params.file, list) else [params.file]
+    for value in urls:
+        _validate_remote_url(parser, value)
+
+    deadline = None if params.timeout <= 0 else time.monotonic() + params.timeout
+    try:
+        executable, status = _prepare_xrdfs(
+            program,
+            deadline,
+            params.timeout,
+        )
+        if status:
+            return status
+        assert executable is not None
+
+        environment = _child_environment(params)
+        executors = {
+            "ls": _execute_ls,
+            "cat": _execute_cat,
+            "stat": _execute_stat,
+            "sum": _execute_sum,
+            "xattr": _execute_xattr,
+        }
+        status = executors[command](
+            program,
+            executable,
+            params,
+            environment,
+            deadline,
+        )
+        if status == 0:
+            sys.stdout.flush()
+        return status
+    except BrokenPipeError:
+        _neutralize_broken_pipe(sys.stdout)
+        return 255

@@ -7,7 +7,7 @@
 Name: python3-%{base_name}
 Version: %{pkg_version}
 Release: %{pkg_release}%{?dist}
-Summary: Grid File Access Library — Python rewrite of gfal2, based on fsspec (HTTP/HTTPS and XRootD by default)
+Summary: GFAL-compatible command-line tools and Python library for remote storage
 License: BSD-3-Clause
 URL: https://github.com/lobis/gfal
 Source0: %{dist_name}-%{version}-py3-none-any.whl
@@ -16,6 +16,8 @@ BuildRequires: python3-devel
 BuildRequires: python3-pip
 
 # Runtime dependencies available in EPEL / base RHEL
+Requires: xrootd-client
+Requires: xrdcl-http
 Requires: python3-aiohttp
 Requires: python3-rich
 Requires: python3-click
@@ -31,9 +33,10 @@ AutoReq: no
 AutoProv: no
 
 %description
-gfal (Grid File Access Library) is a pip-installable Python-only rewrite of the
-gfal2-util CLI tools, built on fsspec — no C library required.
-Supports HTTP/HTTPS and XRootD out of the box.
+gfal provides GFAL-compatible command-line tools and a Python library for local
+and remote storage. The transitional xrdfs backend delegates core remote read
+and metadata commands to the operating system's XRootD client; commands not yet
+migrated retain the previous Python implementation.
 
 %prep
 # Nothing to prep for a pre-built wheel
@@ -87,7 +90,7 @@ install -m 644 %{_sourcedir}/_gfal.zsh-completion %{buildroot}%{_datadir}/zsh/si
 %{python3_sitearch}/pyxrootd/
 %{python3_sitearch}/xrootd.libs/
 %{python3_sitearch}/xrootd-*.dist-info/
-%{_bindir}/gfal*
+%{_bindir}/gfal
 %{_datadir}/bash-completion/completions/gfal
 %{_datadir}/zsh/site-functions/_gfal
 
