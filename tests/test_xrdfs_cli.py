@@ -617,6 +617,20 @@ def test_failure_diagnostics_redact_authz_tokens(fake_xrdfs, monkeypatch, capsys
     assert "authz=<redacted>" in captured.err
 
 
+def test_error_mapping_ignores_unrelated_native_warnings(
+    fake_xrdfs, monkeypatch, capsys
+):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "50")
+    monkeypatch.setenv(
+        "FAKE_XRDFS_STDERR",
+        "Plugin No such file or directory loading optional plugin\n"
+        "[ERROR] Permission denied\n",
+    )
+
+    assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == errno.EACCES
+    assert "Permission denied" in capsys.readouterr().err
+
+
 def test_data_payloads_are_not_redacted(fake_xrdfs, monkeypatch, capsys):
     monkeypatch.setenv("FAKE_XRDFS_STDOUT", "authz=payload-value\n")
     assert dispatch("xattr", [_URL, "user.test"], prog="gfal xattr") == 0

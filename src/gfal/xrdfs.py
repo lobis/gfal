@@ -231,7 +231,7 @@ def error_exit_code(result: XrdfsResult) -> int:
     if sigpipe is not None and result.returncode in (-sigpipe, 128 + sigpipe):
         return 255
 
-    message = result.stderr.decode("utf-8", errors="replace").lower()
+    message = error_message(result.stderr).lower()
     if "broken pipe" in message or "unable to write to stdout" in message:
         return 255
     for code, fragments in _ERROR_CODES:
