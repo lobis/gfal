@@ -6,9 +6,11 @@ support are skipped on platforms that don't have it.
 """
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
+import gfal.cli.commands as commands
 from helpers import run_gfal
 
 # ---------------------------------------------------------------------------
@@ -65,6 +67,34 @@ class TestXattrUnsupported:
         if sys.platform == "win32":
             rc, out, err = run_gfal("xattr", f.as_uri())
             assert rc != 0
+
+
+class TestXattrOutput:
+    def test_list_uses_one_line_per_attribute(self, monkeypatch, capsys):
+        class FakeClient:
+            @staticmethod
+            def listxattr(_file):
+                return ["user.good", "user.bad"]
+
+            @staticmethod
+            def getxattr(_file, attribute):
+                if attribute == "user.bad":
+                    raise OSError("permission denied")
+                return "value"
+
+        monkeypatch.setattr(commands, "GfalClient", lambda **_kwargs: FakeClient())
+
+        cmd = commands.GfalCommands()
+        cmd.params = SimpleNamespace(
+            attribute=None,
+            file="file:///test",
+            quiet=True,
+        )
+
+        assert cmd.execute_xattr() == 0
+        assert capsys.readouterr().out == (
+            "user.good = value\nuser.bad FAILED: permission denied\n"
+        )
 
 
 # ---------------------------------------------------------------------------

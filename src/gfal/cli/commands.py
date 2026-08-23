@@ -287,9 +287,9 @@ class GfalCommands(base.CommandBase):
                 for attr in attrs:
                     try:
                         val = client.getxattr(self.params.file, attr)
-                        sys.stdout.write(f"{attr} = {val}\n\n")
+                        sys.stdout.write(f"{attr} = {val}\n")
                     except Exception as e:
-                        sys.stdout.write(f"{attr} FAILED: {e}\n\n")
+                        sys.stdout.write(f"{attr} FAILED: {e}\n")
         except Exception as e:
             self._print_error(e)
             return exception_exit_code(e)
