@@ -57,13 +57,8 @@ _COMMON_LEGACY_OPTIONS = frozenset((
     "--authz-token",
     "--verify",
     "--no-verify",
-    "-r",
-    "--reverse",
-    "-S",
-    "-U",
-    "--sort",
 ))
-_COMMON_LEGACY_PREFIXES = ("--authz-token=", "--sort=")
+_COMMON_LEGACY_PREFIXES = ("--authz-token=",)
 _COMMON_LEGACY_SHORT_OPTIONS = frozenset(("q",))
 _VALUE_SHORT_OPTIONS = frozenset(("D", "t", "E", "C"))
 
@@ -1178,6 +1173,8 @@ XRDFS_COMMANDS = MappingProxyType({
         description="Gfal util LS command. List directory's contents.",
         add_arguments=_add_ls_arguments,
         execute=_execute_ls,
+        legacy_options=frozenset(("--reverse", "--sort")),
+        legacy_prefixes=("--sort=",),
         legacy_short_options=frozenset(("r", "S", "U")),
     ),
     "cat": XrdfsCommand(

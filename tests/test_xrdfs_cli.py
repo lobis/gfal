@@ -143,6 +143,11 @@ raise SystemExit(int(os.environ.get("FAKE_XRDFS_RETURN_CODE", "0")))
 """.replace("__GFAL_CAPABILITY_HELP__", repr(_CAPABILITY_HELP))
 
 
+def _clear_authz_tokens(monkeypatch):
+    monkeypatch.delenv("EOSAUTHZ", raising=False)
+    monkeypatch.delenv("GFAL_AUTHZ_TOKEN", raising=False)
+
+
 @pytest.fixture
 def fake_xrdfs(tmp_path, monkeypatch):
     executable = tmp_path / "xrdfs"
@@ -151,8 +156,7 @@ def fake_xrdfs(tmp_path, monkeypatch):
     record = tmp_path / "record.jsonl"
     monkeypatch.setenv("GFAL_XRDFS", str(executable))
     monkeypatch.setenv("FAKE_XRDFS_RECORD", str(record))
-    monkeypatch.delenv("EOSAUTHZ", raising=False)
-    monkeypatch.delenv("GFAL_AUTHZ_TOKEN", raising=False)
+    _clear_authz_tokens(monkeypatch)
     return record
 
 
@@ -205,6 +209,47 @@ def test_router_cases_cover_command_registry():
     assert {command for command, _arguments, _child in _ROUTED_COMMAND_CASES} == set(
         XRDFS_COMMANDS
     )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("-r", _URL),
+        ("--reverse", _URL),
+        ("-S", _URL),
+        ("-U", _URL),
+        ("--sort", "size", _URL),
+        ("--sort=size", _URL),
+        ("-laSr", _URL),
+    ],
+)
+def test_ls_fallback_options_are_registry_scoped(arguments, monkeypatch):
+    _clear_authz_tokens(monkeypatch)
+    assert xrdfs_cli.requires_legacy_backend("ls", arguments)
+    assert not xrdfs_cli.requires_legacy_backend("stat", arguments)
+
+
+def test_recursive_option_is_available_to_future_command_parsers(monkeypatch):
+    _clear_authz_tokens(monkeypatch)
+
+    def add_recursive_arguments(parser):
+        parser.add_argument("-r", "--recursive", action="store_true")
+        parser.add_argument("file", nargs="+")
+
+    synthetic_rm = xrdfs_cli.XrdfsCommand(
+        description="synthetic recursive removal",
+        add_arguments=add_recursive_arguments,
+        execute=XRDFS_COMMANDS["stat"].execute,
+    )
+    monkeypatch.setattr(
+        xrdfs_cli,
+        "XRDFS_COMMANDS",
+        {**XRDFS_COMMANDS, "synthetic-rm": synthetic_rm},
+    )
+
+    arguments = ["-r", _URL]
+    assert not xrdfs_cli.requires_legacy_backend("synthetic-rm", arguments)
+    assert xrdfs_cli.should_use_xrdfs("synthetic-rm", arguments)
 
 
 @pytest.mark.parametrize(
@@ -1371,8 +1416,11 @@ def test_aggregate_no_arguments_prints_help(capsys):
     [
         ["gfal", "stat", "file:///tmp/local"],
         ["gfal", "stat", "--no-verify", "https://storage.example/file"],
+        ["gfal", "ls", "--reverse", _URL],
+        ["gfal", "ls", "-lar", _URL],
         ["gfal", "ls", "--sort=size", _URL],
         ["gfal", "ls", "-lS", _URL],
+        ["gfal", "stat", "-r", _URL],
         ["gfal", "cat", "-bq", _URL],
         ["gfal", "cat", _URL, "file:///tmp/local"],
         ["gfal", "stat", "--key", "root://keys.example/key", "file:///tmp/a"],
