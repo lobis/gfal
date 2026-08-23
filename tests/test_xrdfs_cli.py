@@ -550,6 +550,14 @@ def test_interrupted_capability_probe_preserves_legacy_status_and_message(
     assert _command_records(fake_xrdfs) == []
 
 
+def test_host_down_diagnostic_uses_legacy_linux_status(fake_xrdfs, monkeypatch, capsys):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "50")
+    monkeypatch.setenv("FAKE_XRDFS_STDERR", "[ERROR] Host is down\n")
+
+    assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == 112
+    assert "gfal sum error: 112" in capsys.readouterr().err
+
+
 def test_timeout_includes_capability_probe(fake_xrdfs, monkeypatch, capsys):
     monkeypatch.setenv("FAKE_XRDFS_HELP_SLEEP", "5")
     started = time.monotonic()

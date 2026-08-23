@@ -30,6 +30,7 @@ _CAPABILITY_MARKERS = (
 # this pure-Python frontend is developed on a platform whose errno table uses a
 # different number (macOS uses 60 for ETIMEDOUT, for example).
 GFAL_ETIMEDOUT = 110
+GFAL_EHOSTDOWN = 112
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,8 @@ _ERROR_CODES = (
     (errno.EISDIR, ("is a directory", "target is a directory")),
     (GFAL_ETIMEDOUT, ("timed out", "timeout", "operation expired")),
     (errno.ECONNREFUSED, ("connection refused",)),
-    (errno.EHOSTUNREACH, ("host is down", "host unreachable", "no route to host")),
+    (GFAL_EHOSTDOWN, ("host is down",)),
+    (errno.EHOSTUNREACH, ("host unreachable", "no route to host")),
     (errno.ENOSPC, ("no space left", "insufficient storage")),
     (errno.ENODATA, ("attribute not found", "no data available")),
     (errno.EINVAL, ("invalid argument", "invalid arguments")),
