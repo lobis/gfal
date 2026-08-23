@@ -43,6 +43,24 @@ _INFO_UNSET = object()
 _SMART_TPC_THRESHOLD_BYTES = 32 * 1024 * 1024
 
 
+def _xrootd_endpoint_identity(url: str) -> tuple[str, str, str, str, int] | None:
+    """Return the XRootD endpoint fields that determine rename compatibility."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"root", "roots", "xroot", "xroots"}:
+        return None
+
+    protocol = scheme[1:] if scheme.startswith("x") else scheme
+    port = parsed.port
+    return (
+        protocol,
+        parsed.username or "",
+        parsed.password or "",
+        (parsed.hostname or "").lower(),
+        1094 if port is None else port,
+    )
+
+
 @dataclass(frozen=True)
 class ClientConfig:
     cert: str | None = None
@@ -935,6 +953,16 @@ class AsyncGfalClient:
 
     def _rename_sync(self, src_url: str, dst_url: str) -> None:
         try:
+            src_endpoint = _xrootd_endpoint_identity(src_url)
+            dst_endpoint = _xrootd_endpoint_identity(dst_url)
+            if (
+                src_endpoint is not None or dst_endpoint is not None
+            ) and src_endpoint != dst_endpoint:
+                raise GfalError(
+                    "Rename across different XRootD endpoints is not supported",
+                    errno.EXDEV,
+                )
+
             src_fs, src_path = fs.url_to_fs(src_url, self.storage_options)
             dst_fs, dst_path = fs.url_to_fs(dst_url, self.storage_options)
             if type(src_fs) is not type(dst_fs):

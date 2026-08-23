@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1480,6 +1481,35 @@ def test_token_environment_preserves_legacy_backend(monkeypatch, name):
     arguments = ["gfal", "stat", "root://eos.example//data/file"]
     assert main(arguments) == 73
     assert calls == [arguments]
+
+
+@pytest.mark.parametrize("name", ["EOSAUTHZ", "GFAL_AUTHZ_TOKEN"])
+def test_token_forced_legacy_rename_rejects_cross_endpoint_before_io(
+    monkeypatch, capsys, name
+):
+    import gfal.core.api as core_api
+
+    other_name = "GFAL_AUTHZ_TOKEN" if name == "EOSAUTHZ" else "EOSAUTHZ"
+    monkeypatch.setenv(name, "fixture-token")
+    monkeypatch.delenv(other_name, raising=False)
+    mock_fs = MagicMock()
+    url_to_fs = MagicMock(return_value=(mock_fs, "/unreachable"))
+    monkeypatch.setattr(core_api.fs, "url_to_fs", url_to_fs)
+    arguments = [
+        "gfal",
+        "rename",
+        "root://one.example//data/source",
+        "root://two.example//data/destination",
+    ]
+
+    with pytest.raises(SystemExit) as caught:
+        main(arguments)
+
+    assert caught.value.code == errno.EXDEV
+    assert "different XRootD endpoints" in capsys.readouterr().err
+    url_to_fs.assert_not_called()
+    mock_fs._myclient.mv.assert_not_called()
+    mock_fs.mv.assert_not_called()
 
 
 def test_router_accepts_long_ip_alias(fake_xrdfs, capsys):

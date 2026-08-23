@@ -378,6 +378,86 @@ class TestGfalClientRename:
             client.rename(f.as_uri(), "http://example.com/file.txt")
         assert exc_info.value.errno is not None
 
+    @pytest.mark.parametrize(
+        ("source", "destination"),
+        [
+            (
+                "root://STORAGE.example//source?authz=one",
+                "xroot://storage.example:1094//other/path?authz=two",
+            ),
+            (
+                "roots://storage.example//source",
+                "xroots://STORAGE.example:1094//destination",
+            ),
+            (
+                "root://alice:secret@storage.example//source",
+                "root://alice:secret@storage.example:1094//destination",
+            ),
+        ],
+    )
+    def test_rename_accepts_same_xrootd_endpoint(self, source, destination):
+        client = GfalClient()
+        mock_fs = MagicMock()
+        mock_fs._myclient.mv.return_value = (SimpleNamespace(ok=True), None)
+
+        with patch(
+            "gfal.core.api.fs.url_to_fs",
+            side_effect=[(mock_fs, "/source"), (mock_fs, "/destination")],
+        ) as url_to_fs:
+            client.rename(source, destination)
+
+        assert url_to_fs.call_count == 2
+        mock_fs._myclient.mv.assert_called_once_with("/source", "/destination")
+
+    @pytest.mark.parametrize(
+        ("source", "destination"),
+        [
+            (
+                "root://one.example//source",
+                "root://two.example//destination",
+            ),
+            (
+                "root://storage.example//source",
+                "root://storage.example:1095//destination",
+            ),
+            (
+                "root://alice@storage.example//source",
+                "root://bob@storage.example//destination",
+            ),
+            (
+                "root://alice:one@storage.example//source",
+                "root://alice:two@storage.example//destination",
+            ),
+            (
+                "root://storage.example//source",
+                "roots://storage.example//destination",
+            ),
+            (
+                "root://storage.example//source",
+                "https://storage.example/destination",
+            ),
+        ],
+    )
+    def test_rename_rejects_different_xrootd_endpoint_before_io(
+        self, source, destination
+    ):
+        client = GfalClient()
+        mock_fs = MagicMock()
+
+        with (
+            patch(
+                "gfal.core.api.fs.url_to_fs",
+                return_value=(mock_fs, "/unreachable"),
+            ) as url_to_fs,
+            pytest.raises(GfalError) as exc_info,
+        ):
+            client.rename(source, destination)
+
+        assert exc_info.value.errno == errno.EXDEV
+        url_to_fs.assert_not_called()
+        mock_fs._myclient.mv.assert_not_called()
+        mock_fs.mv.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # chmod
