@@ -68,29 +68,24 @@ def _subprocess_env():
     return env
 
 
-def run_gfal(
-    cmd, *args, input=None, env=None, timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT
+def _run_gfal_entrypoint(
+    module,
+    cmd,
+    *args,
+    input=None,
+    env=None,
+    timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT,
 ):
-    """
-    Run ``gfal <cmd>`` in a subprocess via the current Python interpreter.
-
-    Returns ``(returncode, stdout, stderr)`` as strings.
-
-    Args are passed as separate argv elements so paths with spaces are safe.
-    ``input`` may be a str piped to stdin (useful for gfal save).
-    ``env`` may be a dict of extra environment variables to set (or override)
-    on top of the base subprocess environment.
-    """
     script = (
-        f"import sys; sys.argv=['gfal', '{cmd}']+sys.argv[1:];"
-        "from gfal.cli.shell import main; main()"
+        "import sys; sys.argv=['gfal']+sys.argv[1:];"
+        f"from {module} import main; raise SystemExit(main())"
     )
     subprocess_env = _subprocess_env()
     if env is not None:
         subprocess_env = {**subprocess_env, **env}
     try:
         proc = subprocess.run(
-            [sys.executable, "-c", script, *[str(a) for a in args]],
+            [sys.executable, "-c", script, str(cmd), *[str(a) for a in args]],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -101,6 +96,34 @@ def run_gfal(
     except subprocess.TimeoutExpired as exc:
         return _timed_out_result(exc)
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def run_gfal(
+    cmd, *args, input=None, env=None, timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT
+):
+    """Run the transitional implementation in a Python subprocess."""
+    return _run_gfal_entrypoint(
+        "gfal.cli.shell",
+        cmd,
+        *args,
+        input=input,
+        env=env,
+        timeout=timeout,
+    )
+
+
+def run_gfal_router(
+    cmd, *args, input=None, env=None, timeout: int = _DEFAULT_SUBPROCESS_TIMEOUT
+):
+    """Run the public aggregate CLI router in a Python subprocess."""
+    return _run_gfal_entrypoint(
+        "gfal.cli.main",
+        cmd,
+        *args,
+        input=input,
+        env=env,
+        timeout=timeout,
+    )
 
 
 def _find_docker() -> Optional[str]:

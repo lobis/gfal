@@ -18,6 +18,7 @@ import gfal.xrdfs as xrdfs
 from gfal.cli.main import main
 from gfal.cli.xrdfs import dispatch, supports_url
 from gfal.xrdfs import XrdfsResult
+from helpers import run_gfal_router
 
 _URL = "root://storage.example//data/file"
 
@@ -186,6 +187,26 @@ def _aggregate_process(*arguments, stdout=subprocess.PIPE):
 )
 def test_supported_remote_url_schemes(scheme):
     assert supports_url(f"{scheme}://storage.example/path")
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "child_arguments"),
+    [
+        ("ls", [_URL], ["ls", "--json", _URL]),
+        ("cat", [_URL], ["cat", _URL]),
+        ("stat", [_URL], ["stat", "--json", _URL]),
+        ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
+        ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
+    ],
+)
+def test_public_router_helper_exercises_xrdfs_backend(
+    fake_xrdfs, command, arguments, child_arguments
+):
+    returncode, _stdout, stderr = run_gfal_router(command, *arguments)
+
+    assert returncode == 0, stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == child_arguments
 
 
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
