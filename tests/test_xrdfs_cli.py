@@ -299,6 +299,62 @@ def test_stat_formats_json_and_maps_common_environment(fake_xrdfs, capsys):
     }
 
 
+@pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
+def test_stat_uses_legacy_defaults_for_unextended_webdav_metadata(
+    fake_xrdfs, monkeypatch, capsys, scheme
+):
+    record = _metadata_record(
+        extended=False,
+        mode=None,
+        permissions=None,
+        owner=None,
+        group=None,
+        atime=0,
+        ctime=0,
+    )
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    url = f"{scheme}://storage.example/data/file"
+
+    assert dispatch("stat", [url], prog="gfal stat") == 0
+    output = capsys.readouterr().out
+    assert "Access: (0777/-rwxrwxrwx)\tUid: 0\tGid: 0" in output
+    epoch = datetime.fromtimestamp(0).strftime("%Y-%m-%d %H:%M:%S.%f")
+    assert f"Access: {epoch}" in output
+    mtime = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%d %H:%M:%S.%f")
+    assert f"Modify: {mtime}" in output
+    assert f"Change: {mtime}" in output
+
+
+def test_ls_uses_legacy_defaults_for_unextended_webdav_metadata(
+    fake_xrdfs, monkeypatch, capsys
+):
+    record = _metadata_record(
+        extended=False,
+        mode=None,
+        permissions=None,
+        owner=None,
+        group=None,
+        atime=0,
+        ctime=0,
+    )
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    url = "https://storage.example/data/file"
+
+    assert dispatch("ls", ["-ld", url], prog="gfal ls") == 0
+    assert capsys.readouterr().out.startswith("-rwxrwxrwx   0 0     0     ")
+
+
+def test_ls_preserves_explicit_extended_webdav_metadata(
+    fake_xrdfs, monkeypatch, capsys
+):
+    record = _metadata_record(nlink=2)
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    url = "https://storage.example/data/file"
+
+    assert dispatch("ls", ["-ld", url], prog="gfal ls") == 0
+    assert capsys.readouterr().out.startswith("-rw-r--r--   2 0     0     ")
+
+
 def test_ls_formats_legacy_long_output_and_filters_hidden(
     fake_xrdfs, monkeypatch, capsys
 ):

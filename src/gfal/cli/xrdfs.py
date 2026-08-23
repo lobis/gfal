@@ -29,11 +29,13 @@ from gfal.xrdfs import (
     run_xrdfs,
 )
 
-_REMOTE_SCHEMES = {
+_WEBDAV_SCHEMES = frozenset({
     "dav",
     "davs",
     "http",
     "https",
+})
+_REMOTE_SCHEMES = _WEBDAV_SCHEMES | {
     "root",
     "roots",
     "xroot",
@@ -48,6 +50,15 @@ def supports_url(value: str) -> bool:
     except ValueError:
         return False
     return parsed.scheme.lower() in _REMOTE_SCHEMES and bool(parsed.netloc)
+
+
+def _uses_legacy_webdav_defaults(value: str, record: Mapping[str, Any]) -> bool:
+    """Return whether metadata lacks the fields supplied by WebDAV stat."""
+    try:
+        scheme = urlsplit(value).scheme.lower()
+    except ValueError:
+        return False
+    return scheme in _WEBDAV_SCHEMES and record.get("extended") is False
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -515,7 +526,9 @@ def _permissions_from_text(value: Any) -> Optional[int]:
     return permissions
 
 
-def _record_mode(record: Mapping[str, Any]) -> int:
+def _record_mode(
+    record: Mapping[str, Any], *, legacy_webdav_defaults: bool = False
+) -> int:
     record_type = _record_type(record)
     type_mode = {
         "file": stat.S_IFREG,
@@ -533,6 +546,9 @@ def _record_mode(record: Mapping[str, Any]) -> int:
     parsed = _permissions_from_text(record.get("permissions"))
     if parsed is not None:
         return type_mode | parsed
+
+    if legacy_webdav_defaults:
+        return type_mode | 0o777
 
     names = {str(name) for name in record.get("flag_names", [])}
     permissions = 0
@@ -552,9 +568,20 @@ def _numeric_identity(value: Any) -> int:
         return 0
 
 
-def _epoch(record: Mapping[str, Any], name: str) -> float:
+def _record_nlink(
+    record: Mapping[str, Any], *, legacy_webdav_defaults: bool = False
+) -> int:
+    value = record.get("nlink")
+    if value not in (None, ""):
+        return _numeric_identity(value)
+    return 0 if legacy_webdav_defaults else 1
+
+
+def _epoch(
+    record: Mapping[str, Any], name: str, *, fallback_to_mtime: bool = True
+) -> float:
     value = record.get(name)
-    if value in (None, 0, "0", "") and name != "mtime":
+    if value in (None, 0, "0", "") and name != "mtime" and fallback_to_mtime:
         value = record.get("mtime", 0)
     try:
         return float(value)
@@ -595,7 +622,8 @@ def _execute_stat(
         if index:
             sys.stdout.write("\n")
         record = records[0]
-        mode = _record_mode(record)
+        legacy_webdav_defaults = _uses_legacy_webdav_defaults(value, record)
+        mode = _record_mode(record, legacy_webdav_defaults=legacy_webdav_defaults)
         size = int(record["size"])
         uid = _numeric_identity(record.get("owner"))
         gid = _numeric_identity(record.get("group"))
@@ -611,9 +639,10 @@ def _execute_stat(
             ("Modify", "mtime"),
             ("Change", "ctime"),
         ):
-            formatted = datetime.fromtimestamp(_epoch(record, field)).strftime(
-                "%Y-%m-%d %H:%M:%S.%f"
-            )
+            fallback_to_mtime = not (legacy_webdav_defaults and field == "atime")
+            formatted = datetime.fromtimestamp(
+                _epoch(record, field, fallback_to_mtime=fallback_to_mtime)
+            ).strftime("%Y-%m-%d %H:%M:%S.%f")
             sys.stdout.write(f"{label}: {formatted}\n")
     return 0
 
@@ -757,7 +786,8 @@ def _execute_ls(
             if not target_record and not params.all and name.startswith("."):
                 continue
 
-            mode = _record_mode(record)
+            legacy_webdav_defaults = _uses_legacy_webdav_defaults(value, record)
+            mode = _record_mode(record, legacy_webdav_defaults=legacy_webdav_defaults)
             color_mode = mode if params.long else None
             display_name = _colored_name(name, color_mode, params.color)
             if not params.long:
@@ -768,7 +798,7 @@ def _execute_ls(
             size_text = _human_size(size) if params.human_readable else str(size)
             size_width = 4 if params.human_readable else 9
             date = _TIME_FORMATS[time_style](_epoch(record, "mtime"))
-            nlink = _numeric_identity(record.get("nlink")) or 1
+            nlink = _record_nlink(record, legacy_webdav_defaults=legacy_webdav_defaults)
             uid = _numeric_identity(record.get("owner"))
             gid = _numeric_identity(record.get("group"))
             extras = "\t".join(_xattr_values(record))
