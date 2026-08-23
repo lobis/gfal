@@ -378,6 +378,9 @@ def _report_result(
     code = error_exit_code(result)
     if code == 255:
         return code
+    if code == errno.EINTR:
+        sys.stderr.write("Caught keyboard interrupt. Canceling...")
+        return code
     if result.timed_out:
         sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
         return code

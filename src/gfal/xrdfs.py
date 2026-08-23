@@ -220,6 +220,8 @@ def error_exit_code(result: XrdfsResult) -> int:
         return GFAL_ETIMEDOUT
     if result.returncode == 0:
         return 0
+    if result.returncode == errno.EINTR:
+        return errno.EINTR
     sigpipe = getattr(signal, "SIGPIPE", None)
     if sigpipe is not None and result.returncode in (-sigpipe, 128 + sigpipe):
         return 255
