@@ -25,14 +25,18 @@ from typing import Optional
 GFAL_ENODATA = 61
 GFAL_ENOTSUP = 95
 GFAL_ETIMEDOUT = 110
+GFAL_ECONNREFUSED = 111
 GFAL_EHOSTDOWN = 112
+GFAL_EHOSTUNREACH = 113
 GFAL_EINPROGRESS = 115
 
 _GFAL_ERROR_DESCRIPTIONS = {
     GFAL_ENODATA: "No data available",
     GFAL_ENOTSUP: "Operation not supported",
     GFAL_ETIMEDOUT: "Connection timed out",
+    GFAL_ECONNREFUSED: "Connection refused",
     GFAL_EHOSTDOWN: "Host is down",
+    GFAL_EHOSTUNREACH: "No route to host",
     GFAL_EINPROGRESS: "Operation now in progress",
 }
 
@@ -227,10 +231,10 @@ _ERROR_CODES = (
     (errno.EISDIR, ("is a directory", "target is a directory")),
     (GFAL_ENOTSUP, ("operation not supported",)),
     (GFAL_ETIMEDOUT, ("timed out", "timeout", "operation expired")),
-    (errno.ECONNREFUSED, ("connection refused",)),
+    (GFAL_ECONNREFUSED, ("connection refused",)),
     (GFAL_EHOSTDOWN, ("host is down",)),
     (GFAL_EINPROGRESS, ("checksum response used",)),
-    (errno.EHOSTUNREACH, ("host unreachable", "no route to host")),
+    (GFAL_EHOSTUNREACH, ("host unreachable", "no route to host")),
     (errno.ENOSPC, ("no space left", "insufficient storage")),
     (GFAL_ENODATA, ("attribute not found", "no data available")),
     (errno.EINVAL, ("invalid argument", "invalid arguments")),
