@@ -665,24 +665,20 @@ def _ls_colors() -> dict[str, str]:
     return colors
 
 
-def _colored_name(name: str, mode: int, choice: str) -> str:
+def _colored_name(name: str, mode: Optional[int], choice: str) -> str:
     enabled = choice == "always" or (choice == "auto" and sys.stdout.isatty())
     if not enabled:
         return name
     colors = _ls_colors()
-    if stat.S_ISDIR(mode):
-        color = colors.get("di")
+    color = "037"
+    if mode is None:
+        color = colors.get("no", color)
+    elif stat.S_ISDIR(mode):
+        color = colors.get("di", color)
     elif stat.S_ISLNK(mode):
-        color = colors.get("ln")
+        color = colors.get("ln", color)
     elif mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
-        color = colors.get("ex")
-    else:
-        extension = posixpath.splitext(name)[1]
-        color = colors.get(f"*{extension}") if extension else None
-        if color is None:
-            color = colors.get("fi")
-    if not color:
-        return name
+        color = colors.get("ex", color)
     return f"\033[{color}m{name}\033[0m"
 
 
@@ -756,7 +752,8 @@ def _execute_ls(
                 continue
 
             mode = _record_mode(record)
-            display_name = _colored_name(name, mode, params.color)
+            color_mode = mode if params.long else None
+            display_name = _colored_name(name, color_mode, params.color)
             if not params.long:
                 sys.stdout.write(f"{display_name}\n")
                 continue

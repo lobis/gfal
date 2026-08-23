@@ -364,19 +364,37 @@ def test_ls_file_and_directory_option_print_original_url(
 
 
 @pytest.mark.parametrize(
-    ("colors", "colored"),
-    [("", False), ("*.txt=31", True)],
+    ("colors", "color"),
+    [("", "037"), ("no=35:*.txt=31:fi=32", "35")],
 )
-def test_ls_color_uses_ls_colors_without_inventing_defaults(
-    fake_xrdfs, monkeypatch, capsys, colors, colored
+def test_ls_short_color_uses_legacy_no_class(
+    fake_xrdfs, monkeypatch, capsys, colors, color
 ):
     record = _metadata_record(path="/data/file.txt")
     url = "root://storage.example//data/file.txt"
     monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
     monkeypatch.setenv("LS_COLORS", colors)
     assert dispatch("ls", ["--color", "always", url], prog="gfal ls") == 0
-    expected = f"\033[31m{url}\033[0m" if colored else url
-    assert capsys.readouterr().out == f"{expected}\n"
+    assert capsys.readouterr().out == f"\033[{color}m{url}\033[0m\n"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "colors", "color"),
+    [
+        ({}, "fi=32", "037"),
+        ({"type": "directory", "mode": "0755"}, "di=34", "34"),
+        ({"mode": "0755"}, "ex=33", "33"),
+    ],
+)
+def test_ls_long_color_uses_legacy_mode_classes(
+    fake_xrdfs, monkeypatch, capsys, overrides, colors, color
+):
+    record = _metadata_record(path="/data/item", **overrides)
+    url = "root://storage.example//data/item"
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    monkeypatch.setenv("LS_COLORS", colors)
+    assert dispatch("ls", ["-l", "--color", "always", url], prog="gfal ls") == 0
+    assert f"\033[{color}m{url}\033[0m" in capsys.readouterr().out
 
 
 def test_cat_is_binary_safe_and_runs_each_url_sequentially(fake_xrdfs, capfdbinary):
