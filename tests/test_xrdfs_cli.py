@@ -34,6 +34,11 @@ _ROUTED_COMMAND_CASES = (
     ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
     ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
     ("chmod", ["0644", _URL], ["chmod", "0644", _URL]),
+    (
+        "rename",
+        [_URL, "root://storage.example//data/destination"],
+        ["mv", _URL, "root://storage.example//data/destination"],
+    ),
 )
 _CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
@@ -453,6 +458,142 @@ def test_chmod_routes_all_xrootd_schemes(fake_xrdfs, scheme):
     assert record["argv"] == ["chmod", "0644", url]
 
 
+def test_rename_same_path_is_a_silent_native_noop(fake_xrdfs, monkeypatch):
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", "native success output\n")
+
+    returncode, stdout, stderr = run_gfal_router("rename", _URL, _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mv", _URL, _URL]
+
+
+@pytest.mark.parametrize(
+    ("source_scheme", "destination_scheme"),
+    (
+        ("root", "xroot"),
+        ("xroot", "root"),
+        ("roots", "xroots"),
+        ("xroots", "roots"),
+    ),
+)
+def test_rename_preserves_native_endpoint_aliases(
+    fake_xrdfs, source_scheme, destination_scheme
+):
+    source = f"{source_scheme}://storage.example:1094//data/source"
+    destination = f"{destination_scheme}://storage.example:1094//data/destination"
+
+    returncode, stdout, stderr = run_gfal_router("rename", source, destination)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mv", source, destination]
+
+
+def test_rename_missing_source_maps_to_linux_enoent(fake_xrdfs):
+    source = "root://storage.example//data/missing-source"
+    destination = "root://storage.example//data/destination"
+
+    returncode, stdout, stderr = run_gfal_router("rename", source, destination)
+
+    assert returncode == errno.ENOENT
+    assert stdout == ""
+    assert "gfal rename error: 2 (No such file or directory)" in stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mv", source, destination]
+
+
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [
+        (
+            "root://alice@storage.example:1094//data/source",
+            "root://bob@storage.example:1094//data/destination",
+        ),
+        (
+            "root://alice:one@storage.example:1094//data/source",
+            "root://alice:two@storage.example:1094//data/destination",
+        ),
+        (
+            "root://storage-one.example:1094//data/source",
+            "root://storage-two.example:1094//data/destination",
+        ),
+        (
+            "root://storage.example:1094//data/source",
+            "root://storage.example:1095//data/destination",
+        ),
+        (
+            "root://storage.example:1094//data/source",
+            "roots://storage.example:1094//data/destination",
+        ),
+    ],
+)
+def test_rename_surfaces_strict_native_endpoint_rejection(
+    fake_xrdfs, monkeypatch, source, destination
+):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "1")
+    monkeypatch.setenv(
+        "FAKE_XRDFS_STDERR",
+        "xrdfs: all URL operands must use the same endpoint\n",
+    )
+
+    returncode, stdout, stderr = run_gfal_router("rename", source, destination)
+
+    assert returncode == 1
+    assert stdout == ""
+    assert "all URL operands must use the same endpoint" in stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mv", source, destination]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        [_URL],
+        [_URL, "root://storage.example//data/destination", _URL],
+    ],
+)
+def test_rename_requires_exactly_two_operands(fake_xrdfs, arguments):
+    returncode, _stdout, stderr = run_gfal_router("rename", *arguments)
+
+    assert returncode == 2
+    assert "gfal rename" in stderr
+    assert _records(fake_xrdfs) == []
+
+
+@pytest.mark.parametrize(
+    ("returncode", "url_fragment", "expected", "message"),
+    [
+        (errno.EINTR, "source", errno.EINTR, "Caught keyboard interrupt"),
+        (0, "slow-source", 110, "timed out after 1 seconds"),
+    ],
+)
+def test_rename_preserves_terminal_statuses(
+    fake_xrdfs,
+    monkeypatch,
+    returncode,
+    url_fragment,
+    expected,
+    message,
+):
+    source = f"root://storage.example//data/{url_fragment}"
+    destination = "root://storage.example//data/destination"
+    if returncode:
+        monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", str(returncode))
+    else:
+        monkeypatch.setenv("FAKE_XRDFS_SLEEP", "5")
+
+    result, stdout, stderr = run_gfal_router("rename", "-t", "1", source, destination)
+
+    assert result == expected
+    assert stdout == ""
+    assert message in stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mv", source, destination]
+
+
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
 def test_nonremote_or_incomplete_urls_use_the_transition_fallback(value):
     assert not supports_url(value)
@@ -539,6 +680,19 @@ def test_chmod_requires_native_mode_first_compatibility(
     monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
 
     assert dispatch("chmod", ["0644", _URL], prog="gfal chmod") == 69
+    assert "incompatible xrdfs" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_rename_requires_native_mv_compatibility(fake_xrdfs, monkeypatch, capsys):
+    rename_markers = XRDFS_COMMANDS["rename"].capability_markers
+    older_help = "\n".join(
+        marker for marker in capability_markers() if marker not in rename_markers
+    )
+    monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
+
+    destination = "root://storage.example//data/destination"
+    assert dispatch("rename", [_URL, destination], prog="gfal rename") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
     assert _command_records(fake_xrdfs) == []
 
@@ -1196,6 +1350,13 @@ def test_aggregate_no_arguments_prints_help(capsys):
         ["gfal", "stat", "--key", "root://keys.example/key", "file:///tmp/a"],
         ["gfal", "mkdir", "file:///tmp/local"],
         ["gfal", "chmod", "0644", "file:///tmp/local"],
+        ["gfal", "rename", "file:///tmp/source", "file:///tmp/destination"],
+        [
+            "gfal",
+            "rename",
+            "root://storage.example//data/source",
+            "https://storage.example/data/destination",
+        ],
     ],
 )
 def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
@@ -1231,6 +1392,23 @@ def test_chmod_preserves_webdav_transition_backend(monkeypatch, scheme):
     calls = []
     monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
     arguments = ["gfal", "chmod", "0644", f"{scheme}://storage.example/data/file"]
+
+    assert main(arguments) == 73
+    assert calls == [arguments]
+
+
+@pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
+def test_rename_preserves_webdav_transition_backend(monkeypatch, scheme):
+    import gfal.cli.shell as legacy_shell
+
+    calls = []
+    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+    arguments = [
+        "gfal",
+        "rename",
+        f"{scheme}://storage.example/data/source",
+        f"{scheme}://storage.example/data/destination",
+    ]
 
     assert main(arguments) == 73
     assert calls == [arguments]

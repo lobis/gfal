@@ -327,6 +327,11 @@ def _validate_chmod(
     params.mode = f"{mode & 0o777:04o}"
 
 
+def _add_rename_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("source", help="original file name")
+    parser.add_argument("destination", help="new file name")
+
+
 def _build_parser(
     command: str,
     prog: str,
@@ -1135,6 +1140,22 @@ def _execute_chmod(
     return last_failure
 
 
+def _execute_rename(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    result = run_xrdfs(
+        executable,
+        ("mv", params.source, params.destination),
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    return _report_result(prog, result, configured_timeout=params.timeout)
+
+
 XRDFS_COMMANDS = MappingProxyType({
     "ls": XrdfsCommand(
         description="Gfal util LS command. List directory's contents.",
@@ -1185,6 +1206,14 @@ XRDFS_COMMANDS = MappingProxyType({
         execute=_execute_chmod,
         validate=_validate_chmod,
         capability_markers=("chmod <octal-mode> <path>",),
+        url_schemes=_XROOTD_SCHEMES,
+    ),
+    "rename": XrdfsCommand(
+        description="Gfal util RENAME command. Renames files or directories.",
+        add_arguments=_add_rename_arguments,
+        execute=_execute_rename,
+        capability_markers=("mv <path1> <path2>",),
+        url_parameters=("source", "destination"),
         url_schemes=_XROOTD_SCHEMES,
     ),
 })
