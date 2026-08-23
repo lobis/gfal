@@ -19,13 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-_CAPABILITY_MARKERS = (
-    "command-first batch",
-    "--json print one JSON object per entry",
-    "stat [--json]",
-    "xattr <path> [attribute]",
-)
-
 # gfal2-util is distributed on Linux and returns Linux errno values even when
 # this pure-Python frontend is developed on a platform whose errno table uses a
 # different number (macOS uses 60 for ETIMEDOUT, for example).
@@ -192,6 +185,7 @@ def check_capability(
     executable: str,
     *,
     environ: Mapping[str, str],
+    required_markers: Sequence[str],
     timeout: Optional[float] = 5.0,
 ) -> XrdfsCapability:
     """Check whether *executable* provides the wrapper-facing interface."""
@@ -210,7 +204,7 @@ def check_capability(
         return XrdfsCapability(f"xrdfs --help failed: {detail}")
 
     help_text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
-    missing = [marker for marker in _CAPABILITY_MARKERS if marker not in help_text]
+    missing = [marker for marker in required_markers if marker not in help_text]
     if missing:
         return XrdfsCapability(
             "xrdfs lacks the required command-first JSON compatibility interface"

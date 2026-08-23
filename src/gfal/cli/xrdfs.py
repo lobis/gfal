@@ -13,8 +13,10 @@ import posixpath
 import stat
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -44,6 +46,81 @@ _XROOTD_SCHEMES = frozenset({
     "xroots",
 })
 _REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
+
+_COMMON_CAPABILITY_MARKERS = (
+    "command-first batch",
+    "--json print one JSON object per entry",
+)
+_COMMON_LEGACY_OPTIONS = frozenset((
+    "-q",
+    "--quiet",
+    "--authz-token",
+    "--verify",
+    "--no-verify",
+    "-r",
+    "--reverse",
+    "-S",
+    "-U",
+    "--sort",
+))
+_COMMON_LEGACY_PREFIXES = ("--authz-token=", "--sort=")
+_COMMON_LEGACY_SHORT_OPTIONS = frozenset(("q",))
+_VALUE_SHORT_OPTIONS = frozenset(("D", "t", "E", "C"))
+
+
+@dataclass(frozen=True)
+class XrdfsCommand:
+    """Declarative routing information for one migrated command."""
+
+    description: str
+    add_arguments: Callable[[argparse.ArgumentParser], None]
+    execute: Callable[
+        [str, str, argparse.Namespace, Mapping[str, str], Optional[float]], int
+    ]
+    capability_markers: tuple[str, ...] = ()
+    legacy_options: frozenset[str] = frozenset()
+    legacy_prefixes: tuple[str, ...] = ()
+    legacy_short_options: frozenset[str] = frozenset()
+
+
+# Populated after the command-specific parser and executor functions are defined.
+XRDFS_COMMANDS: Mapping[str, XrdfsCommand]
+
+
+def capability_markers() -> tuple[str, ...]:
+    """Return the complete external ``xrdfs`` interface contract."""
+    return _COMMON_CAPABILITY_MARKERS + tuple(
+        marker
+        for command in XRDFS_COMMANDS.values()
+        for marker in command.capability_markers
+    )
+
+
+def requires_legacy_backend(command: str, arguments: Sequence[str]) -> bool:
+    """Return whether transitional options require the previous backend."""
+    definition = XRDFS_COMMANDS[command]
+    if os.environ.get("EOSAUTHZ") or os.environ.get("GFAL_AUTHZ_TOKEN"):
+        return True
+
+    legacy_options = _COMMON_LEGACY_OPTIONS | definition.legacy_options
+    legacy_prefixes = _COMMON_LEGACY_PREFIXES + definition.legacy_prefixes
+    legacy_short = _COMMON_LEGACY_SHORT_OPTIONS | definition.legacy_short_options
+
+    for value in arguments:
+        if value == "--":
+            break
+        if value in legacy_options or any(
+            value.startswith(prefix) for prefix in legacy_prefixes
+        ):
+            return True
+        if not value.startswith("-") or value.startswith("--") or value == "-":
+            continue
+        for character in value[1:]:
+            if character in _VALUE_SHORT_OPTIONS:
+                break
+            if character in legacy_short:
+                return True
+    return False
 
 
 def supports_url(value: str) -> bool:
@@ -123,94 +200,91 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_ls_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-a", "--all", action="store_true", help="display hidden files")
+    parser.add_argument("-l", "--long", action="store_true", help="long listing format")
+    parser.add_argument(
+        "-d",
+        "--directory",
+        action="store_true",
+        help="list directory entries instead of contents",
+    )
+    parser.add_argument(
+        "-H",
+        "--human-readable",
+        action="store_true",
+        help="with -l, print sizes in human-readable form",
+    )
+    parser.add_argument(
+        "--xattr",
+        action="append",
+        default=[],
+        help="query an additional attribute; may be repeated and is shown with -l",
+    )
+    parser.add_argument(
+        "--time-style",
+        choices=("full-iso", "long-iso", "iso", "locale"),
+        default="locale",
+        help="time style",
+    )
+    parser.add_argument(
+        "--full-time",
+        action="store_true",
+        help="same as --time-style=full-iso",
+    )
+    parser.add_argument(
+        "--color",
+        choices=("always", "never", "auto"),
+        default="auto",
+        help="print colored entries with -l",
+    )
+    parser.add_argument("file", nargs="+", help="file's URI")
+
+
+def _add_cat_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-b",
+        "--bytes",
+        action="store_true",
+        help="handle file contents as bytes (output is always byte-preserving)",
+    )
+    parser.add_argument("file", nargs="+", help="URI of the file to display")
+
+
+def _add_stat_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("file", nargs="+", help="URI of the file to stat")
+
+
+def _add_sum_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("file", help="file URI to use for checksum calculation")
+    parser.add_argument(
+        "checksum_type",
+        help="checksum algorithm to use, for example ADLER32, CRC32, or MD5",
+    )
+
+
+def _add_xattr_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("file", help="file URI")
+    parser.add_argument(
+        "attribute",
+        nargs="?",
+        help="attribute to retrieve or set; use key=value to set",
+    )
+
+
 def _build_parser(
     command: str,
     prog: str,
     parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser,
 ) -> argparse.ArgumentParser:
-    descriptions = {
-        "ls": "Gfal util LS command. List directory's contents.",
-        "cat": "Gfal util CAT command. Sends to stdout the contents of files.",
-        "stat": "Gfal util STAT command. Stats a file.",
-        "sum": "Gfal util SUM command. Calculates the checksum of a file.",
-        "xattr": (
-            "Gfal util XATTR command. Gets or sets the extended attributes "
-            "of files and directories."
-        ),
-    }
+    definition = XRDFS_COMMANDS[command]
     parser = parser_class(
         prog=prog,
-        description=descriptions[command],
+        description=definition.description,
         allow_abbrev=False,
     )
     _add_common_arguments(parser)
-
-    if command == "ls":
-        parser.add_argument(
-            "-a", "--all", action="store_true", help="display hidden files"
-        )
-        parser.add_argument(
-            "-l", "--long", action="store_true", help="long listing format"
-        )
-        parser.add_argument(
-            "-d",
-            "--directory",
-            action="store_true",
-            help="list directory entries instead of contents",
-        )
-        parser.add_argument(
-            "-H",
-            "--human-readable",
-            action="store_true",
-            help="with -l, print sizes in human-readable form",
-        )
-        parser.add_argument(
-            "--xattr",
-            action="append",
-            default=[],
-            help="query an additional attribute; may be repeated and is shown with -l",
-        )
-        parser.add_argument(
-            "--time-style",
-            choices=("full-iso", "long-iso", "iso", "locale"),
-            default="locale",
-            help="time style",
-        )
-        parser.add_argument(
-            "--full-time",
-            action="store_true",
-            help="same as --time-style=full-iso",
-        )
-        parser.add_argument(
-            "--color",
-            choices=("always", "never", "auto"),
-            default="auto",
-            help="print colored entries with -l",
-        )
-        parser.add_argument("file", nargs="+", help="file's URI")
-    elif command == "cat":
-        parser.add_argument(
-            "-b",
-            "--bytes",
-            action="store_true",
-            help="handle file contents as bytes (output is always byte-preserving)",
-        )
-        parser.add_argument("file", nargs="+", help="URI of the file to display")
-    elif command == "stat":
-        parser.add_argument("file", nargs="+", help="URI of the file to stat")
-    elif command == "sum":
-        parser.add_argument("file", help="file URI to use for checksum calculation")
-        parser.add_argument(
-            "checksum_type",
-            help="checksum algorithm to use, for example ADLER32, CRC32, or MD5",
-        )
-    else:
-        parser.add_argument("file", help="file URI")
-        parser.add_argument(
-            "attribute",
-            nargs="?",
-            help="attribute to retrieve or set; use key=value to set",
-        )
+    definition.add_arguments(parser)
     return parser
 
 
@@ -326,6 +400,7 @@ def _prepare_xrdfs(
     capability = check_capability(
         executable,
         environ=os.environ,
+        required_markers=capability_markers(),
         timeout=probe_timeout,
     )
     if capability.error:
@@ -945,8 +1020,44 @@ def _execute_xattr(
     return 0
 
 
+XRDFS_COMMANDS = MappingProxyType({
+    "ls": XrdfsCommand(
+        description="Gfal util LS command. List directory's contents.",
+        add_arguments=_add_ls_arguments,
+        execute=_execute_ls,
+        legacy_short_options=frozenset(("r", "S", "U")),
+    ),
+    "cat": XrdfsCommand(
+        description="Gfal util CAT command. Sends to stdout the contents of files.",
+        add_arguments=_add_cat_arguments,
+        execute=_execute_cat,
+    ),
+    "stat": XrdfsCommand(
+        description="Gfal util STAT command. Stats a file.",
+        add_arguments=_add_stat_arguments,
+        execute=_execute_stat,
+        capability_markers=("stat [--json]",),
+    ),
+    "sum": XrdfsCommand(
+        description="Gfal util SUM command. Calculates the checksum of a file.",
+        add_arguments=_add_sum_arguments,
+        execute=_execute_sum,
+    ),
+    "xattr": XrdfsCommand(
+        description=(
+            "Gfal util XATTR command. Gets or sets the extended attributes "
+            "of files and directories."
+        ),
+        add_arguments=_add_xattr_arguments,
+        execute=_execute_xattr,
+        capability_markers=("xattr <path> [attribute]",),
+    ),
+})
+
+
 def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -> int:
-    """Parse and execute one of the five xrdfs-backed commands."""
+    """Parse and execute one of the registered xrdfs-backed commands."""
+    definition = XRDFS_COMMANDS[command]
     program = prog or f"gfal {command}"
     parser = _build_parser(command, program)
     params = parser.parse_args(list(argv))
@@ -968,14 +1079,7 @@ def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -
         assert executable is not None
 
         environment = _child_environment(params)
-        executors = {
-            "ls": _execute_ls,
-            "cat": _execute_cat,
-            "stat": _execute_stat,
-            "sum": _execute_sum,
-            "xattr": _execute_xattr,
-        }
-        status = executors[command](
+        status = definition.execute(
             program,
             executable,
             params,

@@ -16,11 +16,24 @@ import pytest
 import gfal.cli.xrdfs as xrdfs_cli
 import gfal.xrdfs as xrdfs
 from gfal.cli.main import main
-from gfal.cli.xrdfs import dispatch, supports_url
+from gfal.cli.xrdfs import (
+    XRDFS_COMMANDS,
+    capability_markers,
+    dispatch,
+    supports_url,
+)
 from gfal.xrdfs import XrdfsResult
 from helpers import run_gfal_router
 
 _URL = "root://storage.example//data/file"
+_ROUTED_COMMAND_CASES = (
+    ("ls", [_URL], ["ls", "--json", _URL]),
+    ("cat", [_URL], ["cat", _URL]),
+    ("stat", [_URL], ["stat", "--json", _URL]),
+    ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
+    ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
+)
+_CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
 _FAKE_XRDFS = r"""#!/usr/bin/env python3
 import json
@@ -54,12 +67,7 @@ if record_path:
 
 if arguments == ["--help"]:
     time.sleep(float(os.environ.get("FAKE_XRDFS_HELP_SLEEP", "0")))
-    default_help = (
-        "command-first batch\n"
-        "--json print one JSON object per entry\n"
-        "stat [--json] [-q query] [--] <path>...\n"
-        "xattr <path> [attribute]\n"
-    )
+    default_help = __GFAL_CAPABILITY_HELP__
     sys.stdout.write(os.environ.get("FAKE_XRDFS_HELP", default_help))
     raise SystemExit(0)
 
@@ -120,7 +128,7 @@ elif arguments and arguments[0] == "stat":
     }, separators=(",", ":")) + "\n")
 
 raise SystemExit(int(os.environ.get("FAKE_XRDFS_RETURN_CODE", "0")))
-"""
+""".replace("__GFAL_CAPABILITY_HELP__", repr(_CAPABILITY_HELP))
 
 
 @pytest.fixture
@@ -181,6 +189,12 @@ def _aggregate_process(*arguments, stdout=subprocess.PIPE):
     )
 
 
+def test_router_cases_cover_command_registry():
+    assert {command for command, _arguments, _child in _ROUTED_COMMAND_CASES} == set(
+        XRDFS_COMMANDS
+    )
+
+
 @pytest.mark.parametrize(
     "scheme",
     ("root", "roots", "xroot", "xroots", "http", "https", "dav", "davs"),
@@ -191,13 +205,7 @@ def test_supported_remote_url_schemes(scheme):
 
 @pytest.mark.parametrize(
     ("command", "arguments", "child_arguments"),
-    [
-        ("ls", [_URL], ["ls", "--json", _URL]),
-        ("cat", [_URL], ["cat", _URL]),
-        ("stat", [_URL], ["stat", "--json", _URL]),
-        ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
-        ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
-    ],
+    _ROUTED_COMMAND_CASES,
 )
 def test_public_router_helper_exercises_xrdfs_backend(
     fake_xrdfs, command, arguments, child_arguments
@@ -259,9 +267,14 @@ def test_incompatible_xrdfs_fails_before_remote_operation(
 def test_generic_json_help_does_not_satisfy_metadata_contract(
     fake_xrdfs, monkeypatch, capsys
 ):
+    generic_help = "\n".join(
+        "--json" if marker.startswith("--json ") else marker
+        for marker in capability_markers()
+        if not marker.startswith("stat ")
+    )
     monkeypatch.setenv(
         "FAKE_XRDFS_HELP",
-        "command-first batch\n--json\nxattr <path> [attribute]\n",
+        generic_help,
     )
     assert dispatch("stat", [_URL], prog="gfal stat") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
@@ -807,13 +820,7 @@ def test_xrdfs_not_found_maps_to_enoent(fake_xrdfs, capsys):
 
 @pytest.mark.parametrize(
     ("command", "arguments", "expected"),
-    [
-        ("ls", [_URL], ["ls", "--json", _URL]),
-        ("cat", [_URL], ["cat", _URL]),
-        ("stat", [_URL], ["stat", "--json", _URL]),
-        ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
-        ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
-    ],
+    _ROUTED_COMMAND_CASES,
 )
 def test_aggregate_cli_routes_all_migrated_commands(
     fake_xrdfs, capsys, command, arguments, expected
@@ -892,7 +899,7 @@ def test_aggregate_no_arguments_prints_help(capsys):
         main(["gfal"])
     assert caught.value.code == 0
     output = capsys.readouterr().out
-    for command in ("ls", "cat", "stat", "sum", "xattr"):
+    for command in XRDFS_COMMANDS:
         assert command in output
 
 
