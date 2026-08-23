@@ -33,6 +33,7 @@ _ROUTED_COMMAND_CASES = (
     ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
     ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
     ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
+    ("chmod", ["0644", _URL], ["chmod", "0644", _URL]),
 )
 _CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
@@ -77,6 +78,10 @@ if any("slow" in argument for argument in arguments):
 
 if any("missing" in argument for argument in arguments):
     sys.stderr.write("[ERROR] Error response: No such file or directory\n")
+    raise SystemExit(54)
+
+if any("denied" in argument for argument in arguments):
+    sys.stderr.write("[ERROR] Error response: Permission denied\n")
     raise SystemExit(54)
 
 if arguments and arguments[0] == "cat":
@@ -331,6 +336,123 @@ def test_mkdir_routes_all_xrootd_schemes(fake_xrdfs, scheme):
     assert record["argv"] == ["mkdir", "--mode=0755", url]
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("640", "0640"),
+        ("0o640", "0640"),
+        ("+644", "0644"),
+        ("1000", "0000"),
+    ],
+)
+def test_chmod_normalizes_legacy_octal_modes(fake_xrdfs, mode, expected):
+    returncode, stdout, stderr = run_gfal_router("chmod", mode, _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    assert stderr == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["chmod", expected, _URL]
+
+
+@pytest.mark.parametrize("mode", ("-1", "not-octal", "888"))
+def test_chmod_rejects_invalid_modes_before_native_operation(fake_xrdfs, mode):
+    returncode, _stdout, stderr = run_gfal_router("chmod", mode, _URL)
+
+    assert returncode == 2
+    assert "gfal chmod" in stderr
+    assert _records(fake_xrdfs) == []
+
+
+def test_chmod_transition_backend_rejects_negative_mode_before_io(tmp_path):
+    path = tmp_path / "file"
+    path.write_text("fixture", encoding="utf-8")
+    path.chmod(0o600)
+
+    returncode, _stdout, stderr = run_gfal_router("chmod", "-1", path.as_uri())
+
+    assert returncode != 0
+    assert "gfal chmod" in stderr
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_chmod_prevalidates_all_operands_before_native_operation(fake_xrdfs):
+    with pytest.raises(SystemExit) as caught:
+        dispatch(
+            "chmod",
+            ["0644", _URL, "https://storage.example/data/file"],
+            prog="gfal chmod",
+        )
+
+    assert caught.value.code == 2
+    assert _records(fake_xrdfs) == []
+
+
+def test_chmod_continues_failures_and_returns_last_failure(fake_xrdfs):
+    missing = "root://storage.example//data/missing"
+    denied = "root://storage.example//data/denied"
+    final_success = "root://storage.example//data/final"
+
+    returncode, stdout, stderr = run_gfal_router(
+        "chmod", "0644", missing, denied, final_success
+    )
+
+    assert returncode == errno.EACCES
+    assert stdout == ""
+    assert "No such file or directory" in stderr
+    assert "Permission denied" in stderr
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["chmod", "0644", missing],
+        ["chmod", "0644", denied],
+        ["chmod", "0644", final_success],
+    ]
+
+
+def test_chmod_interrupt_stops_later_operands(fake_xrdfs, monkeypatch):
+    first = "root://storage.example//data/first"
+    unattempted = "root://storage.example//data/unattempted"
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", str(errno.EINTR))
+
+    returncode, stdout, stderr = run_gfal_router("chmod", "0644", first, unattempted)
+
+    assert returncode == errno.EINTR
+    assert stdout == ""
+    assert "Caught keyboard interrupt" in stderr
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["chmod", "0644", first]
+    ]
+
+
+def test_chmod_uses_one_deadline_and_stops_on_timeout(fake_xrdfs, monkeypatch):
+    first = "root://storage.example//data/slow-one"
+    second = "root://storage.example//data/slow-two"
+    unattempted = "root://storage.example//data/unattempted"
+    monkeypatch.setenv("FAKE_XRDFS_SLEEP", "1.7")
+
+    returncode, stdout, stderr = run_gfal_router(
+        "chmod", "-t", "3", "0644", first, second, unattempted
+    )
+
+    assert returncode == 110
+    assert stdout == ""
+    assert "timed out after 3 seconds" in stderr
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["chmod", "0644", first],
+        ["chmod", "0644", second],
+    ]
+
+
+@pytest.mark.parametrize("scheme", ("root", "roots", "xroot", "xroots"))
+def test_chmod_routes_all_xrootd_schemes(fake_xrdfs, scheme):
+    url = f"{scheme}://storage.example//data/file"
+
+    returncode, _stdout, stderr = run_gfal_router("chmod", "0644", url)
+
+    assert returncode == 0, stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["chmod", "0644", url]
+
+
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
 def test_nonremote_or_incomplete_urls_use_the_transition_fallback(value):
     assert not supports_url(value)
@@ -403,6 +525,20 @@ def test_mkdir_requires_native_compatibility_options(fake_xrdfs, monkeypatch, ca
     monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
 
     assert dispatch("mkdir", [_URL], prog="gfal mkdir") == 69
+    assert "incompatible xrdfs" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_chmod_requires_native_mode_first_compatibility(
+    fake_xrdfs, monkeypatch, capsys
+):
+    chmod_markers = XRDFS_COMMANDS["chmod"].capability_markers
+    older_help = "\n".join(
+        marker for marker in capability_markers() if marker not in chmod_markers
+    )
+    monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
+
+    assert dispatch("chmod", ["0644", _URL], prog="gfal chmod") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
     assert _command_records(fake_xrdfs) == []
 
@@ -1059,6 +1195,7 @@ def test_aggregate_no_arguments_prints_help(capsys):
         ["gfal", "cat", _URL, "file:///tmp/local"],
         ["gfal", "stat", "--key", "root://keys.example/key", "file:///tmp/a"],
         ["gfal", "mkdir", "file:///tmp/local"],
+        ["gfal", "chmod", "0644", "file:///tmp/local"],
     ],
 )
 def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
@@ -1082,6 +1219,18 @@ def test_mkdir_preserves_webdav_transition_backend(monkeypatch, scheme):
     calls = []
     monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
     arguments = ["gfal", "mkdir", f"{scheme}://storage.example/data/new"]
+
+    assert main(arguments) == 73
+    assert calls == [arguments]
+
+
+@pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
+def test_chmod_preserves_webdav_transition_backend(monkeypatch, scheme):
+    import gfal.cli.shell as legacy_shell
+
+    calls = []
+    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+    arguments = ["gfal", "chmod", "0644", f"{scheme}://storage.example/data/file"]
 
     assert main(arguments) == 73
     assert calls == [arguments]

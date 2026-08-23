@@ -223,6 +223,8 @@ class GfalCommands(base.CommandBase):
         """Change file permissions."""
         try:
             mode = int(self.params.mode, base=8)
+            if mode < 0:
+                raise ValueError
         except ValueError:
             msg = "mode must be an octal number (e.g. 0755)"
             if base.is_gfal2_compat():

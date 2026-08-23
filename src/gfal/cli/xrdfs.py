@@ -310,6 +310,23 @@ def _validate_mkdir(
         parser.error("argument -m/--mode: expected one argument")
 
 
+def _add_chmod_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("mode", help="new mode, in octal")
+    parser.add_argument("file", nargs="+", help="URI of the file to change permissions")
+
+
+def _validate_chmod(
+    parser: argparse.ArgumentParser, params: argparse.Namespace
+) -> None:
+    try:
+        mode = int(params.mode, 8)
+    except ValueError:
+        parser.error("mode must be an octal number")
+    if mode < 0:
+        parser.error("mode must be a non-negative octal number")
+    params.mode = f"{mode & 0o777:04o}"
+
+
 def _build_parser(
     command: str,
     prog: str,
@@ -1095,6 +1112,29 @@ def _execute_mkdir(
     return 0
 
 
+def _execute_chmod(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    last_failure = 0
+    for value in params.file:
+        result = run_xrdfs(
+            executable,
+            ("chmod", params.mode, value),
+            environ=environment,
+            timeout=_remaining(deadline),
+        )
+        status = _report_result(prog, result, configured_timeout=params.timeout)
+        if status in (errno.EINTR, GFAL_ETIMEDOUT):
+            return status
+        if status:
+            last_failure = status
+    return last_failure
+
+
 XRDFS_COMMANDS = MappingProxyType({
     "ls": XrdfsCommand(
         description="Gfal util LS command. List directory's contents.",
@@ -1137,6 +1177,14 @@ XRDFS_COMMANDS = MappingProxyType({
         validate=_validate_mkdir,
         capability_markers=("mkdir [-p|--parents] [-m mode|--mode mode] <dirname>...",),
         url_parameters=("directory",),
+        url_schemes=_XROOTD_SCHEMES,
+    ),
+    "chmod": XrdfsCommand(
+        description="Gfal util CHMOD command. Change the permissions of a file.",
+        add_arguments=_add_chmod_arguments,
+        execute=_execute_chmod,
+        validate=_validate_chmod,
+        capability_markers=("chmod <octal-mode> <path>",),
         url_schemes=_XROOTD_SCHEMES,
     ),
 })
