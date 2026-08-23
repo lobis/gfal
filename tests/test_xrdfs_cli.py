@@ -341,6 +341,33 @@ def test_mkdir_routes_all_xrootd_schemes(fake_xrdfs, scheme):
     assert record["argv"] == ["mkdir", "--mode=0755", url]
 
 
+def test_mkdir_routes_explicit_mode_to_webdav(fake_xrdfs):
+    url = "https://storage.example/data/new"
+
+    returncode, stdout, stderr = run_gfal_router("mkdir", "-m", "0700", url)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mkdir", "--mode=0700", url]
+
+
+def test_mkdir_routes_plain_mixed_remote_operands_in_order(fake_xrdfs):
+    urls = [
+        "http://storage.example/data/http",
+        "root://storage.example//data/root",
+        "davs://storage.example/data/davs",
+    ]
+
+    returncode, stdout, stderr = run_gfal_router("mkdir", *urls)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["mkdir", "--mode=0755", url] for url in urls
+    ]
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
@@ -1374,12 +1401,41 @@ def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
 
 
 @pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
-def test_mkdir_preserves_webdav_transition_backend(monkeypatch, scheme):
+def test_mkdir_routes_plain_webdav_requests(fake_xrdfs, scheme):
+    url = f"{scheme}://storage.example/data/new"
+
+    returncode, stdout, stderr = run_gfal_router("mkdir", url)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mkdir", "--mode=0755", url]
+
+
+@pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
+def test_mkdir_webdav_parents_preserves_transition_backend(monkeypatch, scheme):
     import gfal.cli.shell as legacy_shell
 
     calls = []
     monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
-    arguments = ["gfal", "mkdir", f"{scheme}://storage.example/data/new"]
+    arguments = ["gfal", "mkdir", "-p", f"{scheme}://storage.example/data/new"]
+
+    assert main(arguments) == 73
+    assert calls == [arguments]
+
+
+def test_mkdir_mixed_parents_preserves_transition_backend(monkeypatch):
+    import gfal.cli.shell as legacy_shell
+
+    calls = []
+    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+    arguments = [
+        "gfal",
+        "mkdir",
+        "-p",
+        "root://storage.example//data/root",
+        "https://storage.example/data/http",
+    ]
 
     assert main(arguments) == 73
     assert calls == [arguments]

@@ -80,6 +80,7 @@ class XrdfsCommand:
     validate: Optional[
         Callable[[argparse.ArgumentParser, argparse.Namespace], None]
     ] = None
+    route_when: Optional[Callable[[argparse.Namespace, Sequence[str]], bool]] = None
     capability_markers: tuple[str, ...] = ()
     legacy_options: frozenset[str] = frozenset()
     legacy_prefixes: tuple[str, ...] = ()
@@ -143,6 +144,20 @@ def _command_urls(definition: XrdfsCommand, params: argparse.Namespace) -> list[
         value = getattr(params, parameter)
         values.extend(value if isinstance(value, list) else [value])
     return values
+
+
+def _option_requires_schemes(
+    option: str,
+    schemes: frozenset[str],
+) -> Callable[[argparse.Namespace, Sequence[str]], bool]:
+    """Build a routing rule for an option with protocol-specific support."""
+
+    def route_when(params: argparse.Namespace, urls: Sequence[str]) -> bool:
+        return not getattr(params, option) or all(
+            supports_url(value, schemes) for value in urls
+        )
+
+    return route_when
 
 
 def _uses_legacy_webdav_defaults(value: str, record: Mapping[str, Any]) -> bool:
@@ -384,9 +399,11 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
         return False
 
     values = _command_urls(definition, params)
-    return bool(values) and all(
+    if not values or not all(
         supports_url(value, definition.url_schemes) for value in values
-    )
+    ):
+        return False
+    return definition.route_when is None or definition.route_when(params, values)
 
 
 def _validate_common(
@@ -1197,8 +1214,8 @@ XRDFS_COMMANDS = MappingProxyType({
         execute=_execute_mkdir,
         validate=_validate_mkdir,
         capability_markers=("mkdir [-p|--parents] [-m mode|--mode mode] <dirname>...",),
+        route_when=_option_requires_schemes("parents", _XROOTD_SCHEMES),
         url_parameters=("directory",),
-        url_schemes=_XROOTD_SCHEMES,
     ),
     "chmod": XrdfsCommand(
         description="Gfal util CHMOD command. Change the permissions of a file.",
