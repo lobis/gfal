@@ -315,6 +315,9 @@ def _prepare_xrdfs(
         timeout=probe_timeout,
     )
     if capability.error:
+        if capability.interrupted:
+            sys.stderr.write("Caught keyboard interrupt. Canceling...")
+            return None, errno.EINTR
         if capability.timed_out and deadline is not None:
             sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
             return None, 110

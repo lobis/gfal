@@ -48,6 +48,7 @@ class XrdfsCapability:
 
     error: Optional[str] = None
     timed_out: bool = False
+    interrupted: bool = False
 
 
 def find_xrdfs(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
@@ -179,6 +180,8 @@ def check_capability(
     )
     if result.timed_out:
         return XrdfsCapability("xrdfs --help timed out", timed_out=True)
+    if result.returncode == errno.EINTR:
+        return XrdfsCapability("xrdfs --help interrupted", interrupted=True)
     if result.returncode != 0:
         detail = error_message(result.stderr)
         return XrdfsCapability(f"xrdfs --help failed: {detail}")

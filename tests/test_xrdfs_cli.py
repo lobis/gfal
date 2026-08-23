@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import gfal.cli.xrdfs as xrdfs_cli
+import gfal.xrdfs as xrdfs
 from gfal.cli.main import main
 from gfal.cli.xrdfs import dispatch, supports_url
 from gfal.xrdfs import XrdfsResult
@@ -452,6 +453,17 @@ def test_interrupted_child_preserves_legacy_status_and_message(
 
     assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == errno.EINTR
     assert capsys.readouterr().err == "Caught keyboard interrupt. Canceling..."
+
+
+def test_interrupted_capability_probe_preserves_legacy_status_and_message(
+    fake_xrdfs, monkeypatch, capsys
+):
+    interrupted = XrdfsResult(errno.EINTR, b"", b"")
+    monkeypatch.setattr(xrdfs, "run_xrdfs", lambda *args, **kwargs: interrupted)
+
+    assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == errno.EINTR
+    assert capsys.readouterr().err == "Caught keyboard interrupt. Canceling..."
+    assert _command_records(fake_xrdfs) == []
 
 
 def test_timeout_includes_capability_probe(fake_xrdfs, monkeypatch, capsys):
