@@ -24,3 +24,14 @@ def test_rpm_spec_does_not_force_urllib3():
 
     assert "Requires: python3-urllib3" not in spec
     assert "Requires: python3-truststore" not in spec
+
+
+def test_rpm_spec_requires_xrdfs_runtime():
+    requirements = {
+        line.strip()
+        for line in (_ROOT / "gfal.spec").read_text(encoding="utf-8").splitlines()
+        if line.startswith("Requires:")
+    }
+
+    assert "Requires: xrootd-client" in requirements
+    assert "Requires: xrdcl-http" in requirements
