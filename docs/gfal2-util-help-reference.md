@@ -387,6 +387,6 @@ These appear on every command in the original gfal2-util:
 | `--key` | user private key | ✅ supported |
 | `--log-file` | write logs to file | ✅ supported |
 | `-D, --definition` | override gfal2 parameter | ⚠️ accepted, ignored (gfal2-specific) |
-| `-C, --client-info` | custom client-side info | ⚠️ accepted, ignored (gfal2-specific) |
-| `-4` | force IPv4 (GridFTP only) | ⚠️ accepted, ignored (GridFTP-specific) |
-| `-6` | force IPv6 (GridFTP only) | ⚠️ accepted, ignored (GridFTP-specific) |
+| `-C, --client-info` | custom client-side info | ✅ mapped to `XRD_APPNAME` by the xrdfs backend |
+| `-4` | force IPv4 | ✅ mapped to `XRD_NETWORKSTACK=IPv4` by the xrdfs backend |
+| `-6` | force IPv6 | ✅ mapped to `XRD_NETWORKSTACK=IPv6` by the xrdfs backend |
