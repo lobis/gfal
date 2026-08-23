@@ -254,7 +254,9 @@ def test_rejects_local_urls_before_running_xrdfs(fake_xrdfs):
     assert _records(fake_xrdfs) == []
 
 
-def test_stat_formats_json_and_maps_common_environment(fake_xrdfs, capsys):
+def test_stat_formats_json_and_maps_common_environment(fake_xrdfs, monkeypatch, capsys):
+    monkeypatch.setattr(os, "getuid", lambda: 123)
+    monkeypatch.setattr(os, "getgid", lambda: 456)
     result = dispatch(
         "stat",
         [
@@ -278,7 +280,7 @@ def test_stat_formats_json_and_maps_common_environment(fake_xrdfs, capsys):
     assert result == 0
     assert f"  File: '{_URL}'" in captured.out
     assert "  Size: 5\tregular file" in captured.out
-    assert "Access: (0640/-rw-r-----)\tUid: 123\tGid: 456" in captured.out
+    assert "Access: (0400/-r--------)\tUid: 123\tGid: 456" in captured.out
     assert (
         datetime.fromtimestamp(1700000000).strftime("%Y-%m-%d %H:%M:%S") in captured.out
     )
@@ -398,7 +400,7 @@ def test_ls_formats_legacy_long_output_and_filters_hidden(
     captured = capsys.readouterr()
     assert result == 0
     assert ".hidden" not in captured.out
-    assert "-rwxr-x---" in captured.out
+    assert "-r--r--r--   0 0     0" in captured.out
     assert "1.1K" in captured.out
     assert "visible\tONLINE" in captured.out
     assert datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") in captured.out
@@ -411,6 +413,32 @@ def test_ls_formats_legacy_long_output_and_filters_hidden(
         "user.status",
         directory,
     ]
+
+
+def test_ls_target_uses_legacy_root_stat_projection(fake_xrdfs, monkeypatch, capsys):
+    record = _metadata_record(owner="named-user", group="named-group", nlink=9)
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    monkeypatch.setattr(os, "getuid", lambda: 123)
+    monkeypatch.setattr(os, "getgid", lambda: 456)
+
+    assert dispatch("ls", ["-ld", _URL], prog="gfal ls") == 0
+    assert capsys.readouterr().out.startswith("-r--------   1 123   456")
+
+
+def test_stat_uses_legacy_root_directory_permissions(fake_xrdfs, monkeypatch, capsys):
+    record = _metadata_record(
+        type="directory",
+        mode="0755",
+        permissions="rwxr-xr-x",
+        flag_names=["XBitSet", "IsDir", "IsReadable"],
+    )
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", json.dumps(record) + "\n")
+    monkeypatch.setattr(os, "getuid", lambda: 123)
+    monkeypatch.setattr(os, "getgid", lambda: 456)
+
+    directory = "root://storage.example//data"
+    assert dispatch("stat", [directory], prog="gfal stat") == 0
+    assert "Access: (0500/dr-x------)\tUid: 123\tGid: 456" in capsys.readouterr().out
 
 
 def test_ls_file_and_directory_option_print_original_url(
@@ -442,7 +470,7 @@ def test_ls_short_color_uses_legacy_no_class(
     [
         ({}, "fi=32", "037"),
         ({"type": "directory", "mode": "0755"}, "di=34", "34"),
-        ({"mode": "0755"}, "ex=33", "33"),
+        ({"mode": "0755", "flag_names": ["IsReadable", "XBitSet"]}, "ex=33", "33"),
     ],
 )
 def test_ls_long_color_uses_legacy_mode_classes(

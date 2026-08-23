@@ -35,12 +35,13 @@ _WEBDAV_SCHEMES = frozenset({
     "http",
     "https",
 })
-_REMOTE_SCHEMES = _WEBDAV_SCHEMES | {
+_XROOTD_SCHEMES = frozenset({
     "root",
     "roots",
     "xroot",
     "xroots",
-}
+})
+_REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
 
 
 def supports_url(value: str) -> bool:
@@ -526,15 +527,45 @@ def _permissions_from_text(value: Any) -> Optional[int]:
     return permissions
 
 
-def _record_mode(
-    record: Mapping[str, Any], *, legacy_webdav_defaults: bool = False
-) -> int:
-    record_type = _record_type(record)
-    type_mode = {
+def _record_type_mode(record: Mapping[str, Any]) -> int:
+    return {
         "file": stat.S_IFREG,
         "directory": stat.S_IFDIR,
         "other": 0,
-    }[record_type]
+    }[_record_type(record)]
+
+
+def _flag_permissions(
+    record: Mapping[str, Any],
+    *,
+    all_classes: bool,
+    traverse_readable_directory: bool = False,
+) -> int:
+    names = {str(name) for name in record.get("flag_names", [])}
+    readable = 0o444 if all_classes else stat.S_IRUSR
+    writable = 0o222 if all_classes else stat.S_IWUSR
+    executable = 0o111 if all_classes else stat.S_IXUSR
+    permissions = 0
+    for name, bits in (
+        ("IsReadable", readable),
+        ("IsWritable", writable),
+        ("XBitSet", executable),
+    ):
+        if name in names:
+            permissions |= bits
+    if (
+        traverse_readable_directory
+        and _record_type(record) == "directory"
+        and "IsReadable" in names
+    ):
+        permissions |= executable
+    return permissions
+
+
+def _record_mode(
+    record: Mapping[str, Any], *, legacy_webdav_defaults: bool = False
+) -> int:
+    type_mode = _record_type_mode(record)
 
     raw_mode = record.get("mode")
     if raw_mode not in (None, ""):
@@ -550,15 +581,15 @@ def _record_mode(
     if legacy_webdav_defaults:
         return type_mode | 0o777
 
-    names = {str(name) for name in record.get("flag_names", [])}
-    permissions = 0
-    if "IsReadable" in names:
-        permissions |= 0o555 if record_type == "directory" else 0o444
-    if "IsWritable" in names:
-        permissions |= 0o222
-    if "XBitSet" in names:
-        permissions |= 0o111
-    return type_mode | permissions
+    return type_mode | _flag_permissions(
+        record, all_classes=True, traverse_readable_directory=True
+    )
+
+
+def _legacy_root_mode(record: Mapping[str, Any], *, directory_entry: bool) -> int:
+    return _record_type_mode(record) | _flag_permissions(
+        record, all_classes=directory_entry
+    )
 
 
 def _numeric_identity(value: Any) -> int:
@@ -575,6 +606,32 @@ def _record_nlink(
     if value not in (None, ""):
         return _numeric_identity(value)
     return 0 if legacy_webdav_defaults else 1
+
+
+def _legacy_metadata(
+    value: str,
+    record: Mapping[str, Any],
+    *,
+    directory_entry: bool,
+) -> tuple[int, int, int, int]:
+    try:
+        scheme = urlsplit(value).scheme.lower()
+    except ValueError:
+        scheme = ""
+
+    if scheme in _XROOTD_SCHEMES:
+        mode = _legacy_root_mode(record, directory_entry=directory_entry)
+        if directory_entry:
+            return mode, 0, 0, 0
+        return mode, 1, os.getuid(), os.getgid()
+
+    legacy_webdav_defaults = _uses_legacy_webdav_defaults(value, record)
+    return (
+        _record_mode(record, legacy_webdav_defaults=legacy_webdav_defaults),
+        _record_nlink(record, legacy_webdav_defaults=legacy_webdav_defaults),
+        _numeric_identity(record.get("owner")),
+        _numeric_identity(record.get("group")),
+    )
 
 
 def _epoch(
@@ -623,10 +680,8 @@ def _execute_stat(
             sys.stdout.write("\n")
         record = records[0]
         legacy_webdav_defaults = _uses_legacy_webdav_defaults(value, record)
-        mode = _record_mode(record, legacy_webdav_defaults=legacy_webdav_defaults)
+        mode, _, uid, gid = _legacy_metadata(value, record, directory_entry=False)
         size = int(record["size"])
-        uid = _numeric_identity(record.get("owner"))
-        gid = _numeric_identity(record.get("group"))
 
         sys.stdout.write(f"  File: '{redact_authz(value)}'\n")
         sys.stdout.write(f"  Size: {size}\t{_file_type_label(_record_type(record))}\n")
@@ -786,8 +841,9 @@ def _execute_ls(
             if not target_record and not params.all and name.startswith("."):
                 continue
 
-            legacy_webdav_defaults = _uses_legacy_webdav_defaults(value, record)
-            mode = _record_mode(record, legacy_webdav_defaults=legacy_webdav_defaults)
+            mode, nlink, uid, gid = _legacy_metadata(
+                value, record, directory_entry=not target_record
+            )
             color_mode = mode if params.long else None
             display_name = _colored_name(name, color_mode, params.color)
             if not params.long:
@@ -798,9 +854,6 @@ def _execute_ls(
             size_text = _human_size(size) if params.human_readable else str(size)
             size_width = 4 if params.human_readable else 9
             date = _TIME_FORMATS[time_style](_epoch(record, "mtime"))
-            nlink = _record_nlink(record, legacy_webdav_defaults=legacy_webdav_defaults)
-            uid = _numeric_identity(record.get("owner"))
-            gid = _numeric_identity(record.get("group"))
             extras = "\t".join(_xattr_values(record))
             sys.stdout.write(
                 f"{stat.filemode(mode)} {nlink:>3} {uid!s:<5} {gid!s:<5} "
