@@ -188,8 +188,8 @@ class TestMkdirErrors:
         assert err.strip() != ""
         assert out.strip() == ""
 
-    def test_partial_failure_continues(self, tmp_path):
-        """If one directory fails, the rest should still be attempted."""
+    def test_partial_failure_stops(self, tmp_path):
+        """If one directory fails, later operands must not be attempted."""
         existing = tmp_path / "existing"
         existing.mkdir()
         new_dir = tmp_path / "new"
@@ -197,7 +197,7 @@ class TestMkdirErrors:
         rc, out, err = run_gfal("mkdir", existing.as_uri(), new_dir.as_uri())
 
         assert rc != 0
-        assert new_dir.is_dir()  # second dir was still created
+        assert not new_dir.exists()
 
     def test_parent_needed_but_no_p_flag(self, tmp_path):
         """Creating a nested path without -p should fail."""

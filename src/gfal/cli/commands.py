@@ -23,8 +23,8 @@ class GfalCommands(base.CommandBase):
     @base.arg(
         "-m",
         "--mode",
-        type=str,
-        default="755",
+        type=int,
+        default=755,
         metavar="MODE",
         help="directory permissions in octal (default: 755)",
     )
@@ -38,26 +38,38 @@ class GfalCommands(base.CommandBase):
     def execute_mkdir(self):
         """Create directories."""
         try:
-            mode_int = int(self.params.mode, 8)
-        except ValueError:
-            msg = f"invalid mode '{self.params.mode}': must be an octal number (e.g. 755, 0755)"
+            mode_value = int(self.params.mode)
+        except (TypeError, ValueError):
+            msg = (
+                f"invalid mode '{self.params.mode}': must be an octal number "
+                "(e.g. 755, 0755)"
+            )
             if base.is_gfal2_compat():
                 sys.stderr.write(f"{self.prog}: {msg}\n")
             else:
                 self.err_console.print(f"[bold red]{self.prog}[/]: {msg}")
             return 1
+        if mode_value < 0:
+            sys.stderr.write(
+                f"{self.prog}: argument -m/--mode: expected one argument\n"
+            )
+            return 2
+
+        try:
+            mode_int = int(str(mode_value), 8)
+        except ValueError:
+            mode_int = 0o755
 
         client = GfalClient(**base.build_client_kwargs(self.params))
 
-        rc = 0
         for d in self.params.directory:
             try:
                 with self.spinner(f"Creating directory {d}..."):
                     client.mkdir(d, mode=mode_int, parents=self.params.parents)
             except Exception as e:
                 self._print_error(e)
-                rc = exception_exit_code(e)
-        return rc
+                return exception_exit_code(e)
+        return 0
 
     # ------------------------------------------------------------------
     # save  (stdin → remote file)

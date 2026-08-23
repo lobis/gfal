@@ -32,6 +32,7 @@ _ROUTED_COMMAND_CASES = (
     ("stat", [_URL], ["stat", "--json", _URL]),
     ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
     ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
+    ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
 )
 _CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
@@ -217,6 +218,119 @@ def test_public_router_helper_exercises_xrdfs_backend(
     assert record["argv"] == child_arguments
 
 
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        (["-m", "0700", _URL], ["mkdir", "--mode=0700", _URL]),
+        (["-m", "888", _URL], ["mkdir", "--mode=0755", _URL]),
+        (["-p", _URL], ["mkdir", "--parents", "--mode=0755", _URL]),
+    ],
+)
+def test_mkdir_translates_legacy_options(fake_xrdfs, arguments, expected):
+    returncode, stdout, stderr = run_gfal_router("mkdir", *arguments)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    assert stderr == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == expected
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("1000", "0000"), ("10000", "0000"), ("1700", "0700")],
+)
+def test_mkdir_masks_modes_to_native_permission_bits(fake_xrdfs, mode, expected):
+    returncode, _stdout, stderr = run_gfal_router("mkdir", "-m", mode, _URL)
+
+    assert returncode == 0, stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mkdir", f"--mode={expected}", _URL]
+
+
+def test_mkdir_rejects_nonnumeric_mode_before_native_operation(fake_xrdfs):
+    returncode, _stdout, stderr = run_gfal_router("mkdir", "-m", "A", _URL)
+
+    assert returncode == 2
+    assert "'A'" in stderr
+    assert "integer" in stderr
+    assert _records(fake_xrdfs) == []
+
+
+def test_mkdir_rejects_negative_mode_before_native_operation(fake_xrdfs):
+    returncode, _stdout, stderr = run_gfal_router("mkdir", "-m", "-1", _URL)
+
+    assert returncode == 2
+    assert "expected one argument" in stderr
+    assert _records(fake_xrdfs) == []
+
+
+def test_mkdir_rejects_negative_mode_on_transition_backends(tmp_path):
+    local = tmp_path / "local"
+    for value in (local.as_uri(), "https://storage.example/data/new"):
+        returncode, _stdout, stderr = run_gfal_router("mkdir", "-m", "-1", value)
+
+        assert returncode == 2
+        assert "expected one argument" in stderr
+    assert not local.exists()
+
+
+def test_mkdir_transition_backend_stops_after_first_failure(tmp_path):
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    unattempted = tmp_path / "unattempted"
+
+    returncode, stdout, stderr = run_gfal_router(
+        "mkdir", existing.as_uri(), unattempted.as_uri()
+    )
+
+    assert returncode == errno.EEXIST
+    assert stdout == ""
+    assert "exist" in stderr.lower()
+    assert not unattempted.exists()
+
+
+def test_mkdir_runs_ordered_operands_separately(fake_xrdfs):
+    one = "root://storage.example//data/one"
+    two = "root://storage.example//data/two"
+
+    returncode, stdout, stderr = run_gfal_router("mkdir", one, two)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["mkdir", "--mode=0755", one],
+        ["mkdir", "--mode=0755", two],
+    ]
+
+
+def test_mkdir_stops_after_first_failed_operand(fake_xrdfs, monkeypatch):
+    existing = "root://storage.example//data/existing"
+    unattempted = "root://storage.example//data/unattempted"
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", str(errno.EEXIST))
+    monkeypatch.setenv("FAKE_XRDFS_STDERR", "[ERROR] File exists\n")
+
+    returncode, stdout, stderr = run_gfal_router("mkdir", existing, unattempted)
+
+    assert returncode == errno.EEXIST
+    assert stdout == ""
+    assert "File exists" in stderr
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["mkdir", "--mode=0755", existing]
+    ]
+
+
+@pytest.mark.parametrize("scheme", ("root", "roots", "xroot", "xroots"))
+def test_mkdir_routes_all_xrootd_schemes(fake_xrdfs, scheme):
+    url = f"{scheme}://storage.example//data/new"
+
+    returncode, _stdout, stderr = run_gfal_router("mkdir", url)
+
+    assert returncode == 0, stderr
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["mkdir", "--mode=0755", url]
+
+
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
 def test_nonremote_or_incomplete_urls_use_the_transition_fallback(value):
     assert not supports_url(value)
@@ -277,6 +391,18 @@ def test_generic_json_help_does_not_satisfy_metadata_contract(
         generic_help,
     )
     assert dispatch("stat", [_URL], prog="gfal stat") == 69
+    assert "incompatible xrdfs" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_mkdir_requires_native_compatibility_options(fake_xrdfs, monkeypatch, capsys):
+    mkdir_markers = XRDFS_COMMANDS["mkdir"].capability_markers
+    older_help = "\n".join(
+        marker for marker in capability_markers() if marker not in mkdir_markers
+    )
+    monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
+
+    assert dispatch("mkdir", [_URL], prog="gfal mkdir") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
     assert _command_records(fake_xrdfs) == []
 
@@ -932,6 +1058,7 @@ def test_aggregate_no_arguments_prints_help(capsys):
         ["gfal", "cat", "-bq", _URL],
         ["gfal", "cat", _URL, "file:///tmp/local"],
         ["gfal", "stat", "--key", "root://keys.example/key", "file:///tmp/a"],
+        ["gfal", "mkdir", "file:///tmp/local"],
     ],
 )
 def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
@@ -944,6 +1071,18 @@ def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
         return 73
 
     monkeypatch.setattr(legacy_shell, "main", fake_main)
+    assert main(arguments) == 73
+    assert calls == [arguments]
+
+
+@pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
+def test_mkdir_preserves_webdav_transition_backend(monkeypatch, scheme):
+    import gfal.cli.shell as legacy_shell
+
+    calls = []
+    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+    arguments = ["gfal", "mkdir", f"{scheme}://storage.example/data/new"]
+
     assert main(arguments) == 73
     assert calls == [arguments]
 

@@ -77,10 +77,15 @@ class XrdfsCommand:
     execute: Callable[
         [str, str, argparse.Namespace, Mapping[str, str], Optional[float]], int
     ]
+    validate: Optional[
+        Callable[[argparse.ArgumentParser, argparse.Namespace], None]
+    ] = None
     capability_markers: tuple[str, ...] = ()
     legacy_options: frozenset[str] = frozenset()
     legacy_prefixes: tuple[str, ...] = ()
     legacy_short_options: frozenset[str] = frozenset()
+    url_parameters: tuple[str, ...] = ("file",)
+    url_schemes: frozenset[str] = _REMOTE_SCHEMES
 
 
 # Populated after the command-specific parser and executor functions are defined.
@@ -123,13 +128,21 @@ def requires_legacy_backend(command: str, arguments: Sequence[str]) -> bool:
     return False
 
 
-def supports_url(value: str) -> bool:
+def supports_url(value: str, schemes: frozenset[str] = _REMOTE_SCHEMES) -> bool:
     """Return whether *value* is a complete URL supported by this backend."""
     try:
         parsed = urlsplit(value)
     except ValueError:
         return False
-    return parsed.scheme.lower() in _REMOTE_SCHEMES and bool(parsed.netloc)
+    return parsed.scheme.lower() in schemes and bool(parsed.netloc)
+
+
+def _command_urls(definition: XrdfsCommand, params: argparse.Namespace) -> list[str]:
+    values = []
+    for parameter in definition.url_parameters:
+        value = getattr(params, parameter)
+        values.extend(value if isinstance(value, list) else [value])
+    return values
 
 
 def _uses_legacy_webdav_defaults(value: str, record: Mapping[str, Any]) -> bool:
@@ -272,6 +285,31 @@ def _add_xattr_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_mkdir_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=int,
+        default=755,
+        metavar="MODE",
+        help="file permissions (octal)",
+    )
+    parser.add_argument(
+        "-p",
+        "--parents",
+        action="store_true",
+        help="no error if existing, make parent directories as needed",
+    )
+    parser.add_argument("directory", nargs="+", help="Directory's URI")
+
+
+def _validate_mkdir(
+    parser: argparse.ArgumentParser, params: argparse.Namespace
+) -> None:
+    if params.mode < 0:
+        parser.error("argument -m/--mode: expected one argument")
+
+
 def _build_parser(
     command: str,
     prog: str,
@@ -310,6 +348,7 @@ class _RoutingParser(argparse.ArgumentParser):
 
 def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
     """Return whether *argv* is fully understood and has only remote operands."""
+    definition = XRDFS_COMMANDS[command]
     parser = _build_parser(command, f"gfal {command}", _RoutingParser)
     try:
         with (
@@ -322,8 +361,10 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
     except _RoutingError:
         return False
 
-    values = params.file if isinstance(params.file, list) else [params.file]
-    return bool(values) and all(supports_url(value) for value in values)
+    values = _command_urls(definition, params)
+    return bool(values) and all(
+        supports_url(value, definition.url_schemes) for value in values
+    )
 
 
 def _validate_common(
@@ -333,8 +374,12 @@ def _validate_common(
         parser.error("-4 and -6 are mutually exclusive")
 
 
-def _validate_remote_url(parser: argparse.ArgumentParser, value: str) -> None:
-    if not supports_url(value):
+def _validate_remote_url(
+    parser: argparse.ArgumentParser,
+    value: str,
+    schemes: frozenset[str],
+) -> None:
+    if not supports_url(value, schemes):
         parser.error(
             "the xrdfs backend requires a complete remote URL "
             f"(got {redact_authz(value)!r})"
@@ -1020,6 +1065,36 @@ def _execute_xattr(
     return 0
 
 
+def _mkdir_mode(value: int) -> str:
+    try:
+        mode = int(str(value), 8)
+    except ValueError:
+        mode = 0o755
+    return f"{mode & 0o777:04o}"
+
+
+def _execute_mkdir(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    options = ["--parents"] if params.parents else []
+    options.append(f"--mode={_mkdir_mode(params.mode)}")
+    for value in params.directory:
+        result = run_xrdfs(
+            executable,
+            ("mkdir", *options, value),
+            environ=environment,
+            timeout=_remaining(deadline),
+        )
+        status = _report_result(prog, result, configured_timeout=params.timeout)
+        if status:
+            return status
+    return 0
+
+
 XRDFS_COMMANDS = MappingProxyType({
     "ls": XrdfsCommand(
         description="Gfal util LS command. List directory's contents.",
@@ -1052,6 +1127,18 @@ XRDFS_COMMANDS = MappingProxyType({
         execute=_execute_xattr,
         capability_markers=("xattr <path> [attribute]",),
     ),
+    "mkdir": XrdfsCommand(
+        description=(
+            "Gfal util MKDIR command. Makes directories. By default, it sets "
+            "file mode 0755."
+        ),
+        add_arguments=_add_mkdir_arguments,
+        execute=_execute_mkdir,
+        validate=_validate_mkdir,
+        capability_markers=("mkdir [-p|--parents] [-m mode|--mode mode] <dirname>...",),
+        url_parameters=("directory",),
+        url_schemes=_XROOTD_SCHEMES,
+    ),
 })
 
 
@@ -1062,10 +1149,11 @@ def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -
     parser = _build_parser(command, program)
     params = parser.parse_args(list(argv))
     _validate_common(parser, params)
+    if definition.validate is not None:
+        definition.validate(parser, params)
 
-    urls = params.file if isinstance(params.file, list) else [params.file]
-    for value in urls:
-        _validate_remote_url(parser, value)
+    for value in _command_urls(definition, params):
+        _validate_remote_url(parser, value, definition.url_schemes)
 
     deadline = None if params.timeout <= 0 else time.monotonic() + params.timeout
     try:
