@@ -20,8 +20,10 @@ from urllib.parse import urlsplit
 
 from gfal import __version__
 from gfal.xrdfs import (
+    GFAL_ETIMEDOUT,
     XrdfsResult,
     check_capability,
+    error_description,
     error_exit_code,
     error_message,
     find_xrdfs,
@@ -332,7 +334,7 @@ def _prepare_xrdfs(
             return None, errno.EINTR
         if capability.timed_out and deadline is not None:
             sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
-            return None, 110
+            return None, GFAL_ETIMEDOUT
         sys.stderr.write(
             f"{prog}: incompatible xrdfs: {capability.error}; use an XRootD build "
             "containing the command-first compatibility changes\n"
@@ -401,10 +403,7 @@ def _report_result(
         return code
 
     message = error_message(result.stderr)
-    try:
-        description = os.strerror(code)
-    except ValueError:
-        description = "Unknown error"
+    description = error_description(code)
     sys.stderr.write(f"{prog} error: {code} ({description}) - {message}\n")
     return code
 

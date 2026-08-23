@@ -29,10 +29,30 @@ _CAPABILITY_MARKERS = (
 # gfal2-util is distributed on Linux and returns Linux errno values even when
 # this pure-Python frontend is developed on a platform whose errno table uses a
 # different number (macOS uses 60 for ETIMEDOUT, for example).
+GFAL_ENODATA = 61
 GFAL_ENOTSUP = 95
 GFAL_ETIMEDOUT = 110
 GFAL_EHOSTDOWN = 112
 GFAL_EINPROGRESS = 115
+
+_GFAL_ERROR_DESCRIPTIONS = {
+    GFAL_ENODATA: "No data available",
+    GFAL_ENOTSUP: "Operation not supported",
+    GFAL_ETIMEDOUT: "Connection timed out",
+    GFAL_EHOSTDOWN: "Host is down",
+    GFAL_EINPROGRESS: "Operation now in progress",
+}
+
+
+def error_description(code: int) -> str:
+    """Return the Linux errno description emitted by legacy gfal2-util."""
+    description = _GFAL_ERROR_DESCRIPTIONS.get(code)
+    if description is not None:
+        return description
+    try:
+        return os.strerror(code)
+    except ValueError:
+        return "Unknown error"
 
 
 @dataclass(frozen=True)
@@ -218,7 +238,7 @@ _ERROR_CODES = (
     (GFAL_EINPROGRESS, ("checksum response used",)),
     (errno.EHOSTUNREACH, ("host unreachable", "no route to host")),
     (errno.ENOSPC, ("no space left", "insufficient storage")),
-    (errno.ENODATA, ("attribute not found", "no data available")),
+    (GFAL_ENODATA, ("attribute not found", "no data available")),
     (errno.EINVAL, ("invalid argument", "invalid arguments")),
 )
 

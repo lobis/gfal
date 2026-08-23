@@ -576,7 +576,21 @@ def test_host_down_diagnostic_uses_legacy_linux_status(fake_xrdfs, monkeypatch, 
     monkeypatch.setenv("FAKE_XRDFS_STDERR", "[ERROR] Host is down\n")
 
     assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == 112
-    assert "gfal sum error: 112" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "gfal sum error: 112 (Host is down) - Host is down\n"
+    )
+
+
+def test_expired_operation_diagnostic_uses_legacy_linux_status(
+    fake_xrdfs, monkeypatch, capsys
+):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "50")
+    monkeypatch.setenv("FAKE_XRDFS_STDERR", "[ERROR] Operation expired\n")
+
+    assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == 110
+    assert capsys.readouterr().err == (
+        "gfal sum error: 110 (Connection timed out) - Operation expired\n"
+    )
 
 
 def test_checksum_mismatch_uses_legacy_linux_status(fake_xrdfs, monkeypatch, capsys):
@@ -587,7 +601,10 @@ def test_checksum_mismatch_uses_legacy_linux_status(fake_xrdfs, monkeypatch, cap
     )
 
     assert dispatch("sum", [_URL, "MD5"], prog="gfal sum") == 115
-    assert "gfal sum error: 115" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "gfal sum error: 115 (Operation now in progress) - "
+        "CheckSum error: Checksum response used adler32 instead of md5\n"
+    )
 
 
 def test_unsupported_xattr_uses_legacy_linux_status(fake_xrdfs, monkeypatch, capsys):
@@ -599,7 +616,27 @@ def test_unsupported_xattr_uses_legacy_linux_status(fake_xrdfs, monkeypatch, cap
     )
 
     assert dispatch("xattr", [_URL, "xroot.xattr"], prog="gfal xattr") == 95
-    assert "gfal xattr error: 95" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "gfal xattr error: 95 (Operation not supported) - "
+        "Server responded with an error: [3013] Unable to fsctl: "
+        "Operation not supported; /data/file\n"
+    )
+
+
+def test_missing_xattr_uses_legacy_linux_status(fake_xrdfs, monkeypatch, capsys):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "50")
+    monkeypatch.setenv(
+        "FAKE_XRDFS_STDERR",
+        "[ERROR] Server responded with an error: [3027] "
+        'Failed to get the xattr "user.absent" (No data available)\n',
+    )
+
+    assert dispatch("xattr", [_URL, "user.absent"], prog="gfal xattr") == 61
+    assert capsys.readouterr().err == (
+        "gfal xattr error: 61 (No data available) - "
+        "Server responded with an error: [3027] "
+        'Failed to get the xattr "user.absent" (No data available)\n'
+    )
 
 
 def test_timeout_includes_capability_probe(fake_xrdfs, monkeypatch, capsys):
