@@ -50,7 +50,12 @@ if record_path:
 
 if arguments == ["--help"]:
     time.sleep(float(os.environ.get("FAKE_XRDFS_HELP_SLEEP", "0")))
-    default_help = "command-first batch\nls --json\nstat --json\nxattr <path> [attribute]\n"
+    default_help = (
+        "command-first batch\n"
+        "--json print one JSON object per entry\n"
+        "stat [--json] [-q query] [--] <path>...\n"
+        "xattr <path> [attribute]\n"
+    )
     sys.stdout.write(os.environ.get("FAKE_XRDFS_HELP", default_help))
     raise SystemExit(0)
 
@@ -222,6 +227,18 @@ def test_incompatible_xrdfs_fails_before_remote_operation(
     fake_xrdfs, monkeypatch, capsys
 ):
     monkeypatch.setenv("FAKE_XRDFS_HELP", "legacy server-first help only\n")
+    assert dispatch("stat", [_URL], prog="gfal stat") == 69
+    assert "incompatible xrdfs" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_generic_json_help_does_not_satisfy_metadata_contract(
+    fake_xrdfs, monkeypatch, capsys
+):
+    monkeypatch.setenv(
+        "FAKE_XRDFS_HELP",
+        "command-first batch\n--json\nxattr <path> [attribute]\n",
+    )
     assert dispatch("stat", [_URL], prog="gfal stat") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
     assert _command_records(fake_xrdfs) == []

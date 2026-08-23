@@ -21,7 +21,8 @@ from typing import Optional
 
 _CAPABILITY_MARKERS = (
     "command-first batch",
-    "--json",
+    "--json print one JSON object per entry",
+    "stat [--json]",
     "xattr <path> [attribute]",
 )
 
