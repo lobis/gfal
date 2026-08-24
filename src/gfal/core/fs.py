@@ -21,7 +21,6 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import fsspec
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
-_EMITTED_ROOT_HTTPS_FALLBACKS: set[tuple[str, str]] = set()
 _EMITTED_HTTPS_XROOTD_FALLBACKS: set[str] = set()
 _WEBDAV_FS_CACHE_LOCK = threading.Lock()
 _WEBDAV_FS_CACHE: dict[tuple[Any, ...], Any] = {}
@@ -161,23 +160,8 @@ def eos_authz_url(url: str, token: Optional[str]) -> Optional[str]:
     return urlunparse(parsed._replace(query=urlencode(params)))
 
 
-class RootProtocolFallbackWarning(UserWarning):
-    """Warning emitted when ``root://`` falls back to HTTPS."""
-
-
 class HttpsXRootDFallbackWarning(UserWarning):
     """Warning emitted when experimental XRootD-over-HTTPS falls back to WebDAV."""
-
-
-def _root_url_to_https(url):
-    """Translate a ``root://`` or ``xroot://`` URL to the equivalent HTTPS URL."""
-    parsed = urlparse(url)
-    path = parsed.path
-    if path.startswith("//"):
-        path = path[1:]
-    elif not path.startswith("/"):
-        path = "/" + path
-    return urlunparse(parsed._replace(scheme="https", path=path))
 
 
 def _iter_exception_chain(exc):
@@ -217,20 +201,6 @@ def _is_xrootd_http_unsupported(exc) -> bool:
         if any(marker in message for marker in markers):
             return True
     return False
-
-
-def _warn_root_https_fallback(root_url, https_url):
-    """Emit a one-time warning when a ``root://`` URL is retried via HTTPS."""
-    key = (root_url, https_url)
-    if key in _EMITTED_ROOT_HTTPS_FALLBACKS:
-        return
-    _EMITTED_ROOT_HTTPS_FALLBACKS.add(key)
-    warnings.warn(
-        "XRootD support is not installed; "
-        f"retrying {redact_authz(root_url)} via HTTPS as {redact_authz(https_url)}",
-        RootProtocolFallbackWarning,
-        stacklevel=3,
-    )
 
 
 def _warn_https_xrootd_fallback(url, reason):
@@ -348,18 +318,7 @@ def url_to_fs(url, storage_options=None, **kwargs):
 
     if scheme in ("root", "xroot"):
         _fix_xrootd_plugin_path()
-        try:
-            return _native_xrootd_url_to_fs(url, storage_options)
-        except Exception as e:
-            if _is_missing_xrootd_dependency(e):
-                https_url = _root_url_to_https(url)
-                _warn_root_https_fallback(url, https_url)
-                return _get_cached_webdav_fs(storage_options), https_url
-            cause = e.__cause__ or e
-            raise RuntimeError(
-                f"Cannot load native XRootD filesystem: {cause}\n"
-                "Install XRootD bindings in your environment, for example with: conda install -c conda-forge xrootd"
-            ) from e
+        return _native_xrootd_url_to_fs(url, storage_options)
 
     if scheme == "file":
         fso = fsspec.filesystem("file")

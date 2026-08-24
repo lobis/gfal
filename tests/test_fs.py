@@ -4,18 +4,14 @@ import asyncio
 import datetime
 import stat as stat_module
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from gfal.core import fs as fs_module
 from gfal.core.fs import (
     HttpsXRootDFallbackWarning,
-    RootProtocolFallbackWarning,
     StatInfo,
     _clear_cached_webdav_filesystems,
     _generic_storage_opts,
-    _root_url_to_https,
     _to_timestamp,
     _verify_get_client,
     isdir,
@@ -306,29 +302,26 @@ class TestUrlToFs:
         assert path == "/eos/file"
         assert calls == [("root://example.com//eos/file", {"timeout": 7})]
 
-    def test_root_backend_native_falls_back_to_https_when_xrootd_missing(
-        self, monkeypatch
-    ):
+    def test_root_backend_propagates_missing_xrootd(self, monkeypatch):
         from gfal.core.xrootd_native import XRootDNativeFileSystem
 
         def fake_from_url(url, storage_options=None):
+            del url, storage_options
             raise ModuleNotFoundError("No module named 'XRootD'")
+
+        def fail_webdav(storage_options):
+            del storage_options
+            raise AssertionError("root:// must not fall back to WebDAV")
 
         monkeypatch.setattr(
             XRootDNativeFileSystem,
             "from_url",
             staticmethod(fake_from_url),
         )
+        monkeypatch.setattr("gfal.core.fs._get_cached_webdav_fs", fail_webdav)
 
-        with pytest.warns(RootProtocolFallbackWarning):
-            fso, path = url_to_fs(
-                "root://eospublic.cern.ch//eos/opendata/native-file.root"
-            )
-
-        from gfal.core.webdav import WebDAVFileSystem
-
-        assert isinstance(fso, WebDAVFileSystem)
-        assert path == "https://eospublic.cern.ch/eos/opendata/native-file.root"
+        with pytest.raises(ModuleNotFoundError, match="No module named 'XRootD'"):
+            url_to_fs("root://eospublic.cern.ch//eos/opendata/native-file.root")
 
     def test_dav_normalized_to_http(self):
         from gfal.core.webdav import WebDAVFileSystem
@@ -363,57 +356,36 @@ class TestUrlToFs:
         fso, path = url_to_fs(f.as_uri(), {"ssl_verify": True})
         assert Path(path) == f
 
-    def test_root_url_to_https_preserves_absolute_path(self):
-        assert (
-            _root_url_to_https("root://eospublic.cern.ch//eos/opendata/file.root")
-            == "https://eospublic.cern.ch/eos/opendata/file.root"
-        )
-
-    def test_root_falls_back_to_https_when_xrootd_deps_missing(self):
-        with (
-            patch(
-                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
-                side_effect=ModuleNotFoundError("No module named 'XRootD'"),
-            ),
-            pytest.warns(
-                RootProtocolFallbackWarning,
-                match=(
-                    "retrying root://eospublic.cern.ch//eos/opendata/file.root "
-                    "via HTTPS as https://eospublic.cern.ch/eos/opendata/file.root"
-                ),
-            ),
-        ):
-            fso, path = url_to_fs("root://eospublic.cern.ch//eos/opendata/file.root")
-
-        from gfal.core.webdav import WebDAVFileSystem
-
-        assert isinstance(fso, WebDAVFileSystem)
-        assert path == "https://eospublic.cern.ch/eos/opendata/file.root"
-
-    def test_root_fallback_warning_redacts_authz_token(self, monkeypatch):
+    def test_root_backend_preserves_url_and_failure(self, monkeypatch):
         from gfal.core.xrootd_native import XRootDNativeFileSystem
 
-        def fake_from_url(url, storage_options=None):
-            del url, storage_options
-            raise ModuleNotFoundError("No module named 'XRootD'")
+        calls = []
+        failure = OSError("XRootD authentication failed")
 
-        monkeypatch.setattr(fs_module, "_EMITTED_ROOT_HTTPS_FALLBACKS", set())
+        def fake_from_url(url, storage_options=None):
+            calls.append((url, storage_options))
+            raise failure
+
+        def fail_webdav(storage_options):
+            del storage_options
+            raise AssertionError("root:// must not fall back to WebDAV")
+
         monkeypatch.setattr(
             XRootDNativeFileSystem,
             "from_url",
             staticmethod(fake_from_url),
         )
+        monkeypatch.setattr("gfal.core.fs._get_cached_webdav_fs", fail_webdav)
 
         url = (
             "root://eospilot.cern.ch//eos/pilot/test/file.root?"
             "authz=zteos64:secret&eos.app=gfal"
         )
-        with pytest.warns(RootProtocolFallbackWarning) as records:
+        with pytest.raises(OSError) as caught:
             url_to_fs(url)
 
-        warning = str(records[0].message)
-        assert "zteos64:secret" not in warning
-        assert "authz=<redacted>&eos.app=gfal" in warning
+        assert caught.value is failure
+        assert calls == [(url, {})]
 
     def test_redact_authz_preserves_other_query_params(self):
         message = (

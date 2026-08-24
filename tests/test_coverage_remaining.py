@@ -7,14 +7,12 @@ import io
 import os
 import stat as stat_module
 import sys
-import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gfal.cli.base import exception_exit_code, interactive
-from gfal.core import fs
 from gfal.core.api import (
     ChecksumPolicy,
     CopyOptions,
@@ -31,14 +29,11 @@ from gfal.core.errors import (
     is_xrootd_permission_message,
 )
 from gfal.core.fs import (
-    RootProtocolFallbackWarning,
     StatInfo,
     _crc32c_file,
     _fix_xrootd_plugin_path,
     _format_checksum_result,
     _is_missing_xrootd_dependency,
-    _root_url_to_https,
-    _warn_root_https_fallback,
     _xrootd_flags_to_mode,
     compute_checksum,
     isdir,
@@ -80,80 +75,6 @@ class TestIsMissingXrootdDependency:
     def test_no_implementation_marker(self):
         e = ValueError("no implementation for protocol root")
         assert _is_missing_xrootd_dependency(e)
-
-
-class TestWarnRootHttpsFallback:
-    """Lines 164: deduplicated warning."""
-
-    def test_warns_once(self):
-        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard((
-            "root://host//path",
-            "https://host/path",
-        ))
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            _warn_root_https_fallback("root://host//path", "https://host/path")
-            assert len(w) == 1
-            assert issubclass(w[0].category, RootProtocolFallbackWarning)
-
-        # Second call is suppressed
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            _warn_root_https_fallback("root://host//path", "https://host/path")
-            assert len(w) == 0
-
-        # Cleanup
-        fs._EMITTED_ROOT_HTTPS_FALLBACKS.discard((
-            "root://host//path",
-            "https://host/path",
-        ))
-
-
-class TestRootUrlToHttps:
-    """Lines 128-129: path normalisation branches."""
-
-    def test_double_slash_prefix(self):
-        result = _root_url_to_https("root://host//abs/path")
-        assert result == "https://host/abs/path"
-
-    def test_no_leading_slash(self):
-        result = _root_url_to_https("root://host/relative")
-        assert result == "https://host/relative"
-
-    def test_single_slash(self):
-        result = _root_url_to_https("root://host/path")
-        assert result == "https://host/path"
-
-
-class TestUrlToFsXrootdFallback:
-    """Lines 206-211: XRootD raises non-ImportError exception."""
-
-    def test_non_import_error_raises_runtime_error(self):
-        orig_error = RuntimeError("Unexpected init failure in library")
-        with (
-            patch(
-                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
-                side_effect=orig_error,
-            ),
-            pytest.raises(RuntimeError, match="Cannot load native XRootD filesystem"),
-        ):
-            url_to_fs("root://host//path")
-
-    def test_import_error_falls_back_to_https(self):
-        fs._EMITTED_ROOT_HTTPS_FALLBACKS.clear()
-        with (
-            patch(
-                "gfal.core.xrootd_native.XRootDNativeFileSystem.from_url",
-                side_effect=ImportError("no xrootd"),
-            ),
-            warnings.catch_warnings(record=True),
-        ):
-            warnings.simplefilter("always")
-            fso, path = url_to_fs("root://host//path")
-        from gfal.core.webdav import WebDAVFileSystem
-
-        assert isinstance(fso, WebDAVFileSystem)
-        assert path == "https://host/path"
 
 
 class TestUrlToFsWindowsPath:
