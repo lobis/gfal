@@ -56,6 +56,11 @@ _ROUTED_COMMAND_CASES = (
         ["mv", _URL, "root://storage.example//data/destination"],
     ),
     ("rm", [_URL], ["rm", "--", _URL]),
+    (
+        "token",
+        [_HTTP_URL],
+        ["token", "--validity", "60", "--", _HTTP_URL],
+    ),
 )
 _CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
@@ -157,6 +162,8 @@ elif arguments and arguments[0] == "rm":
         sys.stdout.write(f"{url}\tSKIP\n")
     else:
         sys.stdout.write(f"rm {url} : OK\n")
+elif arguments and arguments[0] == "token":
+    sys.stdout.write("issued-token\n")
 elif arguments[1:5] == ["query", "tape", "--json", "archiveinfo"]:
     sys.stdout.write(json.dumps([
         {"url": url, "path": "/data/file", "locality": "TAPE"}
@@ -835,6 +842,109 @@ def test_rm_just_delete_routes_xrootd_without_a_metadata_request(fake_xrdfs):
     assert record["argv"] == ["rm", "--", _URL]
 
 
+def test_token_emits_only_the_issued_token(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("token", _HTTP_URL)
+
+    assert returncode == 0, stderr
+    assert stdout == "issued-token\n"
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["token", "--validity", "60", "--", _HTTP_URL]
+
+
+def test_token_translates_write_validity_issuer_and_activities(fake_xrdfs):
+    issuer = "https://issuer.example/tenant"
+    returncode, stdout, stderr = run_gfal_router(
+        "token",
+        "--write",
+        "--validity",
+        "15",
+        "--issuer",
+        issuer,
+        _HTTP_URL,
+        "LIST",
+        "MANAGE",
+    )
+
+    assert returncode == 0, stderr
+    assert stdout == "issued-token\n"
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == [
+        "token",
+        "--write",
+        "--validity",
+        "15",
+        "--issuer",
+        issuer,
+        "--",
+        _HTTP_URL,
+        "LIST",
+        "MANAGE",
+    ]
+
+
+@pytest.mark.parametrize("scheme", ("https", "davs"))
+def test_token_routes_secure_webdav_schemes(fake_xrdfs, scheme):
+    url = f"{scheme}://storage.example/data/file"
+
+    returncode, stdout, stderr = run_gfal_router("token", url)
+
+    assert returncode == 0, stderr
+    assert stdout == "issued-token\n"
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["token", "--validity", "60", "--", url]
+
+
+@pytest.mark.parametrize("scheme", ("file", "root", "http", "dav"))
+def test_token_rejects_non_https_urls_without_native_request(fake_xrdfs, scheme):
+    url = (
+        "file:///tmp/file"
+        if scheme == "file"
+        else f"{scheme}://storage.example/data/file"
+    )
+
+    returncode, stdout, stderr = run_gfal_router("token", url)
+
+    assert returncode == 93
+    assert stdout == ""
+    assert "Protocol not supported or path/url invalid" in stderr
+    assert url in stderr
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_token_attached_negative_validity_matches_legacy_validation(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("token", "--validity=-1", _HTTP_URL)
+
+    assert returncode == 1
+    assert stdout == ""
+    assert "Validity must be a number >= 0" in stderr
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_token_separate_negative_validity_matches_legacy_parser(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("token", "--validity", "-1", _HTTP_URL)
+
+    assert returncode == 2
+    assert stdout == ""
+    assert "argument --validity: expected one argument" in stderr
+    assert _command_records(fake_xrdfs) == []
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["-v", _HTTP_URL], "default activities for read access"),
+        (["-v", "--write", _HTTP_URL], "default activities for write access"),
+        (["-v", _HTTP_URL, "LIST"], "user-provided activities"),
+    ],
+)
+def test_token_preserves_verbose_compatibility_message(fake_xrdfs, arguments, message):
+    returncode, stdout, stderr = run_gfal_router("token", *arguments)
+
+    assert returncode == 0, stderr
+    assert message in stdout
+    assert stdout.endswith("issued-token\n")
+
+
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
 def test_nonremote_or_incomplete_urls_use_the_transition_fallback(value):
     assert not supports_url(value)
@@ -934,6 +1044,18 @@ def test_rename_requires_native_mv_compatibility(fake_xrdfs, monkeypatch, capsys
 
     destination = "root://storage.example//data/destination"
     assert dispatch("rename", [_URL, destination], prog="gfal rename") == 69
+    assert "incompatible xrdfs" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_token_requires_native_storage_token_contract(fake_xrdfs, monkeypatch, capsys):
+    token_markers = XRDFS_COMMANDS["token"].capability_markers
+    older_help = "\n".join(
+        marker for marker in capability_markers() if marker not in token_markers
+    )
+    monkeypatch.setenv("FAKE_XRDFS_HELP", older_help)
+
+    assert dispatch("token", [_HTTP_URL], prog="gfal token") == 69
     assert "incompatible xrdfs" in capsys.readouterr().err
     assert _command_records(fake_xrdfs) == []
 

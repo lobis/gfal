@@ -24,6 +24,7 @@ from typing import Optional
 # different number (macOS uses 60 for ETIMEDOUT, for example).
 GFAL_ENOMSG = 42
 GFAL_ENODATA = 61
+GFAL_EPROTONOSUPPORT = 93
 GFAL_ENOTSUP = 95
 GFAL_ETIMEDOUT = 110
 GFAL_ECONNREFUSED = 111
@@ -34,6 +35,7 @@ GFAL_EINPROGRESS = 115
 _GFAL_ERROR_DESCRIPTIONS = {
     GFAL_ENOMSG: "No message of desired type",
     GFAL_ENODATA: "No data available",
+    GFAL_EPROTONOSUPPORT: "Protocol not supported",
     GFAL_ENOTSUP: "Operation not supported",
     GFAL_ETIMEDOUT: "Connection timed out",
     GFAL_ECONNREFUSED: "Connection refused",

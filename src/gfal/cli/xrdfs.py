@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from gfal import __version__
 from gfal.xrdfs import (
     GFAL_ENOMSG,
+    GFAL_EPROTONOSUPPORT,
     GFAL_ETIMEDOUT,
     XrdfsResult,
     check_capability,
@@ -48,6 +49,7 @@ _XROOTD_SCHEMES = frozenset({
     "xroots",
 })
 _REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
+_TOKEN_SCHEMES = frozenset(("davs", "https"))
 _sleep = time.sleep
 
 _COMMON_CAPABILITY_MARKERS = (
@@ -447,6 +449,29 @@ def _add_rm_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("file", nargs="*", help="URI(s) of the file(s) to delete")
 
 
+def _add_token_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-w",
+        "--write",
+        action="store_true",
+        help="request a write-access token",
+    )
+    parser.add_argument(
+        "--validity",
+        type=int,
+        default=60,
+        metavar="MINUTES",
+        help="token validity in minutes",
+    )
+    parser.add_argument("--issuer", metavar="URL", help="token issuer URL")
+    parser.add_argument("path", help="URI to request token for")
+    parser.add_argument(
+        "activities",
+        nargs="*",
+        help="activities for macaroon request",
+    )
+
+
 def read_nonempty_lines(filename: str) -> list[str]:
     return [
         line.strip()
@@ -481,6 +506,10 @@ def _route_rm_source(params: argparse.Namespace, _urls: Sequence[str]) -> bool:
         params.just_delete
         and any(supports_url(value, _WEBDAV_SCHEMES) for value in urls)
     )
+
+
+def _route_always(_params: argparse.Namespace, _urls: Sequence[str]) -> bool:
+    return True
 
 
 def _build_parser(
@@ -537,6 +566,13 @@ def routing_arguments(
     return params, False
 
 
+def _token_has_separate_negative_validity(argv: Sequence[str]) -> bool:
+    return any(
+        value == "--validity" and argv[index + 1].startswith("-")
+        for index, value in enumerate(argv[:-1])
+    )
+
+
 def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
     """Return whether *argv* is fully understood and has only remote operands."""
     definition = XRDFS_COMMANDS[command]
@@ -544,7 +580,7 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
     if information_requested:
         return True
     if params is None:
-        return False
+        return command == "token" and _token_has_separate_negative_validity(argv)
 
     values = _command_urls(definition, params)
     if definition.url_parameters:
@@ -563,7 +599,10 @@ def parse_arguments(
     """Parse and validate one registered command invocation."""
     definition = XRDFS_COMMANDS[command]
     parser = _build_parser(command, prog)
-    params = parser.parse_args(list(argv))
+    arguments = list(argv)
+    if command == "token" and _token_has_separate_negative_validity(arguments):
+        parser.error("argument --validity: expected one argument")
+    params = parser.parse_args(arguments)
     _validate_common(parser, params)
     if definition.validate is not None:
         definition.validate(parser, params)
@@ -1752,6 +1791,54 @@ def _execute_rm(
     return first_failure
 
 
+def _execute_token(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    if params.validity < 0:
+        sys.stderr.write("Validity must be a number >= 0\n")
+        return 1
+
+    if params.verbose:
+        if params.activities:
+            print("Will use user-provided activities")
+        else:
+            access = "write" if params.write else "read"
+            print(f"Will use default activities for {access} access")
+        sys.stdout.flush()
+
+    if not supports_url(params.path, _TOKEN_SCHEMES):
+        sys.stderr.write(
+            f"{prog} error: {GFAL_EPROTONOSUPPORT} "
+            f"({error_description(GFAL_EPROTONOSUPPORT)}) - Protocol not "
+            f"supported or path/url invalid: {redact_authz(params.path)}\n"
+        )
+        return GFAL_EPROTONOSUPPORT
+
+    arguments = ["token"]
+    if params.write:
+        arguments.append("--write")
+    arguments.extend(("--validity", str(params.validity)))
+    if params.issuer:
+        arguments.extend(("--issuer", params.issuer))
+    arguments.extend(("--", params.path, *params.activities))
+    result = run_xrdfs(
+        executable,
+        arguments,
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return status
+    if not _write_bytes(sys.stdout, result.stdout):
+        return 255
+    return 0
+
+
 XRDFS_COMMANDS = MappingProxyType({
     "ls": XrdfsCommand(
         description="Gfal util LS command. List directory's contents.",
@@ -1846,6 +1933,14 @@ XRDFS_COMMANDS = MappingProxyType({
         execute=_execute_rm,
         capability_markers=("rm [-r|-R|--recursive] [--dry-run] [--] <path>...",),
         route_when=_route_rm_source,
+        url_parameters=(),
+    ),
+    "token": XrdfsCommand(
+        description="Gfal util TOKEN command. Retrieve a SE-issued token.",
+        add_arguments=_add_token_arguments,
+        execute=_execute_token,
+        capability_markers=("token [-w|--write] [--validity minutes] [--issuer URL]",),
+        route_when=_route_always,
         url_parameters=(),
     ),
 })
