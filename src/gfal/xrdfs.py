@@ -223,6 +223,7 @@ _ERROR_CODES = (
         errno.ENOENT,
         (
             "no such file or directory",
+            "not found",
             "file or object not found",
             "resource not found",
             "not_found",

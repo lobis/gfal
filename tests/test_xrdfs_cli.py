@@ -1127,6 +1127,11 @@ def test_host_down_diagnostic_uses_legacy_linux_status(fake_xrdfs, monkeypatch, 
             "No such file or directory",
         ),
         (
+            "Server responded with an error: [3011] Not Found",
+            errno.ENOENT,
+            "No such file or directory",
+        ),
+        (
             "Server responded with an error: [3006] FAILED_DEPENDENCY",
             112,
             "Host is down",
