@@ -420,6 +420,69 @@ def _add_rename_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("destination", help="new file name")
 
 
+def _add_rm_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-r",
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="remove directories and their contents recursively",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="do not perform any actual change, just print what would happen",
+    )
+    parser.add_argument(
+        "--just-delete",
+        action="store_true",
+        help="do not perform any check on the file (needed for HTTP signed URLs)",
+    )
+    parser.add_argument("--from-file", help="read SURLs from a file")
+    parser.add_argument(
+        "--bulk",
+        action="store_true",
+        help="use bulk deletion",
+    )
+    parser.add_argument("file", nargs="*", help="URI(s) of the file(s) to delete")
+
+
+def _read_nonempty_lines(filename: str) -> list[str]:
+    return [
+        line.strip()
+        for line in Path(filename).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _rm_route_urls(params: argparse.Namespace) -> Optional[list[str]]:
+    if params.from_file and params.file:
+        return []
+    if not params.from_file:
+        return list(params.file)
+    try:
+        return _read_nonempty_lines(params.from_file)
+    except OSError:
+        # Route unreadable lists to the dependency-free implementation so it
+        # can report the filesystem error without importing the old backend.
+        return None
+
+
+def _route_rm_source(params: argparse.Namespace, _urls: Sequence[str]) -> bool:
+    urls = _rm_route_urls(params)
+    if urls is None or not urls:
+        return True
+    if not all(supports_url(value) for value in urls):
+        return False
+    # The native WebDAV safety guard deliberately performs metadata I/O. Keep
+    # signed-URL direct deletion on the transition backend until the native CLI
+    # exposes an explicit equivalent.
+    return not (
+        params.just_delete
+        and any(supports_url(value, _WEBDAV_SCHEMES) for value in urls)
+    )
+
+
 def _build_parser(
     command: str,
     prog: str,
@@ -681,11 +744,7 @@ def _tape_surls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
         return [params.surl], 0
 
     try:
-        values = [
-            line.strip()
-            for line in Path(params.from_file).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        values = _read_nonempty_lines(params.from_file)
     except OSError as exc:
         code = exc.errno or 1
         sys.stderr.write(f"{prog} error: {code} ({error_description(code)}) - {exc}\n")
@@ -1588,6 +1647,76 @@ def _execute_rename(
     return _report_result(prog, result, configured_timeout=params.timeout)
 
 
+def _rm_urls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
+    if params.from_file and params.file:
+        sys.stderr.write(
+            f"{prog}: --from-file and positional arguments cannot be combined\n"
+        )
+        return [], errno.EINVAL
+
+    try:
+        urls = (
+            _read_nonempty_lines(params.from_file)
+            if params.from_file
+            else list(params.file)
+        )
+    except OSError as exc:
+        code = exc.errno or 1
+        sys.stderr.write(f"{prog} error: {code} ({error_description(code)}) - {exc}\n")
+        return [], code
+
+    if not urls:
+        sys.stderr.write(f"{prog}: No URI specified\n")
+        return [], errno.EINVAL
+    for value in urls:
+        if not supports_url(value):
+            sys.stderr.write(
+                f"{prog}: the xrdfs backend requires a complete remote URL "
+                f"(got {redact_authz(value)!r})\n"
+            )
+            return [], errno.EINVAL
+    return urls, 0
+
+
+def _execute_rm(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    urls, status = _rm_urls(prog, params)
+    if status:
+        return status
+
+    first_failure = 0
+    for value in urls:
+        arguments = ["rm"]
+        if params.recursive:
+            arguments.append("--recursive")
+        if params.dry_run:
+            arguments.append("--dry-run")
+        arguments.extend(("--", value))
+        result = run_xrdfs(
+            executable,
+            arguments,
+            environ=environment,
+            timeout=_remaining(deadline),
+        )
+        status = _report_result(prog, result, configured_timeout=params.timeout)
+        if status in (errno.EINTR, GFAL_ETIMEDOUT):
+            return status
+        if status:
+            if not first_failure:
+                first_failure = status
+            continue
+        if params.dry_run and not _write_bytes(sys.stdout, result.stdout):
+            return 255
+        # Native xrdfs reports successful mutations on stdout, while
+        # gfal-rm is silent. Suppress that transport-specific confirmation.
+    return first_failure
+
+
 XRDFS_COMMANDS = MappingProxyType({
     "ls": XrdfsCommand(
         description="Gfal util LS command. List directory's contents.",
@@ -1675,6 +1804,14 @@ XRDFS_COMMANDS = MappingProxyType({
         capability_markers=("mv <path1> <path2>",),
         url_parameters=("source", "destination"),
         url_schemes=_XROOTD_SCHEMES,
+    ),
+    "rm": XrdfsCommand(
+        description="Gfal util RM command. Removes files or directories.",
+        add_arguments=_add_rm_arguments,
+        execute=_execute_rm,
+        capability_markers=("rm [-r|-R|--recursive] [--dry-run] [--] <path>...",),
+        route_when=_route_rm_source,
+        url_parameters=(),
     ),
 })
 

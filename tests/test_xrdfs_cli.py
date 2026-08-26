@@ -55,6 +55,7 @@ _ROUTED_COMMAND_CASES = (
         [_URL, "root://storage.example//data/destination"],
         ["mv", _URL, "root://storage.example//data/destination"],
     ),
+    ("rm", [_URL], ["rm", "--", _URL]),
 )
 _CAPABILITY_HELP = "".join(f"{marker}\n" for marker in capability_markers())
 
@@ -150,6 +151,12 @@ elif arguments and arguments[0] == "sum":
 elif arguments and arguments[0] == "xattr":
     if "set" not in arguments:
         sys.stdout.write("fixture-value\n")
+elif arguments and arguments[0] == "rm":
+    url = arguments[-1]
+    if "--dry-run" in arguments:
+        sys.stdout.write(f"{url}\tSKIP\n")
+    else:
+        sys.stdout.write(f"rm {url} : OK\n")
 elif arguments[1:5] == ["query", "tape", "--json", "archiveinfo"]:
     sys.stdout.write(json.dumps([
         {"url": url, "path": "/data/file", "locality": "TAPE"}
@@ -700,6 +707,113 @@ def test_rename_preserves_terminal_statuses(
     assert message in stderr
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["mv", source, destination]
+
+
+def test_rm_suppresses_native_success_output(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("rm", _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["rm", "--", _URL]
+
+
+@pytest.mark.parametrize("recursive", ("-r", "-R", "--recursive"))
+def test_rm_translates_recursive_options(fake_xrdfs, recursive):
+    returncode, stdout, stderr = run_gfal_router("rm", recursive, _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["rm", "--recursive", "--", _URL]
+
+
+def test_rm_preserves_native_dry_run_plan(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("rm", "--dry-run", _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == f"{_URL}\tSKIP\n"
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["rm", "--dry-run", "--", _URL]
+
+
+def test_rm_reads_remote_operands_from_file(fake_xrdfs, tmp_path):
+    first = "root://storage.example//data/first"
+    second = "https://storage.example/data/second"
+    source_list = tmp_path / "remove.txt"
+    source_list.write_text(f"\n{first}\n\n{second}\n", encoding="utf-8")
+
+    returncode, stdout, stderr = run_gfal_router("rm", "--from-file", str(source_list))
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["rm", "--", first],
+        ["rm", "--", second],
+    ]
+
+
+def test_rm_rejects_from_file_with_positional_operand(fake_xrdfs, tmp_path):
+    source_list = tmp_path / "remove.txt"
+    source_list.write_text(f"{_URL}\n", encoding="utf-8")
+
+    returncode, stdout, stderr = run_gfal_router(
+        "rm", "--from-file", str(source_list), _URL
+    )
+
+    assert returncode == errno.EINVAL
+    assert stdout == ""
+    assert "cannot be combined" in stderr
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_rm_missing_from_file_reports_error_without_legacy_backend(
+    fake_xrdfs, tmp_path
+):
+    missing = tmp_path / "missing.txt"
+
+    returncode, stdout, stderr = run_gfal_router("rm", "--from-file", str(missing))
+
+    assert returncode == errno.ENOENT
+    assert stdout == ""
+    assert "No such file or directory" in stderr
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_rm_continues_after_failure_and_returns_first_error(fake_xrdfs):
+    missing = "root://storage.example//data/missing"
+    denied = "root://storage.example//data/denied"
+    success = "root://storage.example//data/success"
+
+    returncode, stdout, stderr = run_gfal_router("rm", missing, denied, success)
+
+    assert returncode == errno.ENOENT
+    assert stdout == ""
+    assert "No such file or directory" in stderr
+    assert "Permission denied" in stderr
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["rm", "--", missing],
+        ["rm", "--", denied],
+        ["rm", "--", success],
+    ]
+
+
+def test_rm_bulk_is_accepted_without_changing_native_semantics(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("rm", "--bulk", _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["rm", "--", _URL]
+
+
+def test_rm_just_delete_routes_xrootd_without_a_metadata_request(fake_xrdfs):
+    returncode, stdout, stderr = run_gfal_router("rm", "--just-delete", _URL)
+
+    assert returncode == 0, stderr
+    assert stdout == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == ["rm", "--", _URL]
 
 
 @pytest.mark.parametrize("value", ("/local/path", "file:///local/path", "root:///path"))
