@@ -26,6 +26,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not arguments:
         arguments = ["gfal"]
 
+    if len(arguments) > 1 and arguments[1] == "rm":
+        from gfal.cli.local import dispatch_local_rm, should_use_local_rm
+
+        if should_use_local_rm(arguments[2:]):
+            return dispatch_local_rm(arguments[2:])
+
     if (
         len(arguments) > 1
         and arguments[1] in XRDFS_COMMANDS

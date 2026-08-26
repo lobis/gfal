@@ -447,7 +447,7 @@ def _add_rm_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("file", nargs="*", help="URI(s) of the file(s) to delete")
 
 
-def _read_nonempty_lines(filename: str) -> list[str]:
+def read_nonempty_lines(filename: str) -> list[str]:
     return [
         line.strip()
         for line in Path(filename).read_text(encoding="utf-8").splitlines()
@@ -461,7 +461,7 @@ def _rm_route_urls(params: argparse.Namespace) -> Optional[list[str]]:
     if not params.from_file:
         return list(params.file)
     try:
-        return _read_nonempty_lines(params.from_file)
+        return read_nonempty_lines(params.from_file)
     except OSError:
         # Route unreadable lists to the dependency-free implementation so it
         # can report the filesystem error without importing the old backend.
@@ -519,9 +519,10 @@ class _RoutingParser(argparse.ArgumentParser):
         raise _RoutingError(message or "")
 
 
-def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
-    """Return whether *argv* is fully understood and has only remote operands."""
-    definition = XRDFS_COMMANDS[command]
+def routing_arguments(
+    command: str, argv: Sequence[str]
+) -> tuple[Optional[argparse.Namespace], bool]:
+    """Parse *argv* without output, returning parameters and an info flag."""
     parser = _build_parser(command, f"gfal {command}", _RoutingParser)
     try:
         with (
@@ -530,8 +531,19 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
         ):
             params = parser.parse_args(list(argv))
     except _InformationRequested:
-        return True
+        return None, True
     except _RoutingError:
+        return None, False
+    return params, False
+
+
+def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
+    """Return whether *argv* is fully understood and has only remote operands."""
+    definition = XRDFS_COMMANDS[command]
+    params, information_requested = routing_arguments(command, argv)
+    if information_requested:
+        return True
+    if params is None:
         return False
 
     values = _command_urls(definition, params)
@@ -543,6 +555,19 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
     elif definition.route_when is None:
         return False
     return definition.route_when is None or definition.route_when(params, values)
+
+
+def parse_arguments(
+    command: str, argv: Sequence[str], *, prog: str
+) -> tuple[argparse.ArgumentParser, argparse.Namespace]:
+    """Parse and validate one registered command invocation."""
+    definition = XRDFS_COMMANDS[command]
+    parser = _build_parser(command, prog)
+    params = parser.parse_args(list(argv))
+    _validate_common(parser, params)
+    if definition.validate is not None:
+        definition.validate(parser, params)
+    return parser, params
 
 
 def _validate_common(
@@ -744,7 +769,7 @@ def _tape_surls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
         return [params.surl], 0
 
     try:
-        values = _read_nonempty_lines(params.from_file)
+        values = read_nonempty_lines(params.from_file)
     except OSError as exc:
         code = exc.errno or 1
         sys.stderr.write(f"{prog} error: {code} ({error_description(code)}) - {exc}\n")
@@ -1656,7 +1681,7 @@ def _rm_urls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
 
     try:
         urls = (
-            _read_nonempty_lines(params.from_file)
+            read_nonempty_lines(params.from_file)
             if params.from_file
             else list(params.file)
         )
@@ -1820,11 +1845,7 @@ def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -
     """Parse and execute one of the registered xrdfs-backed commands."""
     definition = XRDFS_COMMANDS[command]
     program = prog or f"gfal {command}"
-    parser = _build_parser(command, program)
-    params = parser.parse_args(list(argv))
-    _validate_common(parser, params)
-    if definition.validate is not None:
-        definition.validate(parser, params)
+    parser, params = parse_arguments(command, argv, prog=program)
 
     for value in _command_urls(definition, params):
         _validate_remote_url(parser, value, definition.url_schemes)
