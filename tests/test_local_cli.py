@@ -9,14 +9,14 @@ import sys
 from gfal.cli.main import main
 
 
-def test_local_rm_is_silent_and_removes_file(tmp_path, capsys):
+def test_local_rm_reports_deleted_file_like_legacy_gfal(tmp_path, capsys):
     target = tmp_path / "file.txt"
     target.write_text("fixture", encoding="utf-8")
 
     assert main(["gfal", "rm", target.as_uri()]) == 0
 
     assert not target.exists()
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == (f"{target.as_uri()}\tDELETED\n", "")
 
 
 def test_local_rm_accepts_bare_paths(tmp_path, capsys):
@@ -26,7 +26,7 @@ def test_local_rm_accepts_bare_paths(tmp_path, capsys):
     assert main(["gfal", "rm", str(target)]) == 0
 
     assert not target.exists()
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == (f"{target}\tDELETED\n", "")
 
 
 def test_local_rm_removes_directory_recursively(tmp_path, capsys):
@@ -38,7 +38,12 @@ def test_local_rm_removes_directory_recursively(tmp_path, capsys):
     assert main(["gfal", "rm", "--recursive", target.as_uri()]) == 0
 
     assert not target.exists()
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == (
+        f"{child.as_uri()}\tDELETED\n"
+        f"{child.parent.as_uri()}\tRMDIR\n"
+        f"{target.as_uri()}\tRMDIR\n",
+        "",
+    )
 
 
 def test_local_rm_rejects_directory_without_recursive(tmp_path, capsys):
@@ -77,8 +82,10 @@ def test_local_rm_continues_after_failure_and_returns_first_error(tmp_path, caps
 
     assert not existing.exists()
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "No such file or directory" in captured.err
+    assert captured.out == (
+        f"{missing.as_uri()}\tMISSING\n{existing.as_uri()}\tDELETED\n"
+    )
+    assert captured.err == ""
 
 
 def test_local_rm_reads_operands_from_file(tmp_path, capsys):
@@ -96,7 +103,10 @@ def test_local_rm_reads_operands_from_file(tmp_path, capsys):
 
     assert not first.exists()
     assert not second.exists()
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == (
+        f"{first.as_uri()}\tDELETED\n{second.as_uri()}\tDELETED\n",
+        "",
+    )
 
 
 def test_local_rm_no_operands_does_not_require_xrdfs(tmp_path, monkeypatch, capsys):

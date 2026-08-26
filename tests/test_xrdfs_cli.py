@@ -709,11 +709,11 @@ def test_rename_preserves_terminal_statuses(
     assert record["argv"] == ["mv", source, destination]
 
 
-def test_rm_suppresses_native_success_output(fake_xrdfs):
+def test_rm_translates_native_success_output_to_legacy_status(fake_xrdfs):
     returncode, stdout, stderr = run_gfal_router("rm", _URL)
 
     assert returncode == 0, stderr
-    assert stdout == ""
+    assert stdout == f"{_URL}\tDELETED\n"
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["rm", "--", _URL]
 
@@ -723,7 +723,7 @@ def test_rm_translates_recursive_options(fake_xrdfs, recursive):
     returncode, stdout, stderr = run_gfal_router("rm", recursive, _URL)
 
     assert returncode == 0, stderr
-    assert stdout == ""
+    assert stdout == f"{_URL}\tRMDIR\n"
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["rm", "--recursive", "--", _URL]
 
@@ -737,6 +737,26 @@ def test_rm_preserves_native_dry_run_plan(fake_xrdfs):
     assert record["argv"] == ["rm", "--dry-run", "--", _URL]
 
 
+def test_rm_missing_path_matches_legacy_status_line(fake_xrdfs):
+    missing = "root://storage.example//data/missing"
+
+    returncode, stdout, stderr = run_gfal_router("rm", missing)
+
+    assert returncode == errno.ENOENT
+    assert stdout == f"{missing}\tMISSING\n"
+    assert stderr == ""
+
+
+def test_rm_failed_path_matches_legacy_status_and_diagnostic(fake_xrdfs):
+    denied = "root://storage.example//data/denied"
+
+    returncode, stdout, stderr = run_gfal_router("rm", denied)
+
+    assert returncode == errno.EACCES
+    assert stdout == f"{denied}\tFAILED\n"
+    assert "Permission denied" in stderr
+
+
 def test_rm_reads_remote_operands_from_file(fake_xrdfs, tmp_path):
     first = "root://storage.example//data/first"
     second = "https://storage.example/data/second"
@@ -746,7 +766,7 @@ def test_rm_reads_remote_operands_from_file(fake_xrdfs, tmp_path):
     returncode, stdout, stderr = run_gfal_router("rm", "--from-file", str(source_list))
 
     assert returncode == 0, stderr
-    assert stdout == ""
+    assert stdout == f"{first}\tDELETED\n{second}\tDELETED\n"
     assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
         ["rm", "--", first],
         ["rm", "--", second],
@@ -788,8 +808,7 @@ def test_rm_continues_after_failure_and_returns_first_error(fake_xrdfs):
     returncode, stdout, stderr = run_gfal_router("rm", missing, denied, success)
 
     assert returncode == errno.ENOENT
-    assert stdout == ""
-    assert "No such file or directory" in stderr
+    assert stdout == (f"{missing}\tMISSING\n{denied}\tFAILED\n{success}\tDELETED\n")
     assert "Permission denied" in stderr
     assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
         ["rm", "--", missing],
@@ -802,7 +821,7 @@ def test_rm_bulk_is_accepted_without_changing_native_semantics(fake_xrdfs):
     returncode, stdout, stderr = run_gfal_router("rm", "--bulk", _URL)
 
     assert returncode == 0, stderr
-    assert stdout == ""
+    assert stdout == f"{_URL}\tDELETED\n"
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["rm", "--", _URL]
 
@@ -811,7 +830,7 @@ def test_rm_just_delete_routes_xrootd_without_a_metadata_request(fake_xrdfs):
     returncode, stdout, stderr = run_gfal_router("rm", "--just-delete", _URL)
 
     assert returncode == 0, stderr
-    assert stdout == ""
+    assert stdout == f"{_URL}\tDELETED\n"
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["rm", "--", _URL]
 

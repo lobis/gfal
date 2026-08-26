@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import errno
 import os
-import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -71,6 +70,17 @@ def _print_removal_plan(path: Path, *, as_uri: bool) -> None:
     print(f"{display}\tSKIP DIR")
 
 
+def _remove_tree(path: Path, *, as_uri: bool) -> None:
+    for child in path.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            _remove_tree(child, as_uri=as_uri)
+        else:
+            child.unlink()
+            print(f"{_display_path(child, as_uri=as_uri)}\tDELETED")
+    path.rmdir()
+    print(f"{_display_path(path, as_uri=as_uri)}\tRMDIR")
+
+
 def _report_error(prog: str, value: str, exc: OSError) -> int:
     code = exc.errno or 1
     detail = exc.strerror or str(exc)
@@ -111,11 +121,13 @@ def dispatch_local_rm(argv: Sequence[str], *, prog: str = "gfal rm") -> int:
                 first_failure = errno.EINVAL
             continue
         try:
+            as_uri = urlsplit(value).scheme.lower() == "file"
             if params.just_delete:
                 if params.dry_run:
                     print(f"{redact_authz(value)}\tSKIP")
                 else:
                     path.unlink()
+                    print(f"{redact_authz(value)}\tDELETED")
                 continue
             path.lstat()
             is_directory = path.is_dir() and not path.is_symlink()
@@ -126,16 +138,20 @@ def dispatch_local_rm(argv: Sequence[str], *, prog: str = "gfal rm") -> int:
                     str(path),
                 )
             if params.dry_run:
-                _print_removal_plan(
-                    path,
-                    as_uri=urlsplit(value).scheme.lower() == "file",
-                )
+                _print_removal_plan(path, as_uri=as_uri)
             elif is_directory:
-                shutil.rmtree(path)
+                _remove_tree(path, as_uri=as_uri)
             else:
                 path.unlink()
+                print(f"{redact_authz(value)}\tDELETED")
+        except FileNotFoundError as exc:
+            print(f"{redact_authz(value)}\tMISSING")
+            if not first_failure:
+                first_failure = exc.errno or errno.ENOENT
         except OSError as exc:
             code = _report_error(prog, value, exc)
+            if code != errno.EISDIR:
+                print(f"{redact_authz(value)}\tFAILED")
             if not first_failure:
                 first_failure = code
     return first_failure

@@ -1728,17 +1728,27 @@ def _execute_rm(
             environ=environment,
             timeout=_remaining(deadline),
         )
+        code = error_exit_code(result)
+        if code == errno.ENOENT:
+            print(f"{redact_authz(value)}\tMISSING")
+            if not first_failure:
+                first_failure = code
+            continue
         status = _report_result(prog, result, configured_timeout=params.timeout)
         if status in (errno.EINTR, GFAL_ETIMEDOUT):
             return status
         if status:
+            if status != errno.EISDIR:
+                print(f"{redact_authz(value)}\tFAILED")
             if not first_failure:
                 first_failure = status
             continue
         if params.dry_run and not _write_bytes(sys.stdout, result.stdout):
             return 255
-        # Native xrdfs reports successful mutations on stdout, while
-        # gfal-rm is silent. Suppress that transport-specific confirmation.
+        if not params.dry_run:
+            action = "RMDIR" if params.recursive else "DELETED"
+            print(f"{redact_authz(value)}\t{action}")
+        # Suppress the transport-specific ``rm ... : OK`` confirmation.
     return first_failure
 
 
