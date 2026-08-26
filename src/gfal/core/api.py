@@ -1687,6 +1687,9 @@ def run_sync(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 
 def parse_checksum_arg(arg: str) -> tuple[str, str | None]:
+    # Click passes the legacy attached short-option form ``-K=ADLER32`` as
+    # ``=ADLER32``.  gfal2-utils accepts both that form and ``-K ADLER32``.
+    arg = arg.removeprefix("=")
     parts = arg.split(":", 1)
     algorithm = parts[0].upper()
     expected = parts[1].lower() if len(parts) > 1 else None

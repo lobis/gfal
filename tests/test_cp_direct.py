@@ -615,6 +615,15 @@ class TestChecksumHelpers:
         assert alg == "ADLER32"
         assert expected is None
 
+    def test_parse_checksum_arg_accepts_attached_short_option_value(self):
+        alg, expected = _parse_checksum_arg("=ADLER32")
+        assert alg == "ADLER32"
+        assert expected is None
+
+        alg, expected = _parse_checksum_arg("=ADLER32:abc123")
+        assert alg == "ADLER32"
+        assert expected == "abc123"
+
     def test_parse_checksum_arg_with_value(self):
         alg, expected = _parse_checksum_arg("ADLER32:abc123")
         assert alg == "ADLER32"
