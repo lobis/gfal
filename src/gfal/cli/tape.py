@@ -1,11 +1,10 @@
 """
-Tape / staging commands: bringonline, archivepoll, evict, token.
+Transitional tape/staging commands and the storage-token command.
 
-These commands require the native gfal2 C library (via python-gfal2) which is
-not available in this fsspec-based reimplementation.  The tape/staging CLI
-interfaces are preserved for backwards compatibility; those commands print a
-clear "not supported" message and exit with code 1.  The HTTP token command is
-implemented directly.
+The top-level router handles HTTP/WebDAV bringonline, archivepoll, and evict
+through the external xrdfs client before this module is imported.  These
+methods remain only as the fallback for local paths, unsupported protocols, or
+options that have not migrated.  The HTTP token command is implemented here.
 """
 
 import sys
@@ -15,9 +14,8 @@ from gfal.core.fs import build_storage_options
 from gfal.core.token_defaults import DEFAULT_TOKEN_VALIDITY
 
 _NOT_SUPPORTED_MSG = (
-    "{prog}: this command requires the native gfal2 C library and is not "
-    "supported in this fsspec-based implementation.\n"
-    "Use the original gfal2-util package for tape/staging operations.\n"
+    "{prog}: tape operations are not supported for this operand; use a complete "
+    "HTTP/WebDAV URL and a compatible xrdfs client.\n"
 )
 
 
@@ -70,7 +68,7 @@ class CommandTape(base.CommandBase):
     )
     @base.arg("surl", nargs="?", type=base.surl, help="Site URL")
     def execute_bringonline(self):
-        """Bring a file online from tape storage (not supported)."""
+        """Report unsupported bring-online requests left on the fallback path."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 
@@ -94,7 +92,7 @@ class CommandTape(base.CommandBase):
     )
     @base.arg("surl", nargs="?", type=base.surl, help="Site URL")
     def execute_archivepoll(self):
-        """Poll the status of an archive (bring-online) request (not supported)."""
+        """Report unsupported archive polls left on the fallback path."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 
@@ -110,7 +108,7 @@ class CommandTape(base.CommandBase):
         help="token from the bring-online request",
     )
     def execute_evict(self):
-        """Evict a file from a disk buffer (not supported)."""
+        """Report unsupported evictions left on the fallback path."""
         sys.stderr.write(_NOT_SUPPORTED_MSG.format(prog=self.prog))
         return 1
 

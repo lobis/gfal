@@ -10,12 +10,19 @@ gfal cat
 gfal stat
 gfal sum
 gfal xattr
+gfal bringonline
+gfal archivepoll
+gfal evict
 ```
 
 No `gfal-*` executables are installed.
 
-For complete ROOT, HTTP, and DAV URLs, these five commands invoke `xrdfs`
+For complete ROOT, HTTP, and DAV URLs, the namespace/read commands invoke `xrdfs`
 directly and do not import `fsspec`, `aiohttp`, or the Python XRootD bindings.
+The three tape commands use `xrdfs` for complete HTTP/WebDAV URLs and consume
+its machine-readable Tape REST and stage-status responses. They reproduce
+legacy token, `QUEUED`/`READY`/`FAILED`, polling, and successful-eviction output
+without implementing another Tape REST client in Python.
 Local paths, `file://` URLs, unported commands, and the public Python API still
 use the previous implementation during the transition. This fallback is
 intentionally lazy so it can be removed command-by-command.
@@ -49,7 +56,8 @@ gfal stat root://host.example//path/to/file
 
 The supported URL schemes are `root`, `roots`, `xroot`, `xroots`, `http`,
 `https`, `dav`, and `davs`. A complete URL, including the authority, is
-required.
+required. Tape commands are restricted to HTTP/WebDAV because the client must
+not switch a failed `root://` request to another protocol implicitly.
 
 ## Packaging direction
 

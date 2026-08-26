@@ -38,7 +38,7 @@ equivalent.
 | Common flags | Compatible plus extensions | gfal2 common flags are accepted: `-h/--help`, `-V/--version`, `-v`, `-D/--definition`, `-t/--timeout`, `-E/--cert`, `--key`, `-4`, `-6`, `-C/--client-info`, `--log-file`. This implementation also exposes `--quiet`, `--authz-token`, and `--verify/--no-verify`. |
 | Ignored gfal2-specific flags | Compatible | `-D`, `-C`, `-4`, `-6` are accepted. IPv4/IPv6 influence HTTP session creation where possible; gfal2/GridFTP-specific parameter injection remains intentionally unsupported. |
 | Output compatibility mode | Partial | `GFAL_CLI_GFAL2=1` keeps plain output and legacy formatting for key commands. Rich help layout differs from argparse gfal2 help, but flags are accepted. |
-| Protocol scope | Intentional subset | This project supports local files, HTTP/WebDAV, and XRootD. SRM/GridFTP/tape-specific runtime behavior is stubbed or ignored by design. |
+| Protocol scope | Intentional subset | This project supports local files, HTTP/WebDAV, and XRootD. WLCG Tape REST operations use HTTP/WebDAV through `xrdfs`; SRM and GridFTP-specific runtime behavior remains unsupported or ignored. |
 
 ## Command matrix
 
@@ -55,9 +55,9 @@ equivalent.
 | `gfal sum` | Compatible positional interface: `file checksum_type`. Extra algorithms are supported. | Computes checksums via remote metadata where available, otherwise client-side fallback. | Unit tests plus Docker comparison for eospublic ADLER32. | Compatible for supported algorithms/protocols; extra algorithms are extensions. |
 | `gfal xattr` | Compatible positional interface: `file [attribute]`, with `key=value` for set. | Uses local xattrs or backend xattr helpers where supported. | Unit tests cover get/set/list/error behavior. | Compatible where backend xattrs exist; unsupported filesystems report a clear error. |
 | `gfal save` | Compatible positional interface: `file`; overwrites existing file from stdin. | Writes stdin to supported destinations. | Unit tests and eospilot comparison via readback. | Compatible for supported protocols. |
-| `gfal bringonline` | Compatible flags/positionals. | Stub: returns non-zero with clear unsupported message. | Unit tests cover flags and unsupported behavior. | CLI-compatible stub by design; runtime is intentionally omitted. |
-| `gfal archivepoll` | Compatible flags/positionals. | Stub: returns non-zero with clear unsupported message. | Unit tests cover flags and unsupported behavior. | CLI-compatible stub by design; runtime is intentionally omitted. |
-| `gfal evict` | Fixed positional order to `file [token]`. | Stub: returns non-zero with clear unsupported message. | Unit tests cover help/order and unsupported behavior. | CLI-compatible stub by design; runtime is intentionally omitted. |
+| `gfal bringonline` | Compatible flags/positionals, including `--from-file`, pin lifetime, metadata, and polling timeout. `--desired-request-time` is accepted with a warning because Tape REST has no equivalent. | Submits with `xrdfs prepare`, labels the request token, and maps stage-status JSON to legacy per-file output with exponential polling. | Unit tests cover translation, status mapping, polling, batching, and validation. Live EOS/CTA submission produced the legacy token and `QUEUED` lines and was cancelled immediately. | Compatible for WLCG Tape REST over HTTP/WebDAV; SRM remains out of scope. |
+| `gfal archivepoll` | Compatible flags/positionals and `--from-file`. | Maps `DISK` to `QUEUED`, `TAPE`/`DISK_AND_TAPE` to `READY`, and per-file errors to legacy `FAILED` lines while retaining exit 0. | Unit tests cover all localities, per-file errors, batching, and polling. Live EOS/CTA output matches gfal2-util for tape-only, disk-only, and missing files. | Compatible for WLCG Tape REST over HTTP/WebDAV. |
+| `gfal evict` | Compatible positional order `file [token]`. | Maps to `xrdfs prepare --evict [token] file` and retains empty successful output. | Unit tests cover both token forms. Live release remains pending until a test request reaches `DISK_AND_TAPE`. | Implemented for WLCG Tape REST over HTTP/WebDAV; final live lifecycle validation remains. |
 | `gfal token` | Fixed positional order to `path [activities...]`; supports `--issuer`, `--validity`, `-w/--write`. | Implements HTTPS SE-issued macaroon retrieval, including gfal2-compatible direct macaroon body construction and issuer fallbacks. | Unit tests cover request construction; live token trace comparison was used for `docs/http-tpc-token-trace.md`. | Compatible for HTTPS token retrieval; SRM/tape token meanings remain out of scope. |
 
 ## Intentional extensions
@@ -84,6 +84,14 @@ captured help reference does not fully specify output details:
 3. `gfal-chmod` exact success/error behavior on EOS Pilot over XRootD and HTTP.
 4. Additional `-vvv` trace comparison for non-TPC HTTP `stat`, `cat`, and `sum`
    if strict trace shape becomes a goal beyond the tokenized TPC path.
+5. `gfal evict` against a completed test stage, followed by archive locality
+   verification, and the same tape matrix against dCache after its downtime.
+
+The standalone `xrootd-gfal-validation` harness now captures the legacy,
+candidate, and raw `xrdfs` forms as JSON. Its EOS/CTA matrix covers 19 cases;
+after mapping native `NOT_FOUND` and `FAILED_DEPENDENCY` statuses, all observed
+semantics and exit codes match the live GFAL2 reference. Raw diagnostic wording
+still differs for selected failures and remains visible in the comparison.
 
 Per the repository SSH policy, run live `lxplus.cern.ch` checks only after
 explicit confirmation and only on read-only eospublic targets or bounded eospilot

@@ -112,7 +112,8 @@ src/gfal/
     ls.py          gfal ls (CommandLs)
     copy.py        gfal cp (CommandCopy)
     rm.py          gfal rm (CommandRm)
-    tape.py        tape/SRM stubs (bringonline, archivepoll, evict) + token CLI
+    tape.py        transitional tape fallbacks + token CLI
+    xrdfs.py       external xrdfs adapters, including WLCG Tape REST commands
     progress.py    Terminal progress bar for copy operations
   tui/
     __init__.py    GfalTui Textual app + CommandTui registration
@@ -440,17 +441,18 @@ Never run `gfal bringonline`, `gfal archivepoll`, `gfal evict`, `gfal token`,
 `gfal cp`, `gfal rm`, `gfal mkdir`, `gfal chmod`, `gfal save`, `gfal rename`
 without explicit user confirmation, even with `--dry-run`.
 
-## Intentionally omitted / stubbed
+## Protocol-limited fallbacks
 
-The following are not functionally implemented (require native gfal2 C library or
-are protocol-specific), but their **CLI interface is fully preserved** for backwards
-compatibility.  Each stub prints a clear "not supported" message and exits 1.
+The WLCG Tape REST forms of bringonline, archivepoll, and evict are implemented
+for complete HTTP/WebDAV URLs through the external `xrdfs` client. Their
+fallback methods remain for unsupported local, ROOT, and SRM operands and exit
+with a clear compatibility message.
 
 | Command / flag | Reason | Status |
 |----------------|--------|--------|
-| `gfal bringonline` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
-| `gfal archivepoll` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
-| `gfal evict` | Requires gfal2 tape/SRM support | CLI stub in `tape.py` |
+| `gfal bringonline` | WLCG Tape REST over HTTP/WebDAV | Implemented through `xrdfs`; SRM fallback unsupported |
+| `gfal archivepoll` | WLCG Tape REST over HTTP/WebDAV | Implemented through `xrdfs`; SRM fallback unsupported |
+| `gfal evict` | WLCG Tape REST over HTTP/WebDAV | Implemented through `xrdfs`; SRM fallback unsupported |
 | `gfal-legacy-*` | Legacy LFC commands; no active users | Not implemented |
 | `-D`/`--definition` | gfal2 parameter override; no gfal2 | Accepted, ignored (common args) |
 | `-C`/`--client-info` | gfal2 client metadata; no gfal2 | Accepted, ignored (common args) |
