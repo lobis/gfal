@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from gfal import __version__
 from gfal.xrdfs import (
+    GFAL_ENOMSG,
     GFAL_ETIMEDOUT,
     XrdfsResult,
     check_capability,
@@ -1218,6 +1219,16 @@ def _execute_xattr(
         environ=environment,
         timeout=_remaining(deadline),
     )
+    if (
+        result.returncode != 0
+        and attribute == "user.status"
+        and error_exit_code(result) == errno.ENOENT
+    ):
+        sys.stderr.write(
+            f"{prog} error: {GFAL_ENOMSG} ({error_description(GFAL_ENOMSG)}) - "
+            "[Tape REST API] Locality attribute missing\n"
+        )
+        return GFAL_ENOMSG
     status = _report_result(prog, result, configured_timeout=params.timeout)
     if status:
         return status

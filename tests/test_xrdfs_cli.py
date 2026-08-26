@@ -1121,6 +1121,33 @@ def test_host_down_diagnostic_uses_legacy_linux_status(fake_xrdfs, monkeypatch, 
 @pytest.mark.parametrize(
     ("message", "status", "description"),
     (
+        (
+            "Server responded with an error: [3011] NOT_FOUND",
+            errno.ENOENT,
+            "No such file or directory",
+        ),
+        (
+            "Server responded with an error: [3006] FAILED_DEPENDENCY",
+            112,
+            "Host is down",
+        ),
+    ),
+)
+def test_xrootd_status_names_use_legacy_gfal_status(
+    fake_xrdfs, monkeypatch, capsys, message, status, description
+):
+    monkeypatch.setenv("FAKE_XRDFS_RETURN_CODE", "54")
+    monkeypatch.setenv("FAKE_XRDFS_STDERR", f"[ERROR] {message}\n")
+
+    assert dispatch("sum", [_URL, "ADLER32"], prog="gfal sum") == status
+    assert capsys.readouterr().err == (
+        f"gfal sum error: {status} ({description}) - {message}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "status", "description"),
+    (
         ("Connection refused", 111, "Connection refused"),
         ("No route to host", 113, "No route to host"),
     ),
@@ -1192,6 +1219,16 @@ def test_missing_xattr_uses_legacy_linux_status(fake_xrdfs, monkeypatch, capsys)
         "gfal xattr error: 61 (No data available) - "
         "Server responded with an error: [3027] "
         'Failed to get the xattr "user.absent" (No data available)\n'
+    )
+
+
+def test_missing_tape_status_matches_legacy_locality_error(fake_xrdfs, capsys):
+    missing = "https://storage.example/data/missing"
+
+    assert dispatch("xattr", [missing, "user.status"], prog="gfal xattr") == 42
+    assert capsys.readouterr().err == (
+        "gfal xattr error: 42 (No message of desired type) - "
+        "[Tape REST API] Locality attribute missing\n"
     )
 
 

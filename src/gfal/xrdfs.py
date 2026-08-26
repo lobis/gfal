@@ -22,6 +22,7 @@ from typing import Optional
 # gfal2-util is distributed on Linux and returns Linux errno values even when
 # this pure-Python frontend is developed on a platform whose errno table uses a
 # different number (macOS uses 60 for ETIMEDOUT, for example).
+GFAL_ENOMSG = 42
 GFAL_ENODATA = 61
 GFAL_ENOTSUP = 95
 GFAL_ETIMEDOUT = 110
@@ -31,6 +32,7 @@ GFAL_EHOSTUNREACH = 113
 GFAL_EINPROGRESS = 115
 
 _GFAL_ERROR_DESCRIPTIONS = {
+    GFAL_ENOMSG: "No message of desired type",
     GFAL_ENODATA: "No data available",
     GFAL_ENOTSUP: "Operation not supported",
     GFAL_ETIMEDOUT: "Connection timed out",
@@ -223,6 +225,7 @@ _ERROR_CODES = (
             "no such file or directory",
             "file or object not found",
             "resource not found",
+            "not_found",
         ),
     ),
     (errno.EACCES, ("permission denied", "not authorized", "forbidden")),
@@ -232,7 +235,7 @@ _ERROR_CODES = (
     (GFAL_ENOTSUP, ("operation not supported",)),
     (GFAL_ETIMEDOUT, ("timed out", "timeout", "operation expired")),
     (GFAL_ECONNREFUSED, ("connection refused",)),
-    (GFAL_EHOSTDOWN, ("host is down",)),
+    (GFAL_EHOSTDOWN, ("host is down", "failed_dependency")),
     (GFAL_EINPROGRESS, ("checksum response used",)),
     (GFAL_EHOSTUNREACH, ("host unreachable", "no route to host")),
     (errno.ENOSPC, ("no space left", "insufficient storage")),
