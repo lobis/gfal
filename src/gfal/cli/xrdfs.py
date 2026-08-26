@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -295,6 +296,41 @@ def _add_xattr_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_archivepoll_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--polling-timeout",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="timeout for the polling operation",
+    )
+    parser.add_argument(
+        "--from-file",
+        metavar="FILE",
+        help="read SURLs from a file, one per line",
+    )
+    parser.add_argument("surl", nargs="?", help="Site URL")
+
+
+def _validate_tape_source(
+    parser: argparse.ArgumentParser, params: argparse.Namespace
+) -> None:
+    if params.from_file and params.surl:
+        parser.error("could not combine --from-file with a positional SURL")
+    if not params.from_file and not params.surl:
+        parser.error("missing SURL")
+    if params.polling_timeout < 0:
+        parser.error("--polling-timeout must be non-negative")
+    if params.surl:
+        _validate_remote_url(parser, params.surl, _WEBDAV_SCHEMES)
+
+
+def _route_tape_source(params: argparse.Namespace, _urls: Sequence[str]) -> bool:
+    if params.from_file:
+        return True
+    return bool(params.surl and supports_url(params.surl, _WEBDAV_SCHEMES))
+
+
 def _add_mkdir_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-m",
@@ -394,9 +430,12 @@ def should_use_xrdfs(command: str, argv: Sequence[str]) -> bool:
         return False
 
     values = _command_urls(definition, params)
-    if not values or not all(
-        supports_url(value, definition.url_schemes) for value in values
-    ):
+    if definition.url_parameters:
+        if not values or not all(
+            supports_url(value, definition.url_schemes) for value in values
+        ):
+            return False
+    elif definition.route_when is None:
         return False
     return definition.route_when is None or definition.route_when(params, values)
 
@@ -581,6 +620,46 @@ def _json_records(prog: str, result: XrdfsResult) -> tuple[list[dict[str, Any]],
         )
         return [], code
     return records, 0
+
+
+def _json_document(prog: str, result: XrdfsResult) -> tuple[Any, int]:
+    try:
+        return json.loads(result.stdout.decode("utf-8")), 0
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        code = getattr(errno, "EPROTO", 1)
+        sys.stderr.write(
+            f"{prog} error: {code} ({os.strerror(code)}) - "
+            f"invalid JSON from xrdfs: {exc}\n"
+        )
+        return None, code
+
+
+def _tape_surls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
+    if params.surl:
+        return [params.surl], 0
+
+    try:
+        values = [
+            line.strip()
+            for line in Path(params.from_file).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except OSError as exc:
+        code = exc.errno or 1
+        sys.stderr.write(f"{prog} error: {code} ({error_description(code)}) - {exc}\n")
+        return [], code
+
+    if not values:
+        sys.stderr.write(f"{prog}: no SURLs found in {params.from_file}\n")
+        return [], 1
+    for value in values:
+        if not supports_url(value, _WEBDAV_SCHEMES):
+            sys.stderr.write(
+                f"{prog}: the xrdfs Tape backend requires complete HTTP/WebDAV "
+                f"URLs (got {redact_authz(value)!r})\n"
+            )
+            return [], 2
+    return values, 0
 
 
 def _validate_json_record(record: Mapping[str, Any]) -> None:
@@ -1099,6 +1178,91 @@ def _execute_xattr(
     return 0
 
 
+def _archivepoll_once(
+    prog: str,
+    executable: str,
+    surls: Sequence[str],
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> tuple[int, int]:
+    result = run_xrdfs(
+        executable,
+        ("query", "tape", "--json", "archiveinfo", *surls),
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return 0, status
+
+    document, status = _json_document(prog, result)
+    if status:
+        return 0, status
+    if not isinstance(document, list) or len(document) != len(surls):
+        code = getattr(errno, "EPROTO", 1)
+        sys.stderr.write(
+            f"{prog} error: {code} ({os.strerror(code)}) - "
+            "archiveinfo JSON does not match the requested SURLs\n"
+        )
+        return 0, code
+
+    terminal = 0
+    for surl, record in zip(surls, document):
+        if not isinstance(record, dict):
+            code = getattr(errno, "EPROTO", 1)
+            sys.stderr.write(
+                f"{prog} error: {code} ({os.strerror(code)}) - "
+                "archiveinfo entry is not an object\n"
+            )
+            return 0, code
+
+        error = record.get("error")
+        locality = record.get("locality")
+        display_surl = redact_authz(surl)
+        if error:
+            print(f"{display_surl} => FAILED: {redact_authz(str(error))}")
+            terminal += 1
+        elif locality in ("TAPE", "DISK_AND_TAPE"):
+            print(f"{display_surl} READY")
+            terminal += 1
+        else:
+            print(f"{display_surl} QUEUED")
+    return terminal, 0
+
+
+def _execute_archivepoll(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    surls, status = _tape_surls(prog, params)
+    if status:
+        return status
+
+    terminal, status = _archivepoll_once(
+        prog, executable, surls, params, environment, deadline
+    )
+    if status:
+        return status
+
+    remaining = params.polling_timeout
+    sleep_seconds = 1
+    while terminal != len(surls) and remaining > 0:
+        print(f"Archiving ongoing, sleep {sleep_seconds} seconds...")
+        remaining -= sleep_seconds
+        time.sleep(sleep_seconds)
+        terminal, status = _archivepoll_once(
+            prog, executable, surls, params, environment, deadline
+        )
+        if status:
+            return status
+        sleep_seconds = min(sleep_seconds * 2, 300)
+    return 0
+
+
 def _mkdir_mode(value: int) -> str:
     try:
         mode = int(str(value), 8)
@@ -1201,6 +1365,16 @@ XRDFS_COMMANDS = MappingProxyType({
         add_arguments=_add_xattr_arguments,
         execute=_execute_xattr,
         capability_markers=("xattr <path> [attribute]",),
+    ),
+    "archivepoll": XrdfsCommand(
+        description="Gfal util ARCHIVEPOLL command. Execute archive polling.",
+        add_arguments=_add_archivepoll_arguments,
+        execute=_execute_archivepoll,
+        validate=_validate_tape_source,
+        capability_markers=("archiveinfo    <paths...>",),
+        route_when=_route_tape_source,
+        url_parameters=(),
+        url_schemes=_WEBDAV_SCHEMES,
     ),
     "mkdir": XrdfsCommand(
         description=(

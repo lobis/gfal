@@ -27,12 +27,18 @@ from gfal.xrdfs import XrdfsResult
 from helpers import run_gfal_router
 
 _URL = "root://storage.example//data/file"
+_HTTP_URL = "https://storage.example/data/file"
 _ROUTED_COMMAND_CASES = (
     ("ls", [_URL], ["ls", "--json", _URL]),
     ("cat", [_URL], ["cat", _URL]),
     ("stat", [_URL], ["stat", "--json", _URL]),
     ("sum", [_URL, "ADLER32"], ["sum", _URL, "ADLER32"]),
     ("xattr", [_URL, "user.test"], ["xattr", _URL, "--", "user.test"]),
+    (
+        "archivepoll",
+        [_HTTP_URL],
+        ["query", "tape", "--json", "archiveinfo", _HTTP_URL],
+    ),
     ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
     ("chmod", ["0644", _URL], ["chmod", "0644", _URL]),
     (
@@ -120,6 +126,11 @@ elif arguments and arguments[0] == "sum":
 elif arguments and arguments[0] == "xattr":
     if "set" not in arguments:
         sys.stdout.write("fixture-value\n")
+elif arguments[:4] == ["query", "tape", "--json", "archiveinfo"]:
+    sys.stdout.write(json.dumps([
+        {"url": url, "path": "/data/file", "locality": "TAPE"}
+        for url in arguments[4:]
+    ], separators=(",", ":")) + "\n")
 elif arguments and arguments[0] == "stat":
     sys.stdout.write(json.dumps({
         "path": "/data/file",
@@ -1279,6 +1290,87 @@ def test_xattr_accepts_dash_prefixed_attribute_after_delimiter(fake_xrdfs, capsy
     assert capsys.readouterr().out == "fixture-value\n"
     [record] = _command_records(fake_xrdfs)
     assert record["argv"] == ["xattr", _URL, "--", "-user.test"]
+
+
+def test_archivepoll_maps_tape_localities_and_errors(fake_xrdfs, monkeypatch, capsys):
+    disk = "https://storage.example/data/disk"
+    tape = "https://storage.example/data/tape"
+    both = "https://storage.example/data/both"
+    failed = "https://storage.example/data/failed-file"
+    monkeypatch.setenv(
+        "FAKE_XRDFS_STDOUT",
+        json.dumps([
+            {"url": disk, "path": "/data/disk", "locality": "DISK"},
+            {"url": tape, "path": "/data/tape", "locality": "TAPE"},
+            {
+                "url": both,
+                "path": "/data/both",
+                "locality": "DISK_AND_TAPE",
+            },
+            {
+                "url": failed,
+                "path": "/data/failed-file",
+                "error": "[Tape REST API] USER ERROR: file not found",
+            },
+        ]),
+    )
+    source_list = Path(fake_xrdfs).with_name("surls.txt")
+    source_list.write_text("\n".join((disk, tape, both, failed)), encoding="utf-8")
+
+    assert (
+        dispatch(
+            "archivepoll",
+            ["--from-file", str(source_list)],
+            prog="gfal archivepoll",
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.splitlines() == [
+        f"{disk} QUEUED",
+        f"{tape} READY",
+        f"{both} READY",
+        f"{failed} => FAILED: [Tape REST API] USER ERROR: file not found",
+    ]
+
+
+def test_archivepoll_rejects_positional_and_from_file_together(
+    fake_xrdfs, tmp_path, capsys
+):
+    source_list = tmp_path / "surls.txt"
+    source_list.write_text(_HTTP_URL, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as caught:
+        dispatch(
+            "archivepoll",
+            ["--from-file", str(source_list), _HTTP_URL],
+            prog="gfal archivepoll",
+        )
+    assert caught.value.code == 2
+    assert "could not combine" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_archivepoll_retries_with_legacy_sleep_schedule(
+    fake_xrdfs, monkeypatch, capsys
+):
+    queued = json.dumps([{"url": _HTTP_URL, "path": "/data/file", "locality": "DISK"}])
+    monkeypatch.setenv("FAKE_XRDFS_STDOUT", queued)
+    sleeps = []
+    monkeypatch.setattr(xrdfs_cli.time, "sleep", sleeps.append)
+
+    assert (
+        dispatch(
+            "archivepoll",
+            ["--polling-timeout", "3", _HTTP_URL],
+            prog="gfal archivepoll",
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert sleeps == [1, 2]
+    assert captured.out.count(f"{_HTTP_URL} QUEUED\n") == 3
+    assert "Archiving ongoing, sleep 1 seconds...\n" in captured.out
+    assert "Archiving ongoing, sleep 2 seconds...\n" in captured.out
 
 
 def test_nonpositive_timeout_is_unlimited_and_not_exported(
