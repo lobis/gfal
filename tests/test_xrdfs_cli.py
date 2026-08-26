@@ -37,7 +37,14 @@ _ROUTED_COMMAND_CASES = (
     (
         "archivepoll",
         [_HTTP_URL],
-        ["query", "tape", "--json", "archiveinfo", _HTTP_URL],
+        [
+            "https://storage.example",
+            "query",
+            "tape",
+            "--json",
+            "archiveinfo",
+            _HTTP_URL,
+        ],
     ),
     ("bringonline", [_HTTP_URL], ["prepare", "--stage", _HTTP_URL]),
     ("evict", [_HTTP_URL], ["prepare", "--evict", _HTTP_URL]),
@@ -143,10 +150,10 @@ elif arguments and arguments[0] == "sum":
 elif arguments and arguments[0] == "xattr":
     if "set" not in arguments:
         sys.stdout.write("fixture-value\n")
-elif arguments[:4] == ["query", "tape", "--json", "archiveinfo"]:
+elif arguments[1:5] == ["query", "tape", "--json", "archiveinfo"]:
     sys.stdout.write(json.dumps([
         {"url": url, "path": "/data/file", "locality": "TAPE"}
-        for url in arguments[4:]
+        for url in arguments[5:]
     ], separators=(",", ":")) + "\n")
 elif arguments and arguments[0] == "stat":
     sys.stdout.write(json.dumps({
@@ -1373,7 +1380,7 @@ def test_archivepoll_retries_with_legacy_sleep_schedule(
     queued = json.dumps([{"url": _HTTP_URL, "path": "/data/file", "locality": "DISK"}])
     monkeypatch.setenv("FAKE_XRDFS_STDOUT", queued)
     sleeps = []
-    monkeypatch.setattr(xrdfs_cli.time, "sleep", sleeps.append)
+    monkeypatch.setattr(xrdfs_cli, "_sleep", sleeps.append)
 
     assert (
         dispatch(
@@ -1449,7 +1456,7 @@ def test_bringonline_polls_and_maps_per_file_states(fake_xrdfs, monkeypatch, cap
         }),
     )
     sleeps = []
-    monkeypatch.setattr(xrdfs_cli.time, "sleep", sleeps.append)
+    monkeypatch.setattr(xrdfs_cli, "_sleep", sleeps.append)
 
     assert (
         dispatch(
@@ -1469,7 +1476,7 @@ def test_bringonline_polls_and_maps_per_file_states(fake_xrdfs, monkeypatch, cap
         "Request queued, sleep 1 seconds...",
         f"{ready} READY",
         f"{queued} QUEUED",
-        f"{failed} => FAILED: staging failed",
+        f"{failed} => FAILED: [Tape REST API] staging failed",
     ]
     assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
         ["prepare", "--stage", ready, queued, failed],

@@ -47,6 +47,7 @@ _XROOTD_SCHEMES = frozenset({
     "xroots",
 })
 _REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
+_sleep = time.sleep
 
 _COMMON_CAPABILITY_MARKERS = (
     "command-first batch",
@@ -702,6 +703,13 @@ def _tape_surls(prog: str, params: argparse.Namespace) -> tuple[list[str], int]:
     return values, 0
 
 
+def _legacy_tape_error(value: Any) -> str:
+    detail = redact_authz(str(value))
+    if detail.startswith("[Tape REST API]"):
+        return detail
+    return f"[Tape REST API] {detail}"
+
+
 def _validate_json_record(record: Mapping[str, Any]) -> None:
     """Validate the stable metadata schema before formatting its values."""
     required = {
@@ -1221,6 +1229,7 @@ def _execute_xattr(
 def _archivepoll_once(
     prog: str,
     executable: str,
+    endpoint: str,
     surls: Sequence[str],
     params: argparse.Namespace,
     environment: Mapping[str, str],
@@ -1228,7 +1237,7 @@ def _archivepoll_once(
 ) -> tuple[int, int]:
     result = run_xrdfs(
         executable,
-        ("query", "tape", "--json", "archiveinfo", *surls),
+        (endpoint, "query", "tape", "--json", "archiveinfo", *surls),
         environ=environment,
         timeout=_remaining(deadline),
     )
@@ -1261,7 +1270,7 @@ def _archivepoll_once(
         locality = record.get("locality")
         display_surl = redact_authz(surl)
         if error:
-            print(f"{display_surl} => FAILED: {redact_authz(str(error))}")
+            print(f"{display_surl} => FAILED: {_legacy_tape_error(error)}")
             terminal += 1
         elif locality in ("TAPE", "DISK_AND_TAPE"):
             print(f"{display_surl} READY")
@@ -1281,9 +1290,15 @@ def _execute_archivepoll(
     surls, status = _tape_surls(prog, params)
     if status:
         return status
+    endpoint = _storage_endpoint(surls)
+    if endpoint is None:
+        sys.stderr.write(
+            f"{prog}: all SURLs must belong to the same storage endpoint\n"
+        )
+        return errno.EXDEV
 
     terminal, status = _archivepoll_once(
-        prog, executable, surls, params, environment, deadline
+        prog, executable, endpoint, surls, params, environment, deadline
     )
     if status:
         return status
@@ -1293,9 +1308,9 @@ def _execute_archivepoll(
     while terminal != len(surls) and remaining > 0:
         print(f"Archiving ongoing, sleep {sleep_seconds} seconds...")
         remaining -= sleep_seconds
-        time.sleep(sleep_seconds)
+        _sleep(sleep_seconds)
         terminal, status = _archivepoll_once(
-            prog, executable, surls, params, environment, deadline
+            prog, executable, endpoint, surls, params, environment, deadline
         )
         if status:
             return status
@@ -1395,8 +1410,7 @@ def _bringonline_poll_once(
         state = str(record.get("state", "")).upper()
         error = record.get("error")
         if error or state in ("FAILED", "CANCELLED"):
-            detail = str(error or state)
-            print(f"{display_surl} => FAILED: {redact_authz(detail)}")
+            print(f"{display_surl} => FAILED: {_legacy_tape_error(error or state)}")
             terminal += 1
         elif record.get("onDisk") is True or state == "COMPLETED":
             print(f"{display_surl} READY")
@@ -1457,7 +1471,7 @@ def _execute_bringonline(
     while terminal != len(surls) and remaining > 0:
         print(f"Request queued, sleep {sleep_seconds} seconds...")
         remaining -= sleep_seconds
-        time.sleep(sleep_seconds)
+        _sleep(sleep_seconds)
         terminal, status = _bringonline_poll_once(
             prog,
             executable,
