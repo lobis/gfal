@@ -312,6 +312,30 @@ def _add_archivepoll_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("surl", nargs="?", help="Site URL")
 
 
+def _add_bringonline_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--pin-lifetime",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="desired pin lifetime in seconds",
+    )
+    parser.add_argument(
+        "--desired-request-time",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="desired total request time in seconds",
+    )
+    parser.add_argument(
+        "--staging-metadata",
+        default="",
+        metavar="METADATA",
+        help="metadata string for the bringonline operation",
+    )
+    _add_archivepoll_arguments(parser)
+
+
 def _validate_tape_source(
     parser: argparse.ArgumentParser, params: argparse.Namespace
 ) -> None:
@@ -321,6 +345,12 @@ def _validate_tape_source(
         parser.error("missing SURL")
     if params.polling_timeout < 0:
         parser.error("--polling-timeout must be non-negative")
+    pin_lifetime = getattr(params, "pin_lifetime", 0)
+    if pin_lifetime < 0:
+        parser.error("--pin-lifetime must be non-negative")
+    desired_request_time = getattr(params, "desired_request_time", None)
+    if desired_request_time is not None and desired_request_time < 0:
+        parser.error("--desired-request-time must be non-negative")
     if params.surl:
         _validate_remote_url(parser, params.surl, _WEBDAV_SCHEMES)
 
@@ -1263,6 +1293,177 @@ def _execute_archivepoll(
     return 0
 
 
+def _storage_endpoint(surls: Sequence[str]) -> Optional[str]:
+    endpoints = {
+        f"{parsed.scheme}://{parsed.netloc}"
+        for parsed in (urlsplit(value) for value in surls)
+    }
+    if len(endpoints) != 1:
+        return None
+    return endpoints.pop()
+
+
+def _stage_token(prog: str, result: XrdfsResult) -> tuple[str, int]:
+    value = result.stdout.decode("utf-8", errors="replace").strip()
+    if value.startswith("{"):
+        try:
+            document = json.loads(value)
+            value = document.get("requestId", "")
+        except (AttributeError, json.JSONDecodeError):
+            value = ""
+    if value and "\n" not in value:
+        return value, 0
+
+    code = getattr(errno, "EPROTO", 1)
+    sys.stderr.write(
+        f"{prog} error: {code} ({os.strerror(code)}) - "
+        "stage response does not contain a request token\n"
+    )
+    return "", code
+
+
+def _stage_status_by_path(
+    prog: str, document: Any
+) -> tuple[dict[str, Mapping[str, Any]], int]:
+    if not isinstance(document, dict) or not isinstance(document.get("files"), list):
+        code = getattr(errno, "EPROTO", 1)
+        sys.stderr.write(
+            f"{prog} error: {code} ({os.strerror(code)}) - "
+            "stage status JSON does not contain a files array\n"
+        )
+        return {}, code
+
+    records = {}
+    for record in document["files"]:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            code = getattr(errno, "EPROTO", 1)
+            sys.stderr.write(
+                f"{prog} error: {code} ({os.strerror(code)}) - "
+                "stage status contains an invalid file entry\n"
+            )
+            return {}, code
+        records[record["path"]] = record
+    return records, 0
+
+
+def _bringonline_poll_once(
+    prog: str,
+    executable: str,
+    endpoint: str,
+    token: str,
+    surls: Sequence[str],
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> tuple[int, int]:
+    result = run_xrdfs(
+        executable,
+        (endpoint, "query", "prepare", token),
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return 0, status
+    document, status = _json_document(prog, result)
+    if status:
+        return 0, status
+    records, status = _stage_status_by_path(prog, document)
+    if status:
+        return 0, status
+
+    terminal = 0
+    for surl in surls:
+        path = urlsplit(surl).path
+        record = records.get(path)
+        display_surl = redact_authz(surl)
+        if record is None:
+            print(f"{display_surl} => FAILED: missing status for requested file")
+            terminal += 1
+            continue
+
+        state = str(record.get("state", "")).upper()
+        error = record.get("error")
+        if error or state in ("FAILED", "CANCELLED"):
+            detail = str(error or state)
+            print(f"{display_surl} => FAILED: {redact_authz(detail)}")
+            terminal += 1
+        elif record.get("onDisk") is True or state == "COMPLETED":
+            print(f"{display_surl} READY")
+            terminal += 1
+        else:
+            print(f"{display_surl} QUEUED")
+    return terminal, 0
+
+
+def _execute_bringonline(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    surls, status = _tape_surls(prog, params)
+    if status:
+        return status
+    endpoint = _storage_endpoint(surls)
+    if endpoint is None:
+        sys.stderr.write(
+            f"{prog}: all SURLs must belong to the same storage endpoint\n"
+        )
+        return errno.EXDEV
+    if params.desired_request_time is not None:
+        sys.stderr.write(
+            f"{prog}: warning: --desired-request-time has no WLCG Tape REST "
+            "equivalent and is ignored\n"
+        )
+
+    arguments = ["prepare", "--stage"]
+    if params.pin_lifetime:
+        arguments.extend(("--pin-lifetime", str(params.pin_lifetime)))
+    if params.staging_metadata:
+        arguments.extend(("--metadata", params.staging_metadata))
+    arguments.extend(surls)
+    result = run_xrdfs(
+        executable,
+        arguments,
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    status = _report_result(prog, result, configured_timeout=params.timeout)
+    if status:
+        return status
+    token, status = _stage_token(prog, result)
+    if status:
+        return status
+
+    print(f"Bringonline token: {token}")
+    for surl in surls:
+        print(f"{redact_authz(surl)} QUEUED")
+
+    remaining = params.polling_timeout
+    sleep_seconds = 1
+    terminal = 0
+    while terminal != len(surls) and remaining > 0:
+        print(f"Request queued, sleep {sleep_seconds} seconds...")
+        remaining -= sleep_seconds
+        time.sleep(sleep_seconds)
+        terminal, status = _bringonline_poll_once(
+            prog,
+            executable,
+            endpoint,
+            token,
+            surls,
+            params,
+            environment,
+            deadline,
+        )
+        if status:
+            return status
+        sleep_seconds = min(sleep_seconds * 2, 300)
+    return 0
+
+
 def _mkdir_mode(value: int) -> str:
     try:
         mode = int(str(value), 8)
@@ -1372,6 +1573,16 @@ XRDFS_COMMANDS = MappingProxyType({
         execute=_execute_archivepoll,
         validate=_validate_tape_source,
         capability_markers=("archiveinfo    <paths...>",),
+        route_when=_route_tape_source,
+        url_parameters=(),
+        url_schemes=_WEBDAV_SCHEMES,
+    ),
+    "bringonline": XrdfsCommand(
+        description="Gfal util BRINGONLINE command. Execute bring online.",
+        add_arguments=_add_bringonline_arguments,
+        execute=_execute_bringonline,
+        validate=_validate_tape_source,
+        capability_markers=("--pin-lifetime duration",),
         route_when=_route_tape_source,
         url_parameters=(),
         url_schemes=_WEBDAV_SCHEMES,

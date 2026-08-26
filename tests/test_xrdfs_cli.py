@@ -39,6 +39,7 @@ _ROUTED_COMMAND_CASES = (
         [_HTTP_URL],
         ["query", "tape", "--json", "archiveinfo", _HTTP_URL],
     ),
+    ("bringonline", [_HTTP_URL], ["prepare", "--stage", _HTTP_URL]),
     ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
     ("chmod", ["0644", _URL], ["chmod", "0644", _URL]),
     (
@@ -119,7 +120,22 @@ configured = os.environ.get("FAKE_XRDFS_STDOUT")
 configured_stderr = os.environ.get("FAKE_XRDFS_STDERR")
 if configured_stderr is not None:
     sys.stderr.write(configured_stderr)
-if configured is not None:
+if arguments and arguments[0] == "prepare":
+    sys.stdout.write(os.environ.get(
+        "FAKE_XRDFS_PREPARE_STDOUT",
+        "12345678-1234-1234-1234-123456789abc\n",
+    ))
+elif len(arguments) > 3 and arguments[1:3] == ["query", "prepare"]:
+    sys.stdout.write(os.environ.get(
+        "FAKE_XRDFS_QUERY_PREPARE_STDOUT",
+        json.dumps({
+            "id": arguments[3],
+            "createdAt": 1,
+            "startedAt": 2,
+            "files": [{"path": "/data/file", "state": "COMPLETED"}],
+        }, separators=(",", ":")) + "\n",
+    ))
+elif configured is not None:
     sys.stdout.write(configured)
 elif arguments and arguments[0] == "sum":
     sys.stdout.write("adler32 deadbeef\n")
@@ -1371,6 +1387,129 @@ def test_archivepoll_retries_with_legacy_sleep_schedule(
     assert captured.out.count(f"{_HTTP_URL} QUEUED\n") == 3
     assert "Archiving ongoing, sleep 1 seconds...\n" in captured.out
     assert "Archiving ongoing, sleep 2 seconds...\n" in captured.out
+
+
+def test_bringonline_translates_options_and_legacy_output(
+    fake_xrdfs, monkeypatch, capsys
+):
+    metadata = '{"cta":{"activity":"bulk"}}'
+    monkeypatch.setenv("FAKE_XRDFS_PREPARE_STDOUT", '{"requestId":"stage-token"}\n')
+
+    assert (
+        dispatch(
+            "bringonline",
+            [
+                "--pin-lifetime",
+                "600",
+                "--staging-metadata",
+                metadata,
+                _HTTP_URL,
+            ],
+            prog="gfal bringonline",
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.out == (f"Bringonline token: stage-token\n{_HTTP_URL} QUEUED\n")
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == [
+        "prepare",
+        "--stage",
+        "--pin-lifetime",
+        "600",
+        "--metadata",
+        metadata,
+        _HTTP_URL,
+    ]
+
+
+def test_bringonline_polls_and_maps_per_file_states(fake_xrdfs, monkeypatch, capsys):
+    ready = "https://storage.example/data/ready"
+    queued = "https://storage.example/data/queued"
+    failed = "https://storage.example/data/failed-file"
+    source_list = Path(fake_xrdfs).with_name("stage-surls.txt")
+    source_list.write_text("\n".join((ready, queued, failed)), encoding="utf-8")
+    monkeypatch.setenv("FAKE_XRDFS_PREPARE_STDOUT", "stage-token\n")
+    monkeypatch.setenv(
+        "FAKE_XRDFS_QUERY_PREPARE_STDOUT",
+        json.dumps({
+            "id": "stage-token",
+            "createdAt": 1,
+            "startedAt": 2,
+            "files": [
+                {"path": "/data/ready", "state": "COMPLETED"},
+                {"path": "/data/queued", "onDisk": False},
+                {
+                    "path": "/data/failed-file",
+                    "state": "FAILED",
+                    "error": "staging failed",
+                },
+            ],
+        }),
+    )
+    sleeps = []
+    monkeypatch.setattr(xrdfs_cli.time, "sleep", sleeps.append)
+
+    assert (
+        dispatch(
+            "bringonline",
+            ["--from-file", str(source_list), "--polling-timeout", "1"],
+            prog="gfal bringonline",
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert sleeps == [1]
+    assert captured.out.splitlines() == [
+        "Bringonline token: stage-token",
+        f"{ready} QUEUED",
+        f"{queued} QUEUED",
+        f"{failed} QUEUED",
+        "Request queued, sleep 1 seconds...",
+        f"{ready} READY",
+        f"{queued} QUEUED",
+        f"{failed} => FAILED: staging failed",
+    ]
+    assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
+        ["prepare", "--stage", ready, queued, failed],
+        [
+            "https://storage.example",
+            "query",
+            "prepare",
+            "stage-token",
+        ],
+    ]
+
+
+def test_bringonline_rejects_cross_endpoint_batch(fake_xrdfs, tmp_path, capsys):
+    source_list = tmp_path / "stage-surls.txt"
+    source_list.write_text(
+        _HTTP_URL + "\nhttps://other.example/data/file\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        dispatch(
+            "bringonline",
+            ["--from-file", str(source_list)],
+            prog="gfal bringonline",
+        )
+        == errno.EXDEV
+    )
+    assert "same storage endpoint" in capsys.readouterr().err
+    assert _command_records(fake_xrdfs) == []
+
+
+def test_bringonline_warns_when_desired_request_time_is_ignored(fake_xrdfs, capsys):
+    assert (
+        dispatch(
+            "bringonline",
+            ["--desired-request-time", "60", _HTTP_URL],
+            prog="gfal bringonline",
+        )
+        == 0
+    )
+    assert "has no WLCG Tape REST equivalent" in capsys.readouterr().err
 
 
 def test_nonpositive_timeout_is_unlimited_and_not_exported(
