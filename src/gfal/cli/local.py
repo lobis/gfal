@@ -26,7 +26,7 @@ def _rm_urls(params: argparse.Namespace) -> Optional[list[str]]:
         return None
 
 
-def _local_path(value: str) -> Optional[Path]:
+def local_path(value: str) -> Optional[Path]:
     try:
         parsed = urlsplit(value)
     except ValueError:
@@ -51,7 +51,7 @@ def should_use_local_rm(argv: Sequence[str]) -> bool:
     urls = _rm_urls(params)
     if urls is None or not urls:
         return True
-    return all(_local_path(value) is not None for value in urls)
+    return all(local_path(value) is not None for value in urls)
 
 
 def _display_path(path: Path, *, as_uri: bool) -> str:
@@ -114,7 +114,7 @@ def dispatch_local_rm(argv: Sequence[str], *, prog: str = "gfal rm") -> int:
 
     first_failure = 0
     for value in urls:
-        path = _local_path(value)
+        path = local_path(value)
         if path is None:
             sys.stderr.write(f"{prog}: expected a local path: {redact_authz(value)}\n")
             if not first_failure:

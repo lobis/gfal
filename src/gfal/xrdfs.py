@@ -75,10 +75,14 @@ class XrdfsCapability:
     interrupted: bool = False
 
 
-def find_xrdfs(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
-    """Return the configured executable path, or ``None`` when unavailable."""
+def find_executable(
+    name: str,
+    override_name: str,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """Return a configured executable path, or ``None`` when unavailable."""
     environment = os.environ if environ is None else environ
-    override = environment.get("GFAL_XRDFS")
+    override = environment.get(override_name)
     search_path = environment.get("PATH")
 
     if override:
@@ -89,10 +93,15 @@ def find_xrdfs(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
             return None
         return shutil.which(override, path=search_path)
 
-    return shutil.which("xrdfs", path=search_path)
+    return shutil.which(name, path=search_path)
 
 
-def run_xrdfs(
+def find_xrdfs(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """Return the configured ``xrdfs`` path, or ``None`` when unavailable."""
+    return find_executable("xrdfs", "GFAL_XRDFS", environ)
+
+
+def run_command(
     executable: str,
     arguments: Sequence[str],
     *,
@@ -100,7 +109,7 @@ def run_xrdfs(
     timeout: Optional[float],
     passthrough_stdout: bool = False,
 ) -> XrdfsResult:
-    """Run one ``xrdfs`` command without invoking a shell.
+    """Run one native client command without invoking a shell.
 
     When ``passthrough_stdout`` is true, the child inherits stdout.  This is
     used by ``gfal cat`` so arbitrary bytes never pass through a text decoder.
@@ -151,6 +160,24 @@ def run_xrdfs(
         returncode=process.returncode,
         stdout=stdout or b"",
         stderr=stderr or b"",
+    )
+
+
+def run_xrdfs(
+    executable: str,
+    arguments: Sequence[str],
+    *,
+    environ: Mapping[str, str],
+    timeout: Optional[float],
+    passthrough_stdout: bool = False,
+) -> XrdfsResult:
+    """Run one ``xrdfs`` command without invoking a shell."""
+    return run_command(
+        executable,
+        arguments,
+        environ=environ,
+        timeout=timeout,
+        passthrough_stdout=passthrough_stdout,
     )
 
 

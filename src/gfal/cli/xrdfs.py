@@ -169,7 +169,7 @@ def _uses_legacy_webdav_defaults(value: str, record: Mapping[str, Any]) -> bool:
     return scheme in _WEBDAV_SCHEMES and record.get("extended") is False
 
 
-def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
+def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-V",
         "--version",
@@ -523,7 +523,7 @@ def _build_parser(
         description=definition.description,
         allow_abbrev=False,
     )
-    _add_common_arguments(parser)
+    add_common_arguments(parser)
     definition.add_arguments(parser)
     return parser
 
@@ -603,13 +603,13 @@ def parse_arguments(
     if command == "token" and _token_has_separate_negative_validity(arguments):
         parser.error("argument --validity: expected one argument")
     params = parser.parse_args(arguments)
-    _validate_common(parser, params)
+    validate_common(parser, params)
     if definition.validate is not None:
         definition.validate(parser, params)
     return parser, params
 
 
-def _validate_common(
+def validate_common(
     parser: argparse.ArgumentParser, params: argparse.Namespace
 ) -> None:
     if params.ipv4 and params.ipv6:
@@ -628,7 +628,7 @@ def _validate_remote_url(
         )
 
 
-def _child_environment(params: argparse.Namespace) -> dict[str, str]:
+def child_environment(params: argparse.Namespace) -> dict[str, str]:
     environment = os.environ.copy()
 
     if params.timeout > 0:
@@ -1966,7 +1966,7 @@ def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -
             return status
         assert executable is not None
 
-        environment = _child_environment(params)
+        environment = child_environment(params)
         status = definition.execute(
             program,
             executable,

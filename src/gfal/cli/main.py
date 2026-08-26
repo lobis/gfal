@@ -32,6 +32,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if should_use_local_rm(arguments[2:]):
             return dispatch_local_rm(arguments[2:])
 
+    if len(arguments) > 1 and arguments[1] == "save":
+        from gfal.cli.save import dispatch_save, should_use_native_save
+
+        if should_use_native_save(arguments[2:]):
+            return dispatch_save(arguments[2:])
+
     if (
         len(arguments) > 1
         and arguments[1] in XRDFS_COMMANDS
