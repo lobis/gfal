@@ -40,6 +40,7 @@ _ROUTED_COMMAND_CASES = (
         ["query", "tape", "--json", "archiveinfo", _HTTP_URL],
     ),
     ("bringonline", [_HTTP_URL], ["prepare", "--stage", _HTTP_URL]),
+    ("evict", [_HTTP_URL], ["prepare", "--evict", _HTTP_URL]),
     ("mkdir", [_URL], ["mkdir", "--mode=0755", _URL]),
     ("chmod", ["0644", _URL], ["chmod", "0644", _URL]),
     (
@@ -1510,6 +1511,27 @@ def test_bringonline_warns_when_desired_request_time_is_ignored(fake_xrdfs, caps
         == 0
     )
     assert "has no WLCG Tape REST equivalent" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ([_HTTP_URL], ["prepare", "--evict", _HTTP_URL]),
+        (
+            [_HTTP_URL, "stage-token"],
+            ["prepare", "--evict", "stage-token", _HTTP_URL],
+        ),
+    ],
+)
+def test_evict_translates_optional_bringonline_token(
+    fake_xrdfs, capsys, arguments, expected
+):
+    assert dispatch("evict", arguments, prog="gfal evict") == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    [record] = _command_records(fake_xrdfs)
+    assert record["argv"] == expected
 
 
 def test_nonpositive_timeout_is_unlimited_and_not_exported(

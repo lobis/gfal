@@ -336,6 +336,16 @@ def _add_bringonline_arguments(parser: argparse.ArgumentParser) -> None:
     _add_archivepoll_arguments(parser)
 
 
+def _add_evict_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("file", help="URI of the file to evict")
+    parser.add_argument(
+        "token",
+        nargs="?",
+        default="",
+        help="token from the bring-online request",
+    )
+
+
 def _validate_tape_source(
     parser: argparse.ArgumentParser, params: argparse.Namespace
 ) -> None:
@@ -1464,6 +1474,26 @@ def _execute_bringonline(
     return 0
 
 
+def _execute_evict(
+    prog: str,
+    executable: str,
+    params: argparse.Namespace,
+    environment: Mapping[str, str],
+    deadline: Optional[float],
+) -> int:
+    arguments = ["prepare", "--evict"]
+    if params.token:
+        arguments.append(params.token)
+    arguments.append(params.file)
+    result = run_xrdfs(
+        executable,
+        arguments,
+        environ=environment,
+        timeout=_remaining(deadline),
+    )
+    return _report_result(prog, result, configured_timeout=params.timeout)
+
+
 def _mkdir_mode(value: int) -> str:
     try:
         mode = int(str(value), 8)
@@ -1585,6 +1615,12 @@ XRDFS_COMMANDS = MappingProxyType({
         capability_markers=("--pin-lifetime duration",),
         route_when=_route_tape_source,
         url_parameters=(),
+        url_schemes=_WEBDAV_SCHEMES,
+    ),
+    "evict": XrdfsCommand(
+        description="Gfal util EVICT command. Evict a file from a disk buffer.",
+        add_arguments=_add_evict_arguments,
+        execute=_execute_evict,
         url_schemes=_WEBDAV_SCHEMES,
     ),
     "mkdir": XrdfsCommand(
