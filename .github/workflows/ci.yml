@@ -48,6 +48,8 @@ jobs:
             tests/test_save_native.py \
             tests/test_xrdfs_cli.py
       - name: Run native CLI tests
+        env:
+          PYTHONPATH: src
         run: |
           pytest -q -o addopts='' \
             tests/test_cp_native.py \
