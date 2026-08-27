@@ -32,6 +32,7 @@ def run_xrdcp(
     *,
     environ: Mapping[str, str],
     timeout: Optional[float],
+    passthrough_stdout: bool = False,
 ) -> XrdfsResult:
     """Run one ``xrdcp`` command with inherited stdin."""
     return run_command(
@@ -39,6 +40,7 @@ def run_xrdcp(
         arguments,
         environ=environ,
         timeout=timeout,
+        passthrough_stdout=passthrough_stdout,
     )
 
 

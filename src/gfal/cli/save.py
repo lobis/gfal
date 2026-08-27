@@ -4,27 +4,23 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import errno
 import io
 import sys
 import time
 from collections.abc import Sequence
-from typing import Optional
 
 from gfal.cli.local import local_path
+from gfal.cli.transfer import prepare_xrdcp, remaining, report_xrdcp_result
 from gfal.cli.xrdfs import (
     add_common_arguments,
     child_environment,
     supports_url,
     validate_common,
 )
-from gfal.xrdcp import check_xrdcp_capability, find_xrdcp, run_xrdcp
+from gfal.xrdcp import run_xrdcp
 from gfal.xrdfs import (
     GFAL_EPROTONOSUPPORT,
-    GFAL_ETIMEDOUT,
     error_description,
-    error_exit_code,
-    error_message,
     redact_authz,
 )
 
@@ -79,65 +75,6 @@ def _report_local_error(prog: str, exc: OSError) -> int:
     return code
 
 
-def _remaining(deadline: Optional[float]) -> Optional[float]:
-    if deadline is None:
-        return None
-    return max(0.0, deadline - time.monotonic())
-
-
-def _prepare_xrdcp(
-    prog: str,
-    environment: dict[str, str],
-    deadline: Optional[float],
-    configured_timeout: int,
-) -> tuple[Optional[str], int]:
-    executable = find_xrdcp(environment)
-    if executable is None:
-        configured = environment.get("GFAL_XRDCP")
-        detail = f" configured by GFAL_XRDCP={configured!r}" if configured else ""
-        sys.stderr.write(
-            f"{prog}: xrdcp{detail} was not found; install xrootd-client\n"
-        )
-        return None, 127
-
-    probe_timeout = 5.0
-    if deadline is not None:
-        remaining = _remaining(deadline)
-        assert remaining is not None
-        probe_timeout = min(probe_timeout, remaining)
-    capability = check_xrdcp_capability(
-        executable,
-        environ=environment,
-        timeout=probe_timeout,
-    )
-    if capability.error:
-        if capability.timed_out and deadline is not None:
-            sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
-            return None, GFAL_ETIMEDOUT
-        sys.stderr.write(f"{prog}: incompatible xrdcp: {capability.error}\n")
-        return None, 69
-    return executable, 0
-
-
-def _report_xrdcp_result(prog: str, result, *, configured_timeout: int) -> int:
-    if result.returncode == 0:
-        stderr = redact_authz(result.stderr.decode("utf-8", errors="replace"))
-        sys.stderr.write(stderr)
-        return 0
-    code = error_exit_code(result)
-    if code == errno.EINTR:
-        sys.stderr.write("Caught keyboard interrupt. Canceling...")
-        return code
-    if result.timed_out:
-        sys.stderr.write(f"Command timed out after {configured_timeout} seconds!\n")
-        return code
-    sys.stderr.write(
-        f"{prog} error: {code} ({error_description(code)}) - "
-        f"{error_message(result.stderr)}\n"
-    )
-    return code
-
-
 def dispatch_save(argv: Sequence[str], *, prog: str = "gfal save") -> int:
     """Write stdin to a local or remote destination without the old backend."""
     parser = _build_parser(prog)
@@ -162,7 +99,7 @@ def dispatch_save(argv: Sequence[str], *, prog: str = "gfal save") -> int:
 
     environment = child_environment(params)
     deadline = None if params.timeout <= 0 else time.monotonic() + params.timeout
-    executable, status = _prepare_xrdcp(
+    executable, status = prepare_xrdcp(
         prog,
         environment,
         deadline,
@@ -175,6 +112,6 @@ def dispatch_save(argv: Sequence[str], *, prog: str = "gfal save") -> int:
         executable,
         ("--force", "--nopbar", "--silent", "-", params.file),
         environ=environment,
-        timeout=_remaining(deadline),
+        timeout=remaining(deadline),
     )
-    return _report_xrdcp_result(prog, result, configured_timeout=params.timeout)
+    return report_xrdcp_result(prog, result, configured_timeout=params.timeout)

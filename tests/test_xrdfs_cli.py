@@ -10,7 +10,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,7 +22,7 @@ from gfal.cli.xrdfs import (
     dispatch,
     supports_url,
 )
-from gfal.xrdfs import XrdfsResult
+from gfal.xrdfs import GFAL_ENOTSUP, XrdfsResult
 from helpers import run_gfal_router
 
 _URL = "root://storage.example//data/file"
@@ -91,6 +90,8 @@ if record_path:
         "argv": arguments,
         "env": {name: os.environ.get(name) for name in names},
     }
+    if os.environ.get("BEARER_TOKEN") is not None:
+        record["env"]["BEARER_TOKEN"] = os.environ["BEARER_TOKEN"]
     with Path(record_path).open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, separators=(",", ":")) + "\n")
 
@@ -358,7 +359,7 @@ def test_mkdir_rejects_nonnumeric_mode_before_native_operation(fake_xrdfs):
 
     assert returncode == 2
     assert "'A'" in stderr
-    assert "integer" in stderr
+    assert "invalid int value" in stderr
     assert _records(fake_xrdfs) == []
 
 
@@ -370,17 +371,16 @@ def test_mkdir_rejects_negative_mode_before_native_operation(fake_xrdfs):
     assert _records(fake_xrdfs) == []
 
 
-def test_mkdir_rejects_negative_mode_on_transition_backends(tmp_path):
-    local = tmp_path / "local"
-    for value in (local.as_uri(), "https://storage.example/data/new"):
-        returncode, _stdout, stderr = run_gfal_router("mkdir", "-m", "-1", value)
+def test_mkdir_rejects_negative_mode_on_webdav_backend():
+    returncode, _stdout, stderr = run_gfal_router(
+        "mkdir", "-m", "-1", "https://storage.example/data/new"
+    )
 
-        assert returncode == 2
-        assert "expected one argument" in stderr
-    assert not local.exists()
+    assert returncode == 2
+    assert "expected one argument" in stderr
 
 
-def test_mkdir_transition_backend_stops_after_first_failure(tmp_path):
+def test_mkdir_local_backend_is_explicitly_unsupported(tmp_path):
     existing = tmp_path / "existing"
     existing.mkdir()
     unattempted = tmp_path / "unattempted"
@@ -389,9 +389,9 @@ def test_mkdir_transition_backend_stops_after_first_failure(tmp_path):
         "mkdir", existing.as_uri(), unattempted.as_uri()
     )
 
-    assert returncode == errno.EEXIST
+    assert returncode == GFAL_ENOTSUP
     assert stdout == ""
-    assert "exist" in stderr.lower()
+    assert "not been migrated" in stderr
     assert not unattempted.exists()
 
 
@@ -553,8 +553,8 @@ def test_chmod_interrupt_stops_later_operands(fake_xrdfs, monkeypatch):
 def test_chmod_uses_one_deadline_and_stops_on_timeout(fake_xrdfs, monkeypatch):
     first = "root://storage.example//data/slow-one"
     second = "root://storage.example//data/slow-two"
-    unattempted = "root://storage.example//data/unattempted"
-    monkeypatch.setenv("FAKE_XRDFS_SLEEP", "1.7")
+    unattempted = "root://storage.example//data/slow-unattempted"
+    monkeypatch.setenv("FAKE_XRDFS_SLEEP", "1.2")
 
     returncode, stdout, stderr = run_gfal_router(
         "chmod", "-t", "3", "0644", first, second, unattempted
@@ -566,6 +566,7 @@ def test_chmod_uses_one_deadline_and_stops_on_timeout(fake_xrdfs, monkeypatch):
     assert [record["argv"] for record in _command_records(fake_xrdfs)] == [
         ["chmod", "0644", first],
         ["chmod", "0644", second],
+        ["chmod", "0644", unattempted],
     ]
 
 
@@ -1620,20 +1621,22 @@ def test_archivepoll_maps_tape_localities_and_errors(fake_xrdfs, monkeypatch, ca
     failed = "https://storage.example/data/failed-file"
     monkeypatch.setenv(
         "FAKE_XRDFS_STDOUT",
-        json.dumps([
-            {"url": disk, "path": "/data/disk", "locality": "DISK"},
-            {"url": tape, "path": "/data/tape", "locality": "TAPE"},
-            {
-                "url": both,
-                "path": "/data/both",
-                "locality": "DISK_AND_TAPE",
-            },
-            {
-                "url": failed,
-                "path": "/data/failed-file",
-                "error": "[Tape REST API] USER ERROR: file not found",
-            },
-        ]),
+        json.dumps(
+            [
+                {"url": disk, "path": "/data/disk", "locality": "DISK"},
+                {"url": tape, "path": "/data/tape", "locality": "TAPE"},
+                {
+                    "url": both,
+                    "path": "/data/both",
+                    "locality": "DISK_AND_TAPE",
+                },
+                {
+                    "url": failed,
+                    "path": "/data/failed-file",
+                    "error": "[Tape REST API] USER ERROR: file not found",
+                },
+            ]
+        ),
     )
     source_list = Path(fake_xrdfs).with_name("surls.txt")
     source_list.write_text("\n".join((disk, tape, both, failed)), encoding="utf-8")
@@ -1737,20 +1740,22 @@ def test_bringonline_polls_and_maps_per_file_states(fake_xrdfs, monkeypatch, cap
     monkeypatch.setenv("FAKE_XRDFS_PREPARE_STDOUT", "stage-token\n")
     monkeypatch.setenv(
         "FAKE_XRDFS_QUERY_PREPARE_STDOUT",
-        json.dumps({
-            "id": "stage-token",
-            "createdAt": 1,
-            "startedAt": 2,
-            "files": [
-                {"path": "/data/ready", "state": "COMPLETED"},
-                {"path": "/data/queued", "onDisk": False},
-                {
-                    "path": "/data/failed-file",
-                    "state": "FAILED",
-                    "error": "staging failed",
-                },
-            ],
-        }),
+        json.dumps(
+            {
+                "id": "stage-token",
+                "createdAt": 1,
+                "startedAt": 2,
+                "files": [
+                    {"path": "/data/ready", "state": "COMPLETED"},
+                    {"path": "/data/queued", "onDisk": False},
+                    {
+                        "path": "/data/failed-file",
+                        "state": "FAILED",
+                        "error": "staging failed",
+                    },
+                ],
+            }
+        ),
     )
     sleeps = []
     monkeypatch.setattr(xrdfs_cli, "_sleep", sleeps.append)
@@ -1954,15 +1959,11 @@ def test_aggregate_local_information_does_not_require_xrdfs(
     option, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("GFAL_XRDFS", str(tmp_path / "missing-xrdfs"))
-    with pytest.raises(SystemExit) as caught:
-        main(["gfal", option])
-    assert caught.value.code == 0
+    assert main(["gfal", option]) == 0
 
 
 def test_aggregate_no_arguments_prints_help(capsys):
-    with pytest.raises(SystemExit) as caught:
-        main(["gfal"])
-    assert caught.value.code == 0
+    assert main(["gfal"]) == 0
     output = capsys.readouterr().out
     for command in XRDFS_COMMANDS:
         assert command in output
@@ -1977,7 +1978,6 @@ def test_aggregate_no_arguments_prints_help(capsys):
         ["gfal", "ls", "-lar", _URL],
         ["gfal", "ls", "--sort=size", _URL],
         ["gfal", "ls", "-lS", _URL],
-        ["gfal", "stat", "-r", _URL],
         ["gfal", "cat", "-bq", _URL],
         ["gfal", "cat", _URL, "file:///tmp/local"],
         ["gfal", "stat", "--key", "root://keys.example/key", "file:///tmp/a"],
@@ -1992,18 +1992,14 @@ def test_aggregate_no_arguments_prints_help(capsys):
         ],
     ],
 )
-def test_aggregate_preserves_transitional_legacy_paths(monkeypatch, arguments):
-    import gfal.cli.shell as legacy_shell
+def test_aggregate_rejects_unmigrated_paths_and_options(arguments):
+    assert main(arguments) == GFAL_ENOTSUP
 
-    calls = []
 
-    def fake_main(argv):
-        calls.append(argv)
-        return 73
-
-    monkeypatch.setattr(legacy_shell, "main", fake_main)
-    assert main(arguments) == 73
-    assert calls == [arguments]
+def test_aggregate_rejects_unknown_command_option():
+    with pytest.raises(SystemExit) as caught:
+        main(["gfal", "stat", "-r", _URL])
+    assert caught.value.code == 2
 
 
 @pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
@@ -2019,22 +2015,13 @@ def test_mkdir_routes_plain_webdav_requests(fake_xrdfs, scheme):
 
 
 @pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
-def test_mkdir_webdav_parents_preserves_transition_backend(monkeypatch, scheme):
-    import gfal.cli.shell as legacy_shell
-
-    calls = []
-    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+def test_mkdir_webdav_parents_is_explicitly_unsupported(scheme):
     arguments = ["gfal", "mkdir", "-p", f"{scheme}://storage.example/data/new"]
 
-    assert main(arguments) == 73
-    assert calls == [arguments]
+    assert main(arguments) == GFAL_ENOTSUP
 
 
-def test_mkdir_mixed_parents_preserves_transition_backend(monkeypatch):
-    import gfal.cli.shell as legacy_shell
-
-    calls = []
-    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+def test_mkdir_mixed_parents_is_explicitly_unsupported():
     arguments = [
         "gfal",
         "mkdir",
@@ -2043,28 +2030,18 @@ def test_mkdir_mixed_parents_preserves_transition_backend(monkeypatch):
         "https://storage.example/data/http",
     ]
 
-    assert main(arguments) == 73
-    assert calls == [arguments]
+    assert main(arguments) == GFAL_ENOTSUP
 
 
 @pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
-def test_chmod_preserves_webdav_transition_backend(monkeypatch, scheme):
-    import gfal.cli.shell as legacy_shell
-
-    calls = []
-    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+def test_chmod_webdav_is_explicitly_unsupported(scheme):
     arguments = ["gfal", "chmod", "0644", f"{scheme}://storage.example/data/file"]
 
-    assert main(arguments) == 73
-    assert calls == [arguments]
+    assert main(arguments) == GFAL_ENOTSUP
 
 
 @pytest.mark.parametrize("scheme", ("http", "https", "dav", "davs"))
-def test_rename_preserves_webdav_transition_backend(monkeypatch, scheme):
-    import gfal.cli.shell as legacy_shell
-
-    calls = []
-    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
+def test_rename_webdav_is_explicitly_unsupported(scheme):
     arguments = [
         "gfal",
         "rename",
@@ -2072,49 +2049,16 @@ def test_rename_preserves_webdav_transition_backend(monkeypatch, scheme):
         f"{scheme}://storage.example/data/destination",
     ]
 
-    assert main(arguments) == 73
-    assert calls == [arguments]
+    assert main(arguments) == GFAL_ENOTSUP
 
 
 @pytest.mark.parametrize("name", ["EOSAUTHZ", "GFAL_AUTHZ_TOKEN"])
-def test_token_environment_preserves_legacy_backend(monkeypatch, name):
-    import gfal.cli.shell as legacy_shell
-
-    calls = []
+def test_compatibility_token_environment_is_forwarded(fake_xrdfs, monkeypatch, name):
     monkeypatch.setenv(name, "fixture-token")
-    monkeypatch.setattr(legacy_shell, "main", lambda argv: calls.append(argv) or 73)
     arguments = ["gfal", "stat", "root://eos.example//data/file"]
-    assert main(arguments) == 73
-    assert calls == [arguments]
-
-
-@pytest.mark.parametrize("name", ["EOSAUTHZ", "GFAL_AUTHZ_TOKEN"])
-def test_token_forced_legacy_rename_rejects_cross_endpoint_before_io(
-    monkeypatch, capsys, name
-):
-    import gfal.core.api as core_api
-
-    other_name = "GFAL_AUTHZ_TOKEN" if name == "EOSAUTHZ" else "EOSAUTHZ"
-    monkeypatch.setenv(name, "fixture-token")
-    monkeypatch.delenv(other_name, raising=False)
-    mock_fs = MagicMock()
-    url_to_fs = MagicMock(return_value=(mock_fs, "/unreachable"))
-    monkeypatch.setattr(core_api.fs, "url_to_fs", url_to_fs)
-    arguments = [
-        "gfal",
-        "rename",
-        "root://one.example//data/source",
-        "root://two.example//data/destination",
-    ]
-
-    with pytest.raises(SystemExit) as caught:
-        main(arguments)
-
-    assert caught.value.code == errno.EXDEV
-    assert "different XRootD endpoints" in capsys.readouterr().err
-    url_to_fs.assert_not_called()
-    mock_fs._myclient.mv.assert_not_called()
-    mock_fs.mv.assert_not_called()
+    assert main(arguments) == 0
+    [record] = _command_records(fake_xrdfs)
+    assert record["env"]["BEARER_TOKEN"] == "fixture-token"
 
 
 def test_router_accepts_long_ip_alias(fake_xrdfs, capsys):

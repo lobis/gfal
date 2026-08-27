@@ -36,19 +36,23 @@ from gfal.xrdfs import (
     run_xrdfs,
 )
 
-_WEBDAV_SCHEMES = frozenset({
-    "dav",
-    "davs",
-    "http",
-    "https",
-})
-_XROOTD_SCHEMES = frozenset({
-    "root",
-    "roots",
-    "xroot",
-    "xroots",
-})
-_REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
+_WEBDAV_SCHEMES = frozenset(
+    {
+        "dav",
+        "davs",
+        "http",
+        "https",
+    }
+)
+_XROOTD_SCHEMES = frozenset(
+    {
+        "root",
+        "roots",
+        "xroot",
+        "xroots",
+    }
+)
+REMOTE_SCHEMES = _WEBDAV_SCHEMES | _XROOTD_SCHEMES
 _TOKEN_SCHEMES = frozenset(("davs", "https"))
 _sleep = time.sleep
 
@@ -56,14 +60,15 @@ _COMMON_CAPABILITY_MARKERS = (
     "command-first batch",
     "--json print one JSON object per entry",
 )
-_COMMON_LEGACY_OPTIONS = frozenset((
-    "-q",
-    "--quiet",
-    "--authz-token",
-    "--verify",
-    "--no-verify",
-))
-_COMMON_LEGACY_PREFIXES = ("--authz-token=",)
+_COMMON_LEGACY_OPTIONS = frozenset(
+    (
+        "-q",
+        "--quiet",
+        "--verify",
+        "--no-verify",
+    )
+)
+_COMMON_LEGACY_PREFIXES: tuple[str, ...] = ()
 _COMMON_LEGACY_SHORT_OPTIONS = frozenset(("q",))
 _VALUE_SHORT_OPTIONS = frozenset(("D", "t", "E", "C"))
 
@@ -86,7 +91,7 @@ class XrdfsCommand:
     legacy_prefixes: tuple[str, ...] = ()
     legacy_short_options: frozenset[str] = frozenset()
     url_parameters: tuple[str, ...] = ("file",)
-    url_schemes: frozenset[str] = _REMOTE_SCHEMES
+    url_schemes: frozenset[str] = REMOTE_SCHEMES
 
 
 # Populated after the command-specific parser and executor functions are defined.
@@ -105,9 +110,6 @@ def capability_markers() -> tuple[str, ...]:
 def requires_legacy_backend(command: str, arguments: Sequence[str]) -> bool:
     """Return whether transitional options require the previous backend."""
     definition = XRDFS_COMMANDS[command]
-    if os.environ.get("EOSAUTHZ") or os.environ.get("GFAL_AUTHZ_TOKEN"):
-        return True
-
     legacy_options = _COMMON_LEGACY_OPTIONS | definition.legacy_options
     legacy_prefixes = _COMMON_LEGACY_PREFIXES + definition.legacy_prefixes
     legacy_short = _COMMON_LEGACY_SHORT_OPTIONS | definition.legacy_short_options
@@ -129,7 +131,7 @@ def requires_legacy_backend(command: str, arguments: Sequence[str]) -> bool:
     return False
 
 
-def supports_url(value: str, schemes: frozenset[str] = _REMOTE_SCHEMES) -> bool:
+def supports_url(value: str, schemes: frozenset[str] = REMOTE_SCHEMES) -> bool:
     """Return whether *value* is a complete URL supported by this backend."""
     try:
         parsed = urlsplit(value)
@@ -225,6 +227,10 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--log-file",
         help="write XRootD client logs to the given file",
+    )
+    parser.add_argument(
+        "--authz-token",
+        help="use the supplied bearer token without exposing it to XRootD arguments",
     )
 
 
@@ -661,6 +667,16 @@ def child_environment(params: argparse.Namespace) -> dict[str, str]:
 
     if params.log_file:
         environment["XRD_LOGFILE"] = params.log_file
+
+    authz_token = getattr(params, "authz_token", None)
+    if authz_token:
+        environment["BEARER_TOKEN"] = authz_token
+    elif "BEARER_TOKEN" not in environment:
+        compatibility_token = environment.get("GFAL_AUTHZ_TOKEN") or environment.get(
+            "EOSAUTHZ"
+        )
+        if compatibility_token:
+            environment["BEARER_TOKEN"] = compatibility_token
 
     return environment
 
@@ -1839,111 +1855,117 @@ def _execute_token(
     return 0
 
 
-XRDFS_COMMANDS = MappingProxyType({
-    "ls": XrdfsCommand(
-        description="Gfal util LS command. List directory's contents.",
-        add_arguments=_add_ls_arguments,
-        execute=_execute_ls,
-        legacy_options=frozenset(("--reverse", "--sort")),
-        legacy_prefixes=("--sort=",),
-        legacy_short_options=frozenset(("r", "S", "U")),
-    ),
-    "cat": XrdfsCommand(
-        description="Gfal util CAT command. Sends to stdout the contents of files.",
-        add_arguments=_add_cat_arguments,
-        execute=_execute_cat,
-    ),
-    "stat": XrdfsCommand(
-        description="Gfal util STAT command. Stats a file.",
-        add_arguments=_add_stat_arguments,
-        execute=_execute_stat,
-        capability_markers=("stat [--json]",),
-    ),
-    "sum": XrdfsCommand(
-        description="Gfal util SUM command. Calculates the checksum of a file.",
-        add_arguments=_add_sum_arguments,
-        execute=_execute_sum,
-    ),
-    "xattr": XrdfsCommand(
-        description=(
-            "Gfal util XATTR command. Gets or sets the extended attributes "
-            "of files and directories."
+XRDFS_COMMANDS = MappingProxyType(
+    {
+        "ls": XrdfsCommand(
+            description="Gfal util LS command. List directory's contents.",
+            add_arguments=_add_ls_arguments,
+            execute=_execute_ls,
+            legacy_options=frozenset(("--reverse", "--sort")),
+            legacy_prefixes=("--sort=",),
+            legacy_short_options=frozenset(("r", "S", "U")),
         ),
-        add_arguments=_add_xattr_arguments,
-        execute=_execute_xattr,
-        capability_markers=("xattr <path> [attribute]",),
-    ),
-    "archivepoll": XrdfsCommand(
-        description="Gfal util ARCHIVEPOLL command. Execute archive polling.",
-        add_arguments=_add_archivepoll_arguments,
-        execute=_execute_archivepoll,
-        validate=_validate_tape_source,
-        capability_markers=("archiveinfo    <paths...>",),
-        route_when=_route_tape_source,
-        url_parameters=(),
-        url_schemes=_WEBDAV_SCHEMES,
-    ),
-    "bringonline": XrdfsCommand(
-        description="Gfal util BRINGONLINE command. Execute bring online.",
-        add_arguments=_add_bringonline_arguments,
-        execute=_execute_bringonline,
-        validate=_validate_tape_source,
-        capability_markers=("--pin-lifetime duration",),
-        route_when=_route_tape_source,
-        url_parameters=(),
-        url_schemes=_WEBDAV_SCHEMES,
-    ),
-    "evict": XrdfsCommand(
-        description="Gfal util EVICT command. Evict a file from a disk buffer.",
-        add_arguments=_add_evict_arguments,
-        execute=_execute_evict,
-        url_schemes=_WEBDAV_SCHEMES,
-    ),
-    "mkdir": XrdfsCommand(
-        description=(
-            "Gfal util MKDIR command. Makes directories. By default, it sets "
-            "file mode 0755."
+        "cat": XrdfsCommand(
+            description="Gfal util CAT command. Sends to stdout the contents of files.",
+            add_arguments=_add_cat_arguments,
+            execute=_execute_cat,
         ),
-        add_arguments=_add_mkdir_arguments,
-        execute=_execute_mkdir,
-        validate=_validate_mkdir,
-        capability_markers=("mkdir [-p|--parents] [-m mode|--mode mode] <dirname>...",),
-        route_when=_option_requires_schemes("parents", _XROOTD_SCHEMES),
-        url_parameters=("directory",),
-    ),
-    "chmod": XrdfsCommand(
-        description="Gfal util CHMOD command. Change the permissions of a file.",
-        add_arguments=_add_chmod_arguments,
-        execute=_execute_chmod,
-        validate=_validate_chmod,
-        capability_markers=("chmod <octal-mode> <path>",),
-        url_schemes=_XROOTD_SCHEMES,
-    ),
-    "rename": XrdfsCommand(
-        description="Gfal util RENAME command. Renames files or directories.",
-        add_arguments=_add_rename_arguments,
-        execute=_execute_rename,
-        capability_markers=("mv <path1> <path2>",),
-        url_parameters=("source", "destination"),
-        url_schemes=_XROOTD_SCHEMES,
-    ),
-    "rm": XrdfsCommand(
-        description="Gfal util RM command. Removes files or directories.",
-        add_arguments=_add_rm_arguments,
-        execute=_execute_rm,
-        capability_markers=("rm [-r|-R|--recursive] [--dry-run] [--] <path>...",),
-        route_when=_route_rm_source,
-        url_parameters=(),
-    ),
-    "token": XrdfsCommand(
-        description="Gfal util TOKEN command. Retrieve a SE-issued token.",
-        add_arguments=_add_token_arguments,
-        execute=_execute_token,
-        capability_markers=("token [-w|--write] [--validity minutes] [--issuer URL]",),
-        route_when=_route_always,
-        url_parameters=(),
-    ),
-})
+        "stat": XrdfsCommand(
+            description="Gfal util STAT command. Stats a file.",
+            add_arguments=_add_stat_arguments,
+            execute=_execute_stat,
+            capability_markers=("stat [--json]",),
+        ),
+        "sum": XrdfsCommand(
+            description="Gfal util SUM command. Calculates the checksum of a file.",
+            add_arguments=_add_sum_arguments,
+            execute=_execute_sum,
+        ),
+        "xattr": XrdfsCommand(
+            description=(
+                "Gfal util XATTR command. Gets or sets the extended attributes "
+                "of files and directories."
+            ),
+            add_arguments=_add_xattr_arguments,
+            execute=_execute_xattr,
+            capability_markers=("xattr <path> [attribute]",),
+        ),
+        "archivepoll": XrdfsCommand(
+            description="Gfal util ARCHIVEPOLL command. Execute archive polling.",
+            add_arguments=_add_archivepoll_arguments,
+            execute=_execute_archivepoll,
+            validate=_validate_tape_source,
+            capability_markers=("archiveinfo    <paths...>",),
+            route_when=_route_tape_source,
+            url_parameters=(),
+            url_schemes=_WEBDAV_SCHEMES,
+        ),
+        "bringonline": XrdfsCommand(
+            description="Gfal util BRINGONLINE command. Execute bring online.",
+            add_arguments=_add_bringonline_arguments,
+            execute=_execute_bringonline,
+            validate=_validate_tape_source,
+            capability_markers=("--pin-lifetime duration",),
+            route_when=_route_tape_source,
+            url_parameters=(),
+            url_schemes=_WEBDAV_SCHEMES,
+        ),
+        "evict": XrdfsCommand(
+            description="Gfal util EVICT command. Evict a file from a disk buffer.",
+            add_arguments=_add_evict_arguments,
+            execute=_execute_evict,
+            url_schemes=_WEBDAV_SCHEMES,
+        ),
+        "mkdir": XrdfsCommand(
+            description=(
+                "Gfal util MKDIR command. Makes directories. By default, it sets "
+                "file mode 0755."
+            ),
+            add_arguments=_add_mkdir_arguments,
+            execute=_execute_mkdir,
+            validate=_validate_mkdir,
+            capability_markers=(
+                "mkdir [-p|--parents] [-m mode|--mode mode] <dirname>...",
+            ),
+            route_when=_option_requires_schemes("parents", _XROOTD_SCHEMES),
+            url_parameters=("directory",),
+        ),
+        "chmod": XrdfsCommand(
+            description="Gfal util CHMOD command. Change the permissions of a file.",
+            add_arguments=_add_chmod_arguments,
+            execute=_execute_chmod,
+            validate=_validate_chmod,
+            capability_markers=("chmod <octal-mode> <path>",),
+            url_schemes=_XROOTD_SCHEMES,
+        ),
+        "rename": XrdfsCommand(
+            description="Gfal util RENAME command. Renames files or directories.",
+            add_arguments=_add_rename_arguments,
+            execute=_execute_rename,
+            capability_markers=("mv <path1> <path2>",),
+            url_parameters=("source", "destination"),
+            url_schemes=_XROOTD_SCHEMES,
+        ),
+        "rm": XrdfsCommand(
+            description="Gfal util RM command. Removes files or directories.",
+            add_arguments=_add_rm_arguments,
+            execute=_execute_rm,
+            capability_markers=("rm [-r|-R|--recursive] [--dry-run] [--] <path>...",),
+            route_when=_route_rm_source,
+            url_parameters=(),
+        ),
+        "token": XrdfsCommand(
+            description="Gfal util TOKEN command. Retrieve a SE-issued token.",
+            add_arguments=_add_token_arguments,
+            execute=_execute_token,
+            capability_markers=(
+                "token [-w|--write] [--validity minutes] [--issuer URL]",
+            ),
+            route_when=_route_always,
+            url_parameters=(),
+        ),
+    }
+)
 
 
 def dispatch(command: str, argv: Sequence[str], *, prog: Optional[str] = None) -> int:
