@@ -12,7 +12,7 @@ BuildRequires:  python3-devel
 BuildRequires:  pyproject-rpm-macros
 
 Requires:       xrootd-client
-Requires:       xrdcl-http
+Requires:       (xrootd-client-libs >= 1:6 or xrdcl-http)
 
 %description
 gfal provides a dependency-free Python command-line interface compatible with

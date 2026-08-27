@@ -58,8 +58,9 @@ dnf install \
 make rpm
 ```
 
-The resulting `python3-gfal` RPM is `noarch` and declares runtime requirements
-only on `xrootd-client` and `xrdcl-http`. It does not bundle
+The resulting `python3-gfal` RPM is `noarch` and requires `xrootd-client` plus
+either the integrated XRootD 6 HTTP plugin or the EPEL 5 `xrdcl-http` package.
+It does not bundle
 dependencies, disable RPM dependency generation, or download packages during
 the RPM build.
 

@@ -34,7 +34,7 @@ def test_rpm_spec_requires_xrdfs_runtime():
     }
 
     assert "Requires: xrootd-client" in requirements
-    assert "Requires: xrdcl-http" in requirements
+    assert "Requires: (xrootd-client-libs >= 1:6 or xrdcl-http)" in requirements
 
 
 def test_base_package_has_no_python_runtime_dependencies():
