@@ -117,6 +117,13 @@ Deploy the current committed revision to `lobis-eos-dev` with:
 make deploy-rpm
 ```
 
+Run the public EOS storage smoke test, or deploy and test in one invocation:
+
+```bash
+make smoke-remote
+make deploy-rpm smoke-remote
+```
+
 The target can be changed without editing the script:
 
 ```bash

@@ -6,7 +6,7 @@ PYTHON ?= python3
 REMOTE ?= lobis-eos-dev
 REF ?= HEAD
 
-.PHONY: all clean dist srpm rpm prepare deploy-rpm
+.PHONY: all clean dist srpm rpm prepare deploy-rpm smoke-remote
 
 all: dist
 
@@ -47,3 +47,6 @@ rpm: prepare
 
 deploy-rpm:
 	./scripts/deploy-el-rpm.sh "$(REMOTE)" "$(REF)"
+
+smoke-remote:
+	ssh "$(REMOTE)" bash -s < scripts/smoke-eospublic.sh
