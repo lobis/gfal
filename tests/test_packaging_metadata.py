@@ -28,10 +28,27 @@ def test_rpm_spec_does_not_force_urllib3():
 
 def test_rpm_spec_requires_xrdfs_runtime():
     requirements = {
-        line.strip()
+        " ".join(line.split())
         for line in (_ROOT / "gfal.spec").read_text(encoding="utf-8").splitlines()
         if line.startswith("Requires:")
     }
 
     assert "Requires: xrootd-client" in requirements
     assert "Requires: xrdcl-http" in requirements
+
+
+def test_base_package_has_no_python_runtime_dependencies():
+    pyproject = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    dependencies = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
+
+    assert not dependencies.strip()
+
+
+def test_rpm_does_not_bundle_or_disable_dependency_generation():
+    spec = (_ROOT / "gfal.spec").read_text(encoding="utf-8").lower()
+
+    for forbidden in ("fsspec", "aiohttp", "rich-click", "autoreq: no", "pip install"):
+        assert forbidden not in spec
+    assert "%pyproject_buildrequires" in spec
+    assert "%pyproject_wheel" in spec
+    assert "%pyproject_install" in spec

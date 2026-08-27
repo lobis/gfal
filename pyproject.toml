@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "gfal"
 dynamic = ["version"]
-description = "GFAL-compatible command-line tools and Python library for remote storage"
+description = "GFAL-compatible command-line tools backed by XRootD clients"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -22,14 +22,7 @@ classifiers = [
 authors = [
     { name = "Luis Antonio Obis Aparicio", email = "luis.obis@cern.ch" },
 ]
-dependencies = [
-    "fsspec>=2023.1.0",
-    "aiohttp>=3.13.5",
-    "xrootd>=6.0.1",
-    "rich>=15.0.0",
-    "rich-click>=1.9.7",
-    "click>=8.0.0",
-]
+dependencies = []
 
 [project.scripts]
 gfal = "gfal.cli.main:main"
@@ -41,24 +34,25 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-xdist>=3.8.0",
     "pytest-rerunfailures>=16.0.1",
-    "pre-commit>=4.3.0",
     "codespell>=2.4.2",
-    "certifi",
-]
-ssh = [
-    "paramiko",
-    "sshfs",
-]
-s3 = [
-    "boto3",
-    "s3fs",
-]
-mount = [
-    "mfusepy>=3.1.1; platform_system == 'Linux' or platform_system == 'Darwin'",
 ]
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.build]
+exclude = [
+    "src/gfal/core/**",
+    "src/gfal/cli/base.py",
+    "src/gfal/cli/commands.py",
+    "src/gfal/cli/copy.py",
+    "src/gfal/cli/ls.py",
+    "src/gfal/cli/mount.py",
+    "src/gfal/cli/progress.py",
+    "src/gfal/cli/rm.py",
+    "src/gfal/cli/shell.py",
+    "src/gfal/cli/tape.py",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gfal"]

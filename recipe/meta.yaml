@@ -21,32 +21,23 @@ requirements:
     - hatch-vcs
     - hatchling
     - pip
-    - python >=3.10
+    - python >=3.9
   run:
-    - aiohttp >=3.8.0
-    - click >=8.0.0
-    - fsspec >=2023.1.0
-    - python >=3.10
-    - rich >=13.0.0
-    - rich-click >=1.7.0
-    # conda-forge does not publish XRootD 6 yet; keep conda builds on the
-    # latest available 5.x line until the 6.x packages land there.
-    - xrootd >=5.9.2
+    - python >=3.9
+    - xrootd
 
 test:
   imports:
-    - XRootD
     - gfal
-    - rich_click
   commands:
     - gfal --help
-    - python -c "from XRootD import client; import gfal; import rich_click"
+    - python -c "import gfal"
   requires:
     - pip
 
 about:
   home: https://github.com/lobis/gfal
-  summary: Grid File Access Library — Python rewrite of gfal2 with HTTP/HTTPS and XRootD support
+  summary: GFAL-compatible command-line tools backed by XRootD clients
   license: BSD-3-Clause
   license_file: LICENSE
   dev_url: https://github.com/lobis/gfal
