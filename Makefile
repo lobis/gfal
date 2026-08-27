@@ -3,8 +3,10 @@ SPECFILE := $(NAME).spec
 DIST_DIR := dist
 RPMBUILD := $(CURDIR)/rpmbuild
 PYTHON ?= python3
+REMOTE ?= lobis-eos-dev
+REF ?= HEAD
 
-.PHONY: all clean dist srpm rpm prepare
+.PHONY: all clean dist srpm rpm prepare deploy-rpm
 
 all: dist
 
@@ -42,3 +44,6 @@ rpm: prepare
 		--define "pkg_version $$VERSION" \
 		--define "pkg_release $$RELEASE" \
 		--define "source_version $$FULL_VERSION"
+
+deploy-rpm:
+	./scripts/deploy-el-rpm.sh "$(REMOTE)" "$(REF)"

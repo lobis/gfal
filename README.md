@@ -109,6 +109,30 @@ pytest -q -o addopts='' \
 CI repeats the RPM build and clean installation in AlmaLinux 9 and AlmaLinux
 10 containers.
 
+### Deploy to a development EL host
+
+Deploy the current committed revision to `lobis-eos-dev` with:
+
+```bash
+make deploy-rpm
+```
+
+The target can be changed without editing the script:
+
+```bash
+make deploy-rpm REMOTE=host.example REF=main
+```
+
+The command sends a Git archive over SSH, installs the EPEL build tools, builds
+the noarch RPM on the target, installs it with DNF, and runs basic smoke tests.
+Only committed content from `REF` is deployed. The remote build directory is
+removed when the command finishes.
+
+If `/opt/xrootd-xrd-cli` contains an isolated development XRootD installation,
+the deployment also installs a `/usr/local/bin/gfal` launcher that uses that
+client without changing the system XRootD packages. Set `GFAL_XROOTD_PREFIX`
+to select a different development-client prefix.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).
