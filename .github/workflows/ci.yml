@@ -74,7 +74,7 @@ jobs:
         run: |
           make dist
           python scripts/verify_distribution.py
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: python-distributions
           path: dist/*
@@ -130,7 +130,7 @@ jobs:
               assert importlib.util.find_spec(name) is None, name
           PY
             '
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: rpm-el${{ matrix.el }}
           path: |
