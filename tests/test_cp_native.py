@@ -29,20 +29,18 @@ def xrdcp_calls(monkeypatch):
 
 
 def test_cp_maps_supported_gfal2_options_to_xrdcp(xrdcp_calls):
-    result = cp_cli.dispatch_cp(
-        [
-            "--force",
-            "--recursive",
-            "--nbstreams",
-            "4",
-            "--checksum",
-            "ADLER32:deadbeef",
-            "--authz-token",
-            "secret-token",
-            _SOURCE,
-            _DESTINATION,
-        ]
-    )
+    result = cp_cli.dispatch_cp([
+        "--force",
+        "--recursive",
+        "--nbstreams",
+        "4",
+        "--checksum",
+        "ADLER32:deadbeef",
+        "--authz-token",
+        "secret-token",
+        _SOURCE,
+        _DESTINATION,
+    ])
 
     assert result == 0
     [(_executable, arguments, kwargs)] = xrdcp_calls
