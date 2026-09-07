@@ -1621,22 +1621,20 @@ def test_archivepoll_maps_tape_localities_and_errors(fake_xrdfs, monkeypatch, ca
     failed = "https://storage.example/data/failed-file"
     monkeypatch.setenv(
         "FAKE_XRDFS_STDOUT",
-        json.dumps(
-            [
-                {"url": disk, "path": "/data/disk", "locality": "DISK"},
-                {"url": tape, "path": "/data/tape", "locality": "TAPE"},
-                {
-                    "url": both,
-                    "path": "/data/both",
-                    "locality": "DISK_AND_TAPE",
-                },
-                {
-                    "url": failed,
-                    "path": "/data/failed-file",
-                    "error": "[Tape REST API] USER ERROR: file not found",
-                },
-            ]
-        ),
+        json.dumps([
+            {"url": disk, "path": "/data/disk", "locality": "DISK"},
+            {"url": tape, "path": "/data/tape", "locality": "TAPE"},
+            {
+                "url": both,
+                "path": "/data/both",
+                "locality": "DISK_AND_TAPE",
+            },
+            {
+                "url": failed,
+                "path": "/data/failed-file",
+                "error": "[Tape REST API] USER ERROR: file not found",
+            },
+        ]),
     )
     source_list = Path(fake_xrdfs).with_name("surls.txt")
     source_list.write_text("\n".join((disk, tape, both, failed)), encoding="utf-8")
@@ -1740,22 +1738,20 @@ def test_bringonline_polls_and_maps_per_file_states(fake_xrdfs, monkeypatch, cap
     monkeypatch.setenv("FAKE_XRDFS_PREPARE_STDOUT", "stage-token\n")
     monkeypatch.setenv(
         "FAKE_XRDFS_QUERY_PREPARE_STDOUT",
-        json.dumps(
-            {
-                "id": "stage-token",
-                "createdAt": 1,
-                "startedAt": 2,
-                "files": [
-                    {"path": "/data/ready", "state": "COMPLETED"},
-                    {"path": "/data/queued", "onDisk": False},
-                    {
-                        "path": "/data/failed-file",
-                        "state": "FAILED",
-                        "error": "staging failed",
-                    },
-                ],
-            }
-        ),
+        json.dumps({
+            "id": "stage-token",
+            "createdAt": 1,
+            "startedAt": 2,
+            "files": [
+                {"path": "/data/ready", "state": "COMPLETED"},
+                {"path": "/data/queued", "onDisk": False},
+                {
+                    "path": "/data/failed-file",
+                    "state": "FAILED",
+                    "error": "staging failed",
+                },
+            ],
+        }),
     )
     sleeps = []
     monkeypatch.setattr(xrdfs_cli, "_sleep", sleeps.append)
