@@ -15,7 +15,7 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.13
+    rev: v0.16.6
     hooks:
       - id: ruff
         args: [--fix]
@@ -24,7 +24,7 @@ repos:
         types_or: [python, pyi, markdown]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.2
+    rev: v2.4.3
     hooks:
       - id: codespell
         additional_dependencies: ["tomli"]
