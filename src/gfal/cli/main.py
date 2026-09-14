@@ -35,13 +35,11 @@ def _print_help(to=None) -> None:
     descriptions = {
         name: definition.description for name, definition in XRDFS_COMMANDS.items()
     }
-    descriptions.update(
-        {
-            "completion": "Generate shell completion source.",
-            "cp": "Copy files using the XRootD client.",
-            "save": "Read stdin and write it to a file.",
-        }
-    )
+    descriptions.update({
+        "completion": "Generate shell completion source.",
+        "cp": "Copy files using the XRootD client.",
+        "save": "Read stdin and write it to a file.",
+    })
     for name in command_names():
         to.write(f"  {name:<14} {descriptions[name]}\n")
     to.write("\nRun 'gfal COMMAND --help' for command-specific options.\n")
